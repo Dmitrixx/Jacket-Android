@@ -14,7 +14,6 @@ android {
         targetSdk = 36
         versionCode = 2
         versionName = "1.2.0"
-
         vectorDrawables { useSupportLibrary = true }
     }
 
@@ -40,7 +39,9 @@ android {
 }
 
 dependencies {
-    val composeBom = platform("androidx.compose:compose-bom:2026.09.00")
+    // Compose 1.11.x line remains compatible with compileSdk 36.
+    // Compose 1.12.x requires API 37, which is not yet present in the stable SDK repo.
+    val composeBom = platform("androidx.compose:compose-bom:2026.06.00")
     implementation(composeBom)
 
     implementation("androidx.core:core-ktx:1.17.0")
