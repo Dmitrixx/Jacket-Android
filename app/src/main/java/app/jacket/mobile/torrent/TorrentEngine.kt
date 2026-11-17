@@ -95,9 +95,9 @@ object TorrentEngine {
         val store = TorrentQueueStore(context)
         val pausedIds = store.pausedIds()
         val vector = current.swig().get_torrents()
-        val rows = ArrayList<TorrentSnapshot>(vector.size().toInt())
+        val rows = ArrayList<TorrentSnapshot>(vector.size)
 
-        for (index in 0 until vector.size().toInt()) {
+        for (index in 0 until vector.size) {
             val handle = TorrentHandle(vector.get(index))
             if (!handle.isValid) continue
             runCatching {
@@ -136,7 +136,7 @@ object TorrentEngine {
     private fun findHandle(id: String): TorrentHandle? {
         val current = manager ?: return null
         val vector = current.swig().get_torrents()
-        for (index in 0 until vector.size().toInt()) {
+        for (index in 0 until vector.size) {
             val handle = TorrentHandle(vector.get(index))
             if (runCatching { handle.isValid && handle.infoHash().toHex().equals(id, true) }.getOrDefault(false)) {
                 return handle

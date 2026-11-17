@@ -201,9 +201,11 @@ class MediaCatalogClient {
                 val creator = doc.firstText("creator")
                 val year = doc.firstText("year", "date").take(4)
                 val subjects = doc.joinStrings("subject")
-                val overview = listOf(description, creator.takeIf(String::isNotBlank)?.let { "Автор: $it" }, subjects.takeIf(String::isNotBlank))
-                    .filter { it.isNotBlank() }
-                    .joinToString("\n")
+                val overview = listOfNotNull(
+                    description.takeIf(String::isNotBlank),
+                    creator.takeIf(String::isNotBlank)?.let { "Автор: $it" },
+                    subjects.takeIf(String::isNotBlank)
+                ).joinToString("\n")
                 add(
                     CatalogItem(
                         id = "archive:$id",

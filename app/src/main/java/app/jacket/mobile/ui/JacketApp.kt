@@ -578,6 +578,7 @@ private fun DetailScreen(
     onPlay: (String, String) -> Unit
 ) {
     val details by viewModel.selectedDetails.collectAsState()
+    val favorites by viewModel.favorites.collectAsState()
     val loading by viewModel.isLoading.collectAsState()
     val sources by viewModel.sourceResults.collectAsState()
     val searchingSources by viewModel.isSearchingSources.collectAsState()
