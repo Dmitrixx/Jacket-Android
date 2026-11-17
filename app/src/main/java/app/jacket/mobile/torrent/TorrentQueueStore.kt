@@ -74,14 +74,50 @@ class TorrentQueueStore(context: Context) {
         private const val MAX_MAGNET_LENGTH = 16_384
         private const val MAX_TITLE_LENGTH = 512
 
+        /** Returns a canonical hex info-hash so queue operations match libtorrent's hash IDs. */
         fun idFor(magnet: String): String {
-            val xt = runCatching { Uri.parse(magnet).getQueryParameter("xt") }.getOrNull()
-            val hash = xt?.substringAfterLast(':')?.takeIf { it.matches(Regex("[a-fA-F0-9]{32,64}")) }
-            if (hash != null) return hash.lowercase()
+            val xtValues = runCatching { Uri.parse(magnet).getQueryParameters("xt") }.getOrNull().orEmpty()
+            val btih = xtValues.firstOrNull { it.startsWith("urn:btih:", ignoreCase = true) }
+                ?.substringAfterLast(':')
+                ?.let(::normalizeBtih)
+            if (btih != null) return btih
+
+            // BEP 52 magnet links use a multihash prefix (0x12 = SHA-256, 0x20 = 32 bytes).
+            val btmh = xtValues.firstOrNull { it.startsWith("urn:btmh:", ignoreCase = true) }
+                ?.substringAfterLast(':')
+                ?.lowercase()
+                ?.removePrefix("1220")
+                ?.takeIf { it.matches(Regex("[a-f0-9]{64}")) }
+            if (btmh != null) return btmh
+
+            // Fall back to a stable key when a non-standard magnet lacks a usable xt parameter.
             return MessageDigest.getInstance("SHA-256")
                 .digest(magnet.toByteArray(Charsets.UTF_8))
                 .take(12)
                 .joinToString("") { "%02x".format(it) }
+        }
+
+        private fun normalizeBtih(value: String): String? {
+            val clean = value.trim()
+            if (clean.matches(Regex("[a-fA-F0-9]{40}"))) return clean.lowercase()
+            if (!clean.matches(Regex("[A-Z2-7a-z]{32}"))) return null
+
+            val alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567"
+            var buffer = 0
+            var bits = 0
+            val bytes = ArrayList<Byte>(20)
+            for (character in clean.uppercase()) {
+                val digit = alphabet.indexOf(character)
+                if (digit < 0) return null
+                buffer = (buffer shl 5) or digit
+                bits += 5
+                if (bits >= 8) {
+                    bits -= 8
+                    bytes += ((buffer shr bits) and 0xff).toByte()
+                }
+            }
+            if (bytes.size != 20) return null
+            return bytes.joinToString("") { "%02x".format(it.toInt() and 0xff) }
         }
     }
 }

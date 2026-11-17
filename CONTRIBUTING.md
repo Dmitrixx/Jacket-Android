@@ -3,7 +3,7 @@
 ## Окружение
 
 - JDK 17
-- Android SDK Platform 37 и Build Tools 36.0.0
+- Android SDK Platform 36 и Build Tools 36.0.0
 - Gradle 9.5.0
 - Android Gradle Plugin 9.3.x
 - Kotlin 2.4.21
