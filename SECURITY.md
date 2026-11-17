@@ -2,27 +2,24 @@
 
 ## Supported versions
 
-Security fixes are currently targeted at the latest commit on the `main` branch. There is no stable release yet.
+Security fixes target the latest commit on `main`. There is no stable release yet.
 
 ## Reporting a vulnerability
 
-Do not publish API keys, private tracker credentials, personal data, or a working exploit in a public issue.
+Do not publish access tokens, private indexer credentials, personal data, or a working exploit in a public issue.
 
-Use GitHub's **Report a vulnerability** flow in the repository Security tab when it is available. Otherwise, contact the maintainer privately through a verified GitHub contact channel. Include:
-- affected version or commit;
-- Android version and device ABI;
-- concise reproduction steps;
-- impact and any relevant logs with secrets removed.
+Use GitHub's **Report a vulnerability** flow in the repository Security tab when available. Otherwise contact the maintainer privately through a verified GitHub contact channel. Include the affected commit, Android version/device ABI, reproduction steps and impact. Remove secrets from logs.
 
 ## Security design
 
-- Jackett API keys are encrypted with AES/GCM using a key held in Android Keystore.
-- Redirect following is disabled on authenticated Jackett requests, preventing the API key from being forwarded to another host.
-- Public/non-local HTTP endpoints are rejected; use HTTPS or a VPN for remote access.
-- Torznab response size, request timeouts, and maximum result count are bounded.
-- XML document type declarations are disabled in the pull parser.
-- Android backup is disabled to avoid copying application secrets to cloud backup.
+- The optional TMDB Read Access Token is encrypted with AES/GCM using a key held in Android Keystore.
+- User-defined RSS/Atom indexer URLs must use HTTPS and cannot contain URL user-info credentials.
+- Network requests have bounded response sizes and timeouts.
+- XML document type declarations are disabled in feed parsing.
+- Remote poster and media URLs are restricted to HTTPS.
+- Android backup is disabled to avoid copying private app settings to cloud backup.
+- Direct torrent links are treated as untrusted source data. Verify the publisher and license before opening or downloading content.
 
 ## User guidance
 
-Do not share your Jackett API key or expose the Jackett web/API port directly to the public internet. If the phone needs remote access, use a properly configured VPN or HTTPS reverse proxy with authentication.
+Do not share private indexer credentials or add feeds from sources you do not trust. Jacket no longer needs a Jackett server or Jackett API key. Use only catalogs and media streams you have permission to access.

@@ -55,6 +55,11 @@ dependencies {
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.material:material-icons-extended")
 
+    // In-app playback for direct, licensed media streams.
+    val media3Version = "1.11.1"
+    implementation("androidx.media3:media3-exoplayer:$media3Version")
+    implementation("androidx.media3:media3-ui:$media3Version")
+
     val libtorrentVersion = "2.1.0-39"
     implementation("org.libtorrent4j:libtorrent4j:$libtorrentVersion")
     implementation("org.libtorrent4j:libtorrent4j-android-arm:$libtorrentVersion")

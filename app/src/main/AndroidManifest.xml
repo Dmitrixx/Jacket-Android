@@ -10,8 +10,7 @@
         android:label="Jacket"
         android:icon="@drawable/ic_jacket"
         android:supportsRtl="true"
-        android:theme="@style/Theme.Jacket"
-        android:usesCleartextTraffic="true">
+        android:theme="@style/Theme.Jacket">
         <service
             android:name=".torrent.TorrentDownloadService"
             android:exported="false"

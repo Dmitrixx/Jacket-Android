@@ -1,23 +1,27 @@
-# История изменений
+# Changelog
 
-## 1.2.0 — текущая разработка
+## 2.0.0 — media-center transition
 
-- Улучшен Torznab-клиент: endpoint caps, разбор RSS/XML и атрибутов результатов.
-- API-ключ Jackett хранится с шифрованием Android Keystore AES/GCM.
-- Ограничены HTTP-запросы, перенаправления, размер ответа и число результатов.
-- Добавлен нативный libtorrent4j движок, DHT и управление загрузками.
-- Добавлена очередь magnet-задач с нормализацией btih hex/base32 и btmh multihash.
-- Добавлено фоновое уведомление о скорости и количестве задач.
-- Добавлен интерфейс поиска/загрузок на Jetpack Compose.
-- Добавлены unit-тесты и GitHub Actions для проверки и сборки APK.
-- Добавлена документация архитектуры, безопасности и участия в разработке.
-- CI переведён на Android SDK Platform 36; Compose BOM зафиксирован на совместимой ветке 2026.06.
+- Replaced the Jackett-server connection screen with an in-app catalog and direct provider architecture.
+- Added Internet Archive catalog search and metadata lookup.
+- Added optional TMDB movie/series catalog, ratings, artwork and descriptions.
+- Added poster cards, home shelves, Movies / Series / Search / Library navigation.
+- Added item detail pages, favorites and recently opened history.
+- Added direct HTTPS RSS/Atom indexer registry; custom feeds are queried on-device.
+- Added a Media3 / ExoPlayer playback screen for supported licensed HTTPS streams.
+- Added source discovery from the detail page, while retaining the integrated libtorrent magnet queue.
+- Encrypted the optional TMDB Read Access Token with Android Keystore AES/GCM.
+- Removed the requirement for a running Jackett server and its Torznab API key.
+
+## 1.2.0
+
+- Added initial libtorrent4j engine, DHT, foreground service and torrent task queue.
+- Added Torznab integration through a Jackett server (superseded by the in-app indexer registry in 2.0.0).
 
 ## 1.1.0
 
-- Подготовлена интеграция libtorrent4j и foreground service.
+- Prepared native BitTorrent engine and service lifecycle.
 
 ## 1.0.0
 
-- Базовый Torznab-поиск через Jackett.
-- Отображение magnet и torrent-ссылок.
+- Initial Jackett-connected search prototype.

@@ -1,75 +1,87 @@
-# Jacket — Android-клиент Jackett и BitTorrent
+# Jacket — Android media center
 
-Jacket объединяет поиск в подключённых индексаторах Jackett и встроенную загрузку через libtorrent4j. Это Android-клиент: сервер Jackett по-прежнему должен быть установлен и запущен отдельно на ПК, NAS или домашнем сервере.
+Jacket is evolving from a Jackett companion into a self-contained Android media center: poster-based film and series catalog, direct indexer federation, favorites, watch history, in-app playback for licensed media, and an integrated BitTorrent queue.
 
-> Проект находится в активной разработке. Сборка APK и интеграционные проверки выполняются GitHub Actions. Пока CI не завершил успешную сборку, этот исходный код не следует считать проверенным релизом.
+**A separate Jackett server is not required.** The app does not call the Jackett API. It queries its own providers directly on the device.
 
-## Возможности текущей версии
+> The project is under active development. A green GitHub Actions build and real-device playback/network testing are required before treating a commit as a release.
 
-- Подключение к Jackett через Torznab API.
-- Проверка подключения через endpoint `t=caps`.
-- Поиск по индексаторам и разбор RSS/XML результатов Torznab.
-- Отображение сидов, пиров, размера, источника и даты публикации.
-- Открытие magnet-ссылок во встроенном движке libtorrent4j или передача .torrent URL внешнему приложению.
-- Встроенная очередь загрузок, пауза, продолжение и удаление задачи.
-- Текущая скорость загрузки/отдачи, прогресс, сиды и пиры.
-- Поддержка DHT и фонового foreground service с постоянным уведомлением.
-- Хранение API-ключа Jackett в Android Keystore с AES/GCM.
-- Ограничение размера ответа Jackett и числа результатов, тайм-ауты, запрет HTTP-перенаправлений.
-- CI: unit-тесты и debug APK; workflow для тегированных релизов.
+## Main areas
 
-## Требования
+- **Home** — featured title and horizontal shelves of recommendations and collections.
+- **Movies / Series** — poster cards, ratings, years, descriptions and details.
+- **Search** — search the built-in catalog and metadata provider.
+- **My library** — favorites and recently opened cards.
+- **Downloads** — integrated libtorrent4j queue, progress, speed, peers, pause and resume.
+- **Settings and sources** — optional TMDB metadata token and direct RSS/Atom indexers.
 
-- Android 9 (API 28) или новее.
-- Для сборки: JDK 17, Android SDK Platform 36, Build Tools 36.0.0 и Gradle 9.5.0.
-- Отдельно работающий сервер Jackett с включёнными индексаторами.
-- Для встроенных загрузок используются ARMv7, ARM64, x86 и x86_64 native-библиотеки libtorrent4j.
+## Built-in providers — no Jackett server
 
-## Сборка
+### Internet Archive catalog
 
-В Android Studio откройте корень репозитория и дождитесь синхронизации Gradle.
+The app queries the Internet Archive Advanced Search endpoint and reads item metadata directly. It can show the catalog, poster thumbnails, descriptions, dates and creator information. On a detail page it looks for video and torrent files.
 
-Из командной строки:
+Jacket only offers in-app playback / direct archive torrent actions when the item metadata includes a license URL. The presence of a file alone is not treated as proof of permission. Always review the source item's license and access conditions.
+
+### TMDB metadata (optional)
+
+To display current popular films, series, ratings, posters and expanded descriptions, enter your own TMDB API Read Access Token in Settings. The token is encrypted with Android Keystore. TMDB provides catalog metadata and artwork; it does not provide the film/video stream.
+
+This product uses the TMDB API but is not endorsed or certified by TMDB.
+
+### Direct RSS / Atom indexers
+
+Add your own HTTPS RSS/Atom search feeds in Settings. Each source URL must include `{query}`, which Jacket replaces with the URL-encoded search text.
+
+Example format:
+
+```text
+https://your-authorized-source.example/search/rss?q={query}
+```
+
+Jacket fetches feeds directly from the phone, parses RSS/Atom entries and common torrent attributes, and merges results. There is no Jackett URL or Jackett API key. Sources are user-managed; only add sources you are authorized to access and use.
+
+The built-in adapter layer is intentionally extensible: new provider adapters can be added without changing the catalog UI.
+
+## Playback and downloads
+
+- Media3 / ExoPlayer provides in-app playback for supported HTTPS video streams.
+- Existing libtorrent4j engine handles magnet links.
+- Direct `.torrent` URLs are currently handed to an installed torrent-capable app; importing them into the internal engine is a planned enhancement.
+- The download queue is stored locally. Full native libtorrent resume-data persistence is not yet implemented.
+- Download files are stored in the app-private `Android/data/app.jacket.mobile/files/Downloads` directory.
+
+## Requirements
+
+- Android 9 (API 28) or newer.
+- Build: JDK 17, Android SDK Platform 36, Build Tools 36.0.0, Gradle 9.5.0.
+- A TMDB API Read Access Token is optional; Internet Archive browsing works without it.
+- Internet access is required for online catalogs, RSS feeds, poster images and remote media streams.
+
+## Build
 
 ```bash
 ./gradlew testDebugUnitTest assembleDebug
 ```
 
 Debug APK:
+
 `app/build/outputs/apk/debug/app-debug.apk`
 
-На Windows используйте `gradlew.bat`.
+GitHub Actions runs unit tests and builds a debug APK on pushes and pull requests to `main`. Release tags use the `v*` pattern.
 
-GitHub Actions запускается при push и pull request в `main`. APK публикуется как workflow artifact. Для релизного APK создайте тег вида `v1.2.0`.
+## Security and content rights
 
-## Первое подключение
+- TMDB access token is encrypted with AES/GCM using a key held by Android Keystore.
+- Catalog and RSS requests use bounded response sizes and timeouts.
+- Custom indexers require HTTPS and cannot embed URL user-info credentials.
+- The app does not ship lists of piracy trackers, bypass paywalls, or claim that an arbitrary source is licensed.
+- Use only media and torrent sources you have the right to access and use. See [SECURITY.md](SECURITY.md).
 
-1. Установите и запустите Jackett на ПК/NAS.
-2. В панели Jackett скопируйте API key.
-3. Убедитесь, что телефон может обращаться к серверу по локальной сети или VPN.
-4. В Jacket откройте настройки, укажите URL (например, `http://192.168.1.10:9117`) и API-ключ.
-5. Нажмите «Проверить соединение», затем сохраните настройки.
-6. Выполните поиск и нажмите «Скачать» рядом с magnet-раздачей.
+## Android background limits
 
-Открытый HTTP разрешён приложением только для локальных/частных адресов. Для внешнего доступа используйте HTTPS или VPN. Не публикуйте порт Jackett и API-ключ в открытый интернет.
+The integrated torrent service currently uses Android foreground-service type `dataSync`. Android 15+ applies a cumulative background time limit to this service type. It is not yet a guarantee of uninterrupted all-day torrent seeding. A separate user-initiated transfer lifecycle and native resume-data persistence remain on the roadmap.
 
-## Папка загрузок
+## Architecture
 
-В этой версии файлы сохраняются в приватную внешнюю директорию приложения:
-`Android/data/app.jacket.mobile/files/Downloads`.
-Android может скрывать её в стандартных файловых менеджерах; используйте системный файловый менеджер с доступом к Android/data или подключение к ПК.
-
-## Важные ограничения версии 1.2
-
-- Очередь сохраняет magnet-ссылки и флаги паузы, но полноценные native libtorrent resume-data blobs пока не сохраняются. После пересоздания сессии libtorrent повторно проверяет локальные данные и может повторно получать отсутствующие части.
-- Настройки лимитов скорости, выбор файлов/приоритетов, планировщик и импорт .torrent-файлов ещё не реализованы.
-- В Android 15+ система ограничивает фоновые сервисы типа `dataSync` шестью часами суммарно за 24 часа. При системном тайм-ауте Jacket корректно останавливает native-сессию; очередь magnet-ссылок остаётся сохранённой и может быть восстановлена при следующем запуске приложения.
-- Сборка, совместимость ABI и поведение на реальных сетях должны быть подтверждены CI и тестированием на устройстве.
-
-## Безопасность и законность
-
-Используйте Jacket только для материалов, которые вы имеете право получать и распространять. BitTorrent передаёт IP-адрес участникам роя; используйте доверенные источники и защищённое сетевое подключение. Сообщения об уязвимостях — согласно [SECURITY.md](SECURITY.md).
-
-## Архитектура
-
-См. [docs-ARCHITECTURE.md](docs-ARCHITECTURE.md), [CHANGELOG.md](CHANGELOG.md) и [CONTRIBUTING.md](CONTRIBUTING.md).
+See [docs-ARCHITECTURE.md](docs-ARCHITECTURE.md), [CHANGELOG.md](CHANGELOG.md) and [CONTRIBUTING.md](CONTRIBUTING.md).

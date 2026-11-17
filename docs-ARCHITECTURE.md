@@ -1,40 +1,52 @@
-# Архитектура Jacket
+# Jacket architecture
 
-## Слои приложения
+## App layers
 
-- `data/JackettClient.kt` — HTTP-клиент Torznab, XML parsing, ограничение ответов и проверки URL.
-- `data/SecureSettings.kt` — сохранение адреса Jackett и API-ключа с AES/GCM и Android Keystore.
-- `data/TorrentEntry.kt` — модель результата и форматирование размера.
-- `torrent/TorrentQueueStore.kt` — ограниченная локальная очередь magnet-задач и состояние паузы.
-- `torrent/TorrentEngine.kt` — единая libtorrent4j SessionManager; наружу выдаются только snapshot-модели.
-- `torrent/TorrentDownloadService.kt` — Android foreground service, команда управления, уведомление и периодическое обновление состояния.
-- `ui/` — Jetpack Compose и ViewModel; UI не вызывает JNI и сетевые запросы напрямую.
-- `MainActivity.kt` — точка входа и обработка внешних torrent-ссылок.
+- `data/MediaModels.kt` — catalog item, detail, indexer and source result models.
+- `data/MediaCatalogClient.kt` — direct Internet Archive search/metadata and optional TMDB catalog metadata.
+- `data/IndexerRegistry.kt` — built-in provider federation and user-configured direct RSS/Atom indexers. No Jackett API client.
+- `data/MediaSettingsStore.kt` — encrypted TMDB access token, RSS source definitions, favorites and watch history.
+- `torrent/TorrentQueueStore.kt` — local magnet task queue and paused IDs.
+- `torrent/TorrentEngine.kt` — one libtorrent4j session; UI receives immutable StateFlow snapshots only.
+- `torrent/TorrentDownloadService.kt` — foreground service, control actions and notification.
+- `ui/JacketApp.kt` — catalog shelves, grid cards, search, details, source picker, favorites, history, downloads and settings.
+- `ui/RemotePoster.kt` — asynchronous poster/backdrop loading.
+- `ui/JacketPlayerScreen.kt` — Media3 / ExoPlayer in-app player.
+- `ui/MainViewModel.kt` — coroutine orchestration and state.
 
-## Поток поиска
+## Catalog flow
 
-1. ViewModel проверяет конфигурацию и передаёт запрос на IO dispatcher.
-2. JackettClient строит Torznab URL с API key и query.
-3. Клиент запрещает HTTP для публичных адресов, redirect-ответы, слишком большие тела и XML DOCTYPE.
-4. Парсер преобразует RSS item в TorrentEntry, извлекает magnet URL, размер, сиды, пиры и indexer.
-5. Compose отображает отсортированный список; magnet отправляется в TorrentDownloadService.
+1. The home page requests provider sections.
+2. Without credentials, the app browses the Internet Archive catalog directly.
+3. When a user adds a TMDB Read Access Token, TMDB supplies richer movie/series metadata and artwork. TMDB is not used as a video source.
+4. Selecting a card loads detail metadata. The details page can search the indexer registry for additional sources.
+5. Internet Archive playback/download actions are exposed only where the item metadata contains a license URL.
 
-## Поток загрузки
+## Direct indexer flow
 
-1. UI передаёт magnet в foreground service.
-2. Service выполняет операции SessionManager на IO dispatcher.
-3. TorrentEngine запускает DHT и добавляет magnet в локальную очередь.
-4. Снимки прогресса и скоростей читаются из libtorrent и передаются в StateFlow.
-5. Удаление задачи удаляет torrent из session и очереди, но не удаляет уже загруженные файлы.
+1. A user adds an HTTPS RSS/Atom search URL template containing `{query}`.
+2. The app URL-encodes the search phrase and requests the configured feed directly from the device.
+3. RSS/Atom entries are parsed into a provider-neutral SourceResult model.
+4. Results from user feeds and the built-in Internet Archive provider are merged, de-duplicated and sorted.
+5. Magnet links can be sent to the integrated libtorrent engine; torrent-file links currently open an external handler.
 
-## Персистентность и ограничения
+The registry is an adapter boundary: adding a provider requires a new adapter and registration, not changes to the Compose screens. Site-specific HTML adapters should be implemented only for sources whose terms permit automated access, with per-host timeouts, rate limits and parser tests.
 
-Очередь в текущей версии сохраняет magnet URI, title и paused IDs. Полноценное сохранение libtorrent resume-data ещё не реализовано. При восстановлении native-сессии libtorrent заново загружает magnet metadata и проверяет файлы на диске. Следующий этап — сериализация resume data через SaveResumeDataAlert и атомарное сохранение файлов в app-private storage.
+## Media playback
 
-## Android lifecycle
+Media3 ExoPlayer handles supported HTTPS audio/video streams. The player is released when the playback screen is left. The app does not turn metadata records into playable streams unless a provider returns an explicit media file URL and the source provides a license URL.
 
-Service использует тип foreground service `dataSync`. На Android 15+ для него действует суммарный временной лимит 6 часов за 24 часа в фоне. Когда система вызывает onTimeout, сервис останавливает native session и оставляет очередь для следующего запуска. Для длительных передач нужно отдельно спроектировать переход на User-Initiated Data Transfer Job и UX запуска пользователем; пока такой переход не реализован.
+## Settings and privacy
 
-## ABI
+- TMDB access tokens are stored encrypted using AES/GCM; the AES key is generated and retained by Android Keystore.
+- User feed configuration, favorites and recently opened catalog cards are stored in app-private SharedPreferences.
+- API tokens and source links must not be printed to logs.
+- RSS indexer URLs require HTTPS and reject URLs containing user-info credentials.
 
-Подключены native зависимости libtorrent4j для ARMv7, ARM64, x86 и x86_64. ABI packaging должен быть подтверждён release/debug сборкой CI.
+## Native torrent lifecycle
+
+The torrent engine owns a single SessionManager. JNI handles do not escape the engine; the UI observes immutable snapshots. The local queue stores magnet links and pause state. Full libtorrent resume-data persistence, .torrent import into the internal engine, file priorities and download scheduling are still planned.
+
+## Android 15+
+
+The service currently uses foreground-service type `dataSync`. Android 15+ applies a cumulative background time limit to this type. A user-initiated data-transfer lifecycle and robust native resume-data restoration are needed before claiming uninterrupted long-running transfers.
