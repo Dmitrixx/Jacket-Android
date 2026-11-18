@@ -214,7 +214,6 @@ class IndexerRegistry(
 
     private fun parseFeed(xml: ByteArray, config: IndexerConfig, parser: XmlPullParser): List<SourceResult> {
         parser.setFeature(XmlPullParser.FEATURE_PROCESS_NAMESPACES, false)
-        parser.setFeature(XmlPullParser.FEATURE_PROCESS_DOCDECL, false)
         parser.setInput(xml.inputStream(), "UTF-8")
 
         val result = mutableListOf<SourceResult>()
@@ -294,6 +293,7 @@ class IndexerRegistry(
                         }
                     }
                 }
+                XmlPullParser.DOCDECL -> throw IOException("XML document type declarations are not supported")
                 XmlPullParser.END_TAG -> {
                     val name = parser.name.substringAfter(':').lowercase()
                     if (inEntry && name in setOf("item", "entry")) {
