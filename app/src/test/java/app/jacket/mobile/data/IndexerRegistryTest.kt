@@ -76,6 +76,46 @@ class IndexerRegistryTest {
     }
 
     @Test
+    fun parsesDirectVideoEnclosuresAndCommonMediaRss() {
+        val xml = """
+            <rss xmlns:media="http://search.yahoo.com/mrss/">
+              <channel>
+                <item>
+                  <title>Licensed HLS stream</title>
+                  <enclosure url="https://media.example/master.m3u8" type="application/vnd.apple.mpegurl" />
+                </item>
+                <item>
+                  <title>Licensed DASH stream</title>
+                  <link rel="enclosure" type="application/dash+xml" href="https://media.example/manifest.mpd" />
+                </item>
+                <item>
+                  <title>Licensed MP4 file</title>
+                  <media:content url="https://media.example/movie.mp4" type="video/mp4" medium="video" fileSize="123456" />
+                </item>
+                <item>
+                  <title>Insecure video</title>
+                  <enclosure url="http://media.example/movie.mp4" type="video/mp4" />
+                </item>
+              </channel>
+            </rss>
+        """.trimIndent()
+
+        val results = registry.parseFeedXml(xml, config, KXmlParser())
+
+        assertEquals(3, results.size)
+        assertEquals(
+            setOf(
+                "https://media.example/master.m3u8",
+                "https://media.example/manifest.mpd",
+                "https://media.example/movie.mp4"
+            ),
+            results.mapNotNull { it.streamUrl }.toSet()
+        )
+        assertEquals(123_456L, results.single { it.title == "Licensed MP4 file" }.sizeBytes)
+        assertTrue(results.all { it.downloadUrl == null && it.magnetUri == null })
+    }
+
+    @Test
     fun rejectsInsecureOnlyLinks() {
         val xml = """
             <rss><channel>
