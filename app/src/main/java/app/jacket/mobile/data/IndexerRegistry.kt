@@ -222,6 +222,7 @@ class IndexerRegistry(
         var pageUrl: String? = null
         var magnet: String? = null
         var torrentUrl: String? = null
+        var streamUrl: String? = null
         var size: Long? = null
         var seeders: Int? = null
         var leechers: Int? = null
@@ -232,6 +233,7 @@ class IndexerRegistry(
             pageUrl = null
             magnet = null
             torrentUrl = null
+            streamUrl = null
             size = null
             seeders = null
             leechers = null
@@ -253,11 +255,13 @@ class IndexerRegistry(
                             val href = parser.getAttributeValue(null, "href")
                             val rel = parser.getAttributeValue(null, "rel")
                             val value = href?.takeIf(String::isNotBlank) ?: parser.nextText().trim()
+                            val contentType = parser.getAttributeValue(null, "type").orEmpty()
                             when {
                                 value.startsWith("magnet:", true) -> magnet = value
                                 rel.equals("enclosure", true) &&
-                                    (value.endsWith(".torrent", true) || parser.getAttributeValue(null, "type").orEmpty().contains("bittorrent", true)) ->
+                                    (value.endsWith(".torrent", true) || contentType.contains("bittorrent", true)) ->
                                     torrentUrl = value
+                                isPlayableVideoUrl(value, contentType) -> streamUrl = value
                                 value.isNotBlank() && pageUrl == null -> pageUrl = value
                             }
                         }
@@ -267,8 +271,19 @@ class IndexerRegistry(
                             when {
                                 value.startsWith("magnet:", true) -> magnet = value
                                 value.endsWith(".torrent", true) || type.contains("bittorrent", true) -> torrentUrl = value
+                                isPlayableVideoUrl(value, type) -> streamUrl = value
                                 value.startsWith("https://") && pageUrl == null -> pageUrl = value
                             }
+                        }
+                        "content" -> if (inEntry) {
+                            val value = parser.getAttributeValue(null, "url").orEmpty()
+                            val type = parser.getAttributeValue(null, "type").orEmpty()
+                            val medium = parser.getAttributeValue(null, "medium").orEmpty()
+                            if (isPlayableVideoUrl(value, type) || medium.equals("video", ignoreCase = true)) {
+                                if (isHttps(value)) streamUrl = value
+                            }
+                            val fileSize = parser.getAttributeValue(null, "fileSize")?.toLongOrNull()?.takeIf { it >= 0L }
+                            if (size == null) size = fileSize
                         }
                         "guid", "id" -> if (inEntry && pageUrl == null) pageUrl = parser.nextText().trim()
                         "category" -> if (inEntry) {
@@ -299,14 +314,18 @@ class IndexerRegistry(
                     if (inEntry && name in setOf("item", "entry")) {
                         val safeMagnet = magnet?.takeIf { it.startsWith("magnet:", true) }
                         val safeTorrent = torrentUrl?.takeIf(::isHttps)
+                        val safeStream = streamUrl?.takeIf(::isHttps)
                         val safePage = pageUrl?.takeIf(::isHttps)
-                        if (title.isNotBlank() && (safeMagnet != null || safeTorrent != null || safePage != null)) {
+                        if (title.isNotBlank() &&
+                            (safeMagnet != null || safeTorrent != null || safeStream != null || safePage != null)
+                        ) {
                             result += SourceResult(
                                 id = "${config.id}:${result.size}:${title.hashCode()}",
                                 title = title,
                                 providerName = config.name,
                                 magnetUri = safeMagnet,
                                 downloadUrl = safeTorrent,
+                                streamUrl = safeStream,
                                 sizeBytes = size,
                                 seeders = seeders,
                                 leechers = leechers,
@@ -322,6 +341,14 @@ class IndexerRegistry(
             event = parser.next()
         }
         return result
+    }
+
+    private fun isPlayableVideoUrl(value: String, contentType: String): Boolean {
+        if (!isHttps(value)) return false
+        val mime = contentType.substringBefore(';').trim().lowercase()
+        if (mime.startsWith("video/") || mime in PLAYLIST_MIME_TYPES) return true
+        val path = runCatching { java.net.URI(value).rawPath.orEmpty().lowercase() }.getOrDefault("")
+        return VIDEO_EXTENSIONS.any(path::endsWith)
     }
 
     private fun isHttps(value: String): Boolean = runCatching {
@@ -341,6 +368,14 @@ class IndexerRegistry(
         const val MAX_FEED_RESULTS = 100
         const val MAX_FEED_BYTES = 4 * 1024 * 1024
         const val MAX_ERROR_LENGTH = 180
+        val PLAYLIST_MIME_TYPES = setOf(
+            "application/vnd.apple.mpegurl",
+            "application/x-mpegurl",
+            "application/dash+xml"
+        )
+        val VIDEO_EXTENSIONS = setOf(
+            ".m3u8", ".mpd", ".mp4", ".m4v", ".mov", ".webm", ".mkv", ".ogv"
+        )
         const val CONNECT_TIMEOUT_MS = 10_000
         const val READ_TIMEOUT_MS = 25_000
         const val USER_AGENT = "JacketAndroid/2.1 (direct indexer federation)"
