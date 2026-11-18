@@ -3,14 +3,19 @@ package app.jacket.mobile.torrent
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ServiceInfo
+import android.net.Uri
 import android.os.Build
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
+import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
 import app.jacket.mobile.R
+import app.jacket.mobile.MainActivity
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -20,11 +25,18 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.File
+import java.io.IOException
+import java.net.HttpURLConnection
+import java.net.URL
+import java.util.concurrent.atomic.AtomicBoolean
 
-/** User-visible foreground service that owns the native BitTorrent session. */
+/** Single-process foreground owner of the BitTorrent session and loopback media server. */
 class TorrentDownloadService : Service() {
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var pollingStarted = false
+    private val playbackActive = AtomicBoolean(false)
+    private var streamServer: LocalStreamServer? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -32,8 +44,8 @@ class TorrentDownloadService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        startForeground(NOTIFICATION_ID, notification("Запуск торрент-движка…"))
         val action = intent?.action ?: ACTION_RESTORE
+        startForegroundFor(playbackActive.get() || action == ACTION_PLAY)
         serviceScope.launch {
             try {
                 withContext(Dispatchers.IO) {
@@ -42,12 +54,40 @@ class TorrentDownloadService : Service() {
                         ACTION_ADD -> {
                             val magnet = intent?.getStringExtra(EXTRA_MAGNET).orEmpty()
                             val title = intent?.getStringExtra(EXTRA_TITLE).orEmpty()
-                            require(magnet.startsWith("magnet:?")) { "Для встроенной загрузки нужна magnet-ссылка" }
+                            require(magnet.startsWith("magnet:?")) { "Для загрузки нужна magnet-ссылка" }
                             TorrentEngine.add(applicationContext, magnet, title)
+                        }
+                        ACTION_ADD_TORRENT -> {
+                            val path = intent?.getStringExtra(EXTRA_TORRENT_PATH).orEmpty()
+                            require(path.isNotBlank()) { "Путь к .torrent не указан" }
+                            TorrentEngine.addTorrent(applicationContext, File(path), intent?.getStringExtra(EXTRA_TITLE))
+                        }
+                        ACTION_ADD_TORRENT_URL -> {
+                            val url = intent?.getStringExtra(EXTRA_TORRENT_URL).orEmpty()
+                            val title = intent?.getStringExtra(EXTRA_TITLE).orEmpty()
+                            val file = downloadTorrentFile(url, title)
+                            TorrentEngine.addTorrent(applicationContext, file, title)
                         }
                         ACTION_PAUSE -> TorrentEngine.pause(applicationContext, intent?.getStringExtra(EXTRA_ID).orEmpty())
                         ACTION_RESUME -> TorrentEngine.resume(applicationContext, intent?.getStringExtra(EXTRA_ID).orEmpty())
-                        ACTION_REMOVE -> TorrentEngine.remove(applicationContext, intent?.getStringExtra(EXTRA_ID).orEmpty())
+                        ACTION_REMOVE -> TorrentEngine.remove(
+                            applicationContext,
+                            intent?.getStringExtra(EXTRA_ID).orEmpty(),
+                            intent?.getBooleanExtra(EXTRA_DELETE_FILES, false) ?: false
+                        )
+                        ACTION_PLAY -> startTorrentPlayback(
+                            intent?.getStringExtra(EXTRA_ID).orEmpty(),
+                            intent?.getIntExtra(EXTRA_FILE_INDEX, -1) ?: -1
+                        )
+                        ACTION_STOP_PLAYBACK -> stopTorrentPlayback()
+                        ACTION_PAUSE_SELECTED -> {
+                            val id = intent?.getStringExtra(EXTRA_ID).orEmpty()
+                            if (TorrentEngine.snapshots.value.firstOrNull { it.id == id }?.paused == true) {
+                                TorrentEngine.resume(applicationContext, id)
+                            } else {
+                                TorrentEngine.pause(applicationContext, id)
+                            }
+                        }
                     }
                     TorrentEngine.refresh()
                 }
@@ -56,42 +96,164 @@ class TorrentDownloadService : Service() {
                 throw cancelled
             } catch (error: Exception) {
                 getSystemService(NotificationManager::class.java)
-                    .notify(NOTIFICATION_ID, notification("Ошибка: ${error.message ?: "не удалось запустить загрузку"}"))
+                    .notify(NOTIFICATION_ID, notification("Ошибка: ${error.message ?: "не удалось выполнить операцию"}", null))
             }
         }
         return START_STICKY
+    }
+
+    private suspend fun startTorrentPlayback(id: String, fileIndex: Int) {
+        require(id.matches(Regex("(?i)([a-f0-9]{40}|[a-f0-9]{64})"))) { "Некорректный infohash" }
+        require(fileIndex >= 0) { "Не выбран файл раздачи" }
+        val target = withContext(Dispatchers.IO) {
+            TorrentEngine.selectFile(applicationContext, id, fileIndex)
+            val server = streamServer ?: LocalStreamServer(
+                metadata = TorrentEngine::target,
+                awaitRange = { hash, index, start, length -> TorrentEngine.awaitRange(hash, index, start, length) }
+            ).also {
+                it.start()
+                streamServer = it
+            }
+            val item = TorrentEngine.target(id, fileIndex)
+            Triple(server.url(id, fileIndex), item, server.port)
+        }
+        val key = PlaybackProgressStore.torrentKey(id, fileIndex)
+        val savedPosition = PlaybackProgressStore(applicationContext).position(key)
+        playbackActive.set(true)
+        startForegroundFor(mediaPlayback = true, status = "Смотрим: ${target.second.name}")
+        TorrentPlaybackBus.publish(
+            StreamPlaybackRequest(
+                title = target.second.name,
+                url = target.first,
+                progressKey = key,
+                initialPositionMs = savedPosition
+            )
+        )
+    }
+
+    private suspend fun stopTorrentPlayback() {
+        playbackActive.set(false)
+        TorrentPlaybackBus.publish(null)
+        withContext(Dispatchers.IO) {
+            streamServer?.close()
+            streamServer = null
+        }
+        startForegroundFor(mediaPlayback = false, status = "Загрузка продолжается в фоне")
     }
 
     private fun startPolling() {
         if (pollingStarted) return
         pollingStarted = true
         serviceScope.launch {
+            var lastResumeSave = 0L
             while (isActive) {
-                withContext(Dispatchers.IO) { TorrentEngine.refresh() }
-                val rows = TorrentEngine.snapshots.value
-                val down = rows.sumOf { it.downloadBytesPerSecond.toLong() }
-                val up = rows.sumOf { it.uploadBytesPerSecond.toLong() }
-                val label = if (rows.isEmpty()) "Нет активных загрузок" else
-                    "${rows.size} задач · ↓ ${formatRate(down)} · ↑ ${formatRate(up)}"
-                getSystemService(NotificationManager::class.java)
-                    .notify(NOTIFICATION_ID, notification(label))
+                withContext(Dispatchers.IO) {
+                    TorrentEngine.refresh()
+                    val now = System.currentTimeMillis()
+                    if (now - lastResumeSave >= RESUME_SAVE_INTERVAL_MS) {
+                        TorrentEngine.saveAllResumeData()
+                        lastResumeSave = now
+                    }
+                }
+                updateNotification()
                 delay(POLL_INTERVAL_MS)
             }
         }
     }
 
+    private fun updateNotification() {
+        val rows = TorrentEngine.snapshots.value
+        val activeStream = TorrentPlaybackBus.active.value
+        val selected = rows.firstOrNull { it.files.any { f -> f.isSelected } }
+        val down = rows.sumOf { it.downloadBytesPerSecond.toLong() }
+        val up = rows.sumOf { it.uploadBytesPerSecond.toLong() }
+        val text = when {
+            activeStream != null && selected != null -> {
+                val file = selected.files.firstOrNull { it.isSelected }
+                "Просмотр • ${(file?.progress ?: 0f).times(100).toInt()}% • ↓ ${formatRate(down)}"
+            }
+            rows.isEmpty() -> "Нет активных загрузок"
+            else -> "${rows.size} задач · ↓ ${formatRate(down)} · ↑ ${formatRate(up)}"
+        }
+        val pauseId = selected?.id ?: rows.firstOrNull { !it.paused }?.id
+        getSystemService(NotificationManager::class.java)
+            .notify(NOTIFICATION_ID, notification(text, pauseId))
+    }
+
+    private fun startForegroundFor(mediaPlayback: Boolean, status: String = "Запуск торрент-движка…") {
+        val notification = notification(status, TorrentEngine.snapshots.value.firstOrNull { !it.paused }?.id)
+        val type = if (mediaPlayback) {
+            ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK
+        } else {
+            ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            ServiceCompat.startForeground(this, NOTIFICATION_ID, notification, type)
+        } else {
+            startForeground(NOTIFICATION_ID, notification)
+        }
+    }
+
+    private fun downloadTorrentFile(urlValue: String, title: String): File {
+        val uri = Uri.parse(urlValue)
+        require(uri.scheme == "https" && !uri.host.isNullOrBlank() && uri.userInfo == null) {
+            "Torrent-файл можно получать только по HTTPS"
+        }
+        val connection = (URL(urlValue).openConnection() as HttpURLConnection).apply {
+            connectTimeout = 10_000
+            readTimeout = 25_000
+            instanceFollowRedirects = false
+            setRequestProperty("User-Agent", "JacketAndroid/2.1")
+        }
+        val dir = File(filesDir, "torrent-imports").apply { mkdirs() }
+        val safeName = title.replace(Regex("[^a-zA-Z0-9._-]"), "_").take(64).ifBlank { "release" }
+        val target = File.createTempFile("${safeName}_", ".torrent", dir)
+        try {
+            val code = connection.responseCode
+            if (code !in 200..299) throw IOException("HTTP $code при загрузке .torrent")
+            connection.inputStream.use { input ->
+                target.outputStream().use { output ->
+                    val buffer = ByteArray(8192)
+                    var total = 0L
+                    while (true) {
+                        val count = input.read(buffer)
+                        if (count < 0) break
+                        total += count
+                        if (total > TorrentQueueStore.MAX_TORRENT_BYTES) throw IOException("Файл .torrent превышает 8 МиБ")
+                        output.write(buffer, 0, count)
+                    }
+                }
+            }
+            return target
+        } catch (error: Exception) {
+            target.delete()
+            throw error
+        } finally {
+            connection.disconnect()
+        }
+    }
+
     @android.annotation.TargetApi(35)
     override fun onTimeout(startId: Int, fgsType: Int) {
-        // Android 15+ grants dataSync foreground services at most six background hours per 24h.
-        // Stop the native session cleanly; persisted magnet tasks are restored next time the user starts Jacket.
+        // Only the dataSync mode is time-limited. Active viewing uses mediaPlayback mode.
+        if (playbackActive.get()) {
+            startForegroundFor(mediaPlayback = true, status = "Воспроизведение продолжается")
+            return
+        }
         serviceScope.launch {
-            withContext(Dispatchers.IO) { TorrentEngine.stop() }
+            withContext(Dispatchers.IO) {
+                TorrentEngine.saveAllResumeData()
+                TorrentEngine.stop()
+            }
             stopForeground(STOP_FOREGROUND_REMOVE)
             stopSelf(startId)
         }
     }
 
     override fun onDestroy() {
+        streamServer?.close()
+        streamServer = null
+        if (playbackActive.get()) TorrentPlaybackBus.publish(null)
         serviceScope.cancel()
         super.onDestroy()
     }
@@ -100,20 +262,43 @@ class TorrentDownloadService : Service() {
 
     private fun createChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel(CHANNEL_ID, "Загрузки Jacket", NotificationManager.IMPORTANCE_LOW)
+            val channel = NotificationChannel(CHANNEL_ID, "Jacket • загрузки и просмотр", NotificationManager.IMPORTANCE_LOW)
             getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
         }
     }
 
-    private fun notification(text: String): Notification =
-        NotificationCompat.Builder(this, CHANNEL_ID)
+    private fun notification(text: String, torrentId: String?): Notification {
+        val pauseIntent = torrentId?.let { id ->
+            PendingIntent.getService(
+                this,
+                id.hashCode(),
+                Intent(this, TorrentDownloadService::class.java)
+                    .setAction(ACTION_PAUSE_SELECTED)
+                    .putExtra(EXTRA_ID, id),
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+        }
+        val openIntent = PendingIntent.getActivity(
+            this,
+            4102,
+            Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        val builder = NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_jacket)
-            .setContentTitle("Jacket — торрент-клиент")
+            .setContentTitle("Jacket")
             .setContentText(text)
+            .setContentIntent(openIntent)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .setCategory(NotificationCompat.CATEGORY_SERVICE)
-            .build()
+        if (pauseIntent != null) builder.addAction(
+            R.drawable.ic_jacket,
+            if (TorrentEngine.snapshots.value.firstOrNull { it.id == torrentId }?.paused == true) "Продолжить" else "Пауза",
+            pauseIntent
+        )
+        return builder.build()
+    }
 
     private fun formatRate(bytesPerSecond: Long): String = when {
         bytesPerSecond >= 1024L * 1024L -> "%.1f МБ/с".format(bytesPerSecond / (1024.0 * 1024.0))
@@ -125,15 +310,25 @@ class TorrentDownloadService : Service() {
         const val EXTRA_MAGNET = "magnet"
         const val EXTRA_TITLE = "title"
         const val EXTRA_ID = "torrent_id"
+        const val EXTRA_FILE_INDEX = "file_index"
+        const val EXTRA_TORRENT_PATH = "torrent_path"
+        const val EXTRA_TORRENT_URL = "torrent_url"
+        const val EXTRA_DELETE_FILES = "delete_files"
 
         private const val ACTION_RESTORE = "app.jacket.action.RESTORE"
         private const val ACTION_ADD = "app.jacket.action.ADD"
+        private const val ACTION_ADD_TORRENT = "app.jacket.action.ADD_TORRENT"
+        private const val ACTION_ADD_TORRENT_URL = "app.jacket.action.ADD_TORRENT_URL"
         private const val ACTION_PAUSE = "app.jacket.action.PAUSE"
         private const val ACTION_RESUME = "app.jacket.action.RESUME"
         private const val ACTION_REMOVE = "app.jacket.action.REMOVE"
+        private const val ACTION_PLAY = "app.jacket.action.PLAY"
+        private const val ACTION_STOP_PLAYBACK = "app.jacket.action.STOP_PLAYBACK"
+        private const val ACTION_PAUSE_SELECTED = "app.jacket.action.PAUSE_SELECTED"
         private const val CHANNEL_ID = "jacket_downloads"
         private const val NOTIFICATION_ID = 4101
         private const val POLL_INTERVAL_MS = 1_000L
+        private const val RESUME_SAVE_INTERVAL_MS = 30_000L
 
         private fun send(context: Context, action: String, extras: Intent.() -> Unit = {}) {
             val intent = Intent(context, TorrentDownloadService::class.java).setAction(action).apply(extras)
@@ -145,8 +340,24 @@ class TorrentDownloadService : Service() {
             putExtra(EXTRA_MAGNET, magnet)
             putExtra(EXTRA_TITLE, title)
         }
+        fun addTorrentFile(context: Context, path: String, title: String? = null) = send(context, ACTION_ADD_TORRENT) {
+            putExtra(EXTRA_TORRENT_PATH, path)
+            putExtra(EXTRA_TITLE, title)
+        }
+        fun addTorrentUrl(context: Context, url: String, title: String) = send(context, ACTION_ADD_TORRENT_URL) {
+            putExtra(EXTRA_TORRENT_URL, url)
+            putExtra(EXTRA_TITLE, title)
+        }
         fun pause(context: Context, id: String) = send(context, ACTION_PAUSE) { putExtra(EXTRA_ID, id) }
         fun resume(context: Context, id: String) = send(context, ACTION_RESUME) { putExtra(EXTRA_ID, id) }
-        fun remove(context: Context, id: String) = send(context, ACTION_REMOVE) { putExtra(EXTRA_ID, id) }
+        fun remove(context: Context, id: String, deleteFiles: Boolean = false) = send(context, ACTION_REMOVE) {
+            putExtra(EXTRA_ID, id)
+            putExtra(EXTRA_DELETE_FILES, deleteFiles)
+        }
+        fun play(context: Context, id: String, fileIndex: Int) = send(context, ACTION_PLAY) {
+            putExtra(EXTRA_ID, id)
+            putExtra(EXTRA_FILE_INDEX, fileIndex)
+        }
+        fun stopPlayback(context: Context) = send(context, ACTION_STOP_PLAYBACK)
     }
 }

@@ -4,17 +4,27 @@ import android.content.Context
 import android.net.Uri
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.File
 import java.security.MessageDigest
 
-/** Small durable queue. Native torrent resume data is added in a later storage migration. */
+/** Durable task metadata; native JNI handles deliberately never enter this model. */
 data class QueuedTorrent(
     val id: String,
     val title: String,
-    val magnetUri: String
-)
+    val magnetUri: String? = null,
+    val torrentPath: String? = null,
+    val selectedFileIndex: Int? = null
+) {
+    init {
+        require(magnetUri?.startsWith("magnet:?") == true || !torrentPath.isNullOrBlank()) {
+            "Задача должна содержать magnet или сохранённый .torrent"
+        }
+    }
+}
 
 class TorrentQueueStore(context: Context) {
-    private val preferences = context.applicationContext.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
+    private val appContext = context.applicationContext
+    private val preferences = appContext.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
 
     @Synchronized
     fun all(): List<QueuedTorrent> = runCatching {
@@ -22,27 +32,65 @@ class TorrentQueueStore(context: Context) {
         buildList {
             for (index in 0 until array.length()) {
                 val item = array.optJSONObject(index) ?: continue
-                val magnet = item.optString("magnet").takeIf { it.startsWith("magnet:?") } ?: continue
-                val id = item.optString("id").ifBlank { idFor(magnet) }
-                add(QueuedTorrent(id, item.optString("title").ifBlank { "Торрент $id" }, magnet))
+                val magnet = item.optString("magnet").takeIf { it.startsWith("magnet:?") }
+                val path = item.optString("torrentPath").takeIf { it.isNotBlank() && File(it).isFile }
+                if (magnet == null && path == null) continue
+                val id = item.optString("id").ifBlank { magnet?.let(::idFor) ?: idForFile(path!!) }
+                add(
+                    QueuedTorrent(
+                        id = id,
+                        title = item.optString("title").ifBlank { "Торрент ${id.take(10)}" },
+                        magnetUri = magnet,
+                        torrentPath = path,
+                        selectedFileIndex = item.optInt("selectedFileIndex", -1).takeIf { it >= 0 }
+                    )
+                )
             }
-        }.distinctBy { it.id }
+        }.distinctBy { it.id }.take(MAX_QUEUE_SIZE)
     }.getOrDefault(emptyList())
+
+    @Synchronized
+    fun get(id: String): QueuedTorrent? = all().firstOrNull { it.id.equals(id, true) }
 
     @Synchronized
     fun add(magnet: String, title: String): QueuedTorrent {
         require(magnet.startsWith("magnet:?") && magnet.length <= MAX_MAGNET_LENGTH) {
             "Некорректная или слишком длинная magnet-ссылка"
         }
-        val item = QueuedTorrent(idFor(magnet), title.trim().take(MAX_TITLE_LENGTH).ifBlank { "Торрент" }, magnet)
-        val updated = (all().filterNot { it.id == item.id } + item).takeLast(MAX_QUEUE_SIZE)
-        save(updated)
+        val item = QueuedTorrent(
+            id = idFor(magnet),
+            title = title.trim().take(MAX_TITLE_LENGTH).ifBlank { "Торрент" },
+            magnetUri = magnet
+        )
+        upsert(item)
         return item
     }
 
     @Synchronized
+    fun addTorrentFile(torrentFile: File, id: String, title: String): QueuedTorrent {
+        require(torrentFile.isFile && torrentFile.length() in 1..MAX_TORRENT_BYTES) {
+            "Файл .torrent отсутствует или превышает допустимый размер"
+        }
+        require(id.matches(INFO_HASH)) { "Некорректный infohash" }
+        val item = QueuedTorrent(
+            id = id.lowercase(),
+            title = title.trim().take(MAX_TITLE_LENGTH).ifBlank { torrentFile.nameWithoutExtension },
+            torrentPath = torrentFile.absolutePath
+        )
+        upsert(item)
+        return item
+    }
+
+    @Synchronized
+    fun selectFile(id: String, index: Int?) {
+        val item = get(id) ?: throw IllegalArgumentException("Загрузка не найдена")
+        require(index == null || index >= 0) { "Индекс файла не может быть отрицательным" }
+        upsert(item.copy(selectedFileIndex = index))
+    }
+
+    @Synchronized
     fun remove(id: String) {
-        save(all().filterNot { it.id == id })
+        save(all().filterNot { it.id.equals(id, true) })
         val paused = preferences.getStringSet(KEY_PAUSED, emptySet()).orEmpty().toMutableSet()
         paused.remove(id)
         preferences.edit().putStringSet(KEY_PAUSED, paused).apply()
@@ -58,10 +106,22 @@ class TorrentQueueStore(context: Context) {
     fun isPaused(id: String): Boolean = id in preferences.getStringSet(KEY_PAUSED, emptySet()).orEmpty()
     fun pausedIds(): Set<String> = preferences.getStringSet(KEY_PAUSED, emptySet()).orEmpty().toSet()
 
+    @Synchronized
+    private fun upsert(item: QueuedTorrent) {
+        save((all().filterNot { it.id.equals(item.id, true) } + item).takeLast(MAX_QUEUE_SIZE))
+    }
+
     private fun save(items: List<QueuedTorrent>) {
         val array = JSONArray()
         items.forEach { item ->
-            array.put(JSONObject().put("id", item.id).put("title", item.title).put("magnet", item.magnetUri))
+            array.put(
+                JSONObject()
+                    .put("id", item.id)
+                    .put("title", item.title)
+                    .put("magnet", item.magnetUri)
+                    .put("torrentPath", item.torrentPath)
+                    .put("selectedFileIndex", item.selectedFileIndex ?: -1)
+            )
         }
         preferences.edit().putString(KEY_QUEUE, array.toString()).apply()
     }
@@ -73,6 +133,8 @@ class TorrentQueueStore(context: Context) {
         private const val MAX_QUEUE_SIZE = 300
         private const val MAX_MAGNET_LENGTH = 16_384
         private const val MAX_TITLE_LENGTH = 512
+        const val MAX_TORRENT_BYTES = 8L * 1024L * 1024L
+        private val INFO_HASH = Regex("(?i)([a-f0-9]{40}|[a-f0-9]{64})")
 
         /** Returns a canonical hex info-hash so queue operations match libtorrent's hash IDs. */
         fun idFor(magnet: String): String {
@@ -90,12 +152,15 @@ class TorrentQueueStore(context: Context) {
                 ?.takeIf { it.matches(Regex("[a-f0-9]{64}")) }
             if (btmh != null) return btmh
 
-            // Fall back to a stable key when a non-standard magnet lacks a usable xt parameter.
             return MessageDigest.getInstance("SHA-256")
                 .digest(magnet.toByteArray(Charsets.UTF_8))
                 .take(12)
                 .joinToString("") { "%02x".format(it) }
         }
+
+        fun idForFile(file: File): String = file.nameWithoutExtension.lowercase().takeIf { it.matches(INFO_HASH) }
+            ?: MessageDigest.getInstance("SHA-256").digest(file.readBytes())
+                .take(20).joinToString("") { "%02x".format(it) }
 
         private fun normalizeBtih(value: String): String? {
             val clean = value.trim()

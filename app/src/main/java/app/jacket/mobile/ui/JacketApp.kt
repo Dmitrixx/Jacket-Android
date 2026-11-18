@@ -1,6 +1,8 @@
 package app.jacket.mobile.ui
 
 import android.content.Intent
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.compose.BackHandler
 import android.net.Uri
 import android.widget.Toast
@@ -72,6 +74,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -97,6 +100,10 @@ import app.jacket.mobile.data.SourceResult
 import app.jacket.mobile.data.formatBytes
 import app.jacket.mobile.torrent.TorrentDownloadService
 import app.jacket.mobile.torrent.TorrentEngine
+import app.jacket.mobile.torrent.TorrentPlaybackBus
+import app.jacket.mobile.torrent.PlaybackProgressStore
+import app.jacket.mobile.torrent.TorrentQueueStore
+import java.io.File
 
 private const val TAB_HOME = 0
 private const val TAB_MOVIES = 1
@@ -112,15 +119,39 @@ fun JacketApp(viewModel: MainViewModel) {
     var showDownloads by rememberSaveable { mutableStateOf(false) }
     var playerUrl by rememberSaveable { mutableStateOf<String?>(null) }
     var playerTitle by rememberSaveable { mutableStateOf("") }
+    var playerProgressKey by rememberSaveable { mutableStateOf<String?>(null) }
+    var playerInitialPosition by rememberSaveable { mutableLongStateOf(0L) }
+    var isTorrentPlayback by rememberSaveable { mutableStateOf(false) }
 
+    val context = LocalContext.current
+    val torrentPlayback by TorrentPlaybackBus.active.collectAsState()
     val details by viewModel.selectedDetails.collectAsState()
-    val isTv = (LocalContext.current.resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_TYPE_MASK) == android.content.res.Configuration.UI_MODE_TYPE_TELEVISION
+    val isTv = (context.resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_TYPE_MASK) == android.content.res.Configuration.UI_MODE_TYPE_TELEVISION
     val loading by viewModel.isLoading.collectAsState()
+
+    LaunchedEffect(torrentPlayback) {
+        torrentPlayback?.let { request ->
+            playerTitle = request.title
+            playerUrl = request.url
+            playerProgressKey = request.progressKey
+            playerInitialPosition = request.initialPositionMs
+            isTorrentPlayback = true
+        }
+    }
+
+    fun closePlayer() {
+        if (isTorrentPlayback) TorrentDownloadService.stopPlayback(context)
+        playerUrl = null
+        playerTitle = ""
+        playerProgressKey = null
+        playerInitialPosition = 0L
+        isTorrentPlayback = false
+    }
 
     // Android TV remotes dispatch Back through the system dispatcher; unwind the current screen first.
     BackHandler(enabled = playerUrl != null || showSettings || showDownloads || details != null) {
         when {
-            playerUrl != null -> playerUrl = null
+            playerUrl != null -> closePlayer()
             showSettings -> showSettings = false
             showDownloads -> showDownloads = false
             details != null -> viewModel.closeDetails()
@@ -130,9 +161,13 @@ fun JacketApp(viewModel: MainViewModel) {
     LaunchedEffect(Unit) { viewModel.loadHome() }
 
     if (playerUrl != null) {
-        JacketPlayerScreen(title = playerTitle, streamUrl = playerUrl.orEmpty()) {
-            playerUrl = null
-        }
+        JacketPlayerScreen(
+            title = playerTitle,
+            streamUrl = playerUrl.orEmpty(),
+            progressKey = playerProgressKey,
+            initialPositionMs = playerInitialPosition,
+            onBack = ::closePlayer
+        )
         return
     }
 
@@ -156,6 +191,9 @@ fun JacketApp(viewModel: MainViewModel) {
             onPlay = { title, url ->
                 playerTitle = title
                 playerUrl = url
+                playerProgressKey = PlaybackProgressStore.urlKey(url)
+                playerInitialPosition = PlaybackProgressStore(context).position(playerProgressKey!!)
+                isTorrentPlayback = false
             }
         )
         return
@@ -780,7 +818,7 @@ private fun DetailScreen(
 
                     if (details!!.torrentUrl != null) {
                         OutlinedButton(
-                            onClick = { openExternal(context, details!!.torrentUrl!!) },
+                            onClick = { TorrentDownloadService.addTorrentUrl(context, details!!.torrentUrl!!, item.title) },
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             Icon(Icons.Default.Download, contentDescription = null)
@@ -836,7 +874,7 @@ private fun DetailScreen(
                                 source = source,
                                 onPlay = { url -> onPlay(source.title, url) },
                                 onMagnet = { magnet -> TorrentDownloadService.add(context, magnet, source.title) },
-                                onTorrent = { url -> openExternal(context, url) },
+                                onTorrent = { url -> TorrentDownloadService.addTorrentUrl(context, url, source.title) },
                                 onPage = { url -> openExternal(context, url) }
                             )
                         }
@@ -900,6 +938,34 @@ private fun SourceCard(
 private fun DownloadsScreen(onBack: () -> Unit) {
     val context = LocalContext.current
     val downloads by TorrentEngine.snapshots.collectAsState()
+    val importTorrent = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) {
+            runCatching {
+                val directory = File(context.filesDir, "torrent-imports").apply { mkdirs() }
+                val output = File.createTempFile("picker_", ".torrent", directory)
+                context.contentResolver.openInputStream(uri).use { input ->
+                    requireNotNull(input) { "Не удалось открыть выбранный файл" }
+                    output.outputStream().use { stream ->
+                        val buffer = ByteArray(8192)
+                        var total = 0L
+                        while (true) {
+                            val count = input.read(buffer)
+                            if (count < 0) break
+                            total += count
+                            require(total <= TorrentQueueStore.MAX_TORRENT_BYTES) { "Файл .torrent больше 8 МиБ" }
+                            stream.write(buffer, 0, count)
+                        }
+                    }
+                }
+                output
+            }.onSuccess { file ->
+                TorrentDownloadService.addTorrentFile(context, file.absolutePath, file.nameWithoutExtension)
+                Toast.makeText(context, ".torrent добавлен во встроенную очередь", Toast.LENGTH_SHORT).show()
+            }.onFailure {
+                Toast.makeText(context, "Ошибка импорта: ${it.message}", Toast.LENGTH_LONG).show()
+            }
+        }
+    }
 
     LaunchedEffect(Unit) { TorrentDownloadService.restore(context) }
 
@@ -913,6 +979,9 @@ private fun DownloadsScreen(onBack: () -> Unit) {
                     }
                 },
                 actions = {
+                    IconButton(onClick = { importTorrent.launch(arrayOf("application/x-bittorrent", "application/octet-stream", "*/*")) }) {
+                        Icon(Icons.Default.Add, contentDescription = "Импортировать .torrent")
+                    }
                     IconButton(onClick = { TorrentDownloadService.restore(context) }) {
                         Icon(Icons.Default.Refresh, contentDescription = "Обновить")
                     }
@@ -921,16 +990,26 @@ private fun DownloadsScreen(onBack: () -> Unit) {
         }
     ) { padding ->
         if (downloads.isEmpty()) {
-            MessageCard(
-                "Загрузок пока нет. Откройте карточку источника с magnet-ссылкой и добавьте её в очередь.",
-                false,
-                Modifier.padding(padding)
-            )
+            Column(
+                Modifier.fillMaxSize().padding(padding),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                MessageCard(
+                    "Загрузок пока нет. Добавьте magnet-ссылку из результатов поиска или импортируйте .torrent-файл.",
+                    false,
+                    Modifier.padding(16.dp)
+                )
+                OutlinedButton(onClick = { importTorrent.launch(arrayOf("application/x-bittorrent", "application/octet-stream", "*/*")) }) {
+                    Icon(Icons.Default.Add, contentDescription = null)
+                    Text("Импортировать .torrent")
+                }
+            }
         } else {
             LazyColumn(
                 modifier = Modifier.fillMaxSize().padding(padding),
                 contentPadding = PaddingValues(16.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp)
+                verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 items(downloads, key = { it.id }) { item ->
                     Card(modifier = Modifier.fillMaxWidth()) {
@@ -946,6 +1025,9 @@ private fun DownloadsScreen(onBack: () -> Unit) {
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
+                            if (item.error != null) {
+                                MessageCard(item.error, true)
+                            }
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                 OutlinedButton(
                                     modifier = Modifier.weight(1f),
@@ -958,8 +1040,47 @@ private fun DownloadsScreen(onBack: () -> Unit) {
                                     Text(if (item.paused) "Продолжить" else "Пауза")
                                 }
                                 IconButton(onClick = { TorrentDownloadService.remove(context, item.id) }) {
-                                    Icon(Icons.Default.DeleteOutline, contentDescription = "Удалить задачу")
+                                    Icon(Icons.Default.DeleteOutline, contentDescription = "Убрать из очереди")
                                 }
+                            }
+                            if (item.files.isNotEmpty()) {
+                                Text("Файлы раздачи (${item.files.size})", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                                item.files.forEach { file ->
+                                    Column(
+                                        Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                                    ) {
+                                        Text(file.path.substringAfterLast('/'), fontWeight = FontWeight.Medium, maxLines = 2)
+                                        Text(
+                                            "${formatBytes(file.sizeBytes)} • ${(file.progress * 100).toInt()}% загружено",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                        LinearProgressIndicator(file.progress, modifier = Modifier.fillMaxWidth())
+                                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                            OutlinedButton(
+                                                onClick = {
+                                                    runCatching { TorrentEngine.selectFile(context, item.id, file.index) }
+                                                        .onFailure { Toast.makeText(context, it.message, Toast.LENGTH_LONG).show() }
+                                                },
+                                                modifier = Modifier.weight(1f)
+                                            ) { Text(if (file.isSelected) "Выбран для просмотра" else "Выбрать файл") }
+                                            Button(
+                                                onClick = { TorrentDownloadService.play(context, item.id, file.index) },
+                                                enabled = !item.paused
+                                            ) {
+                                                Icon(Icons.Default.PlayArrow, contentDescription = null)
+                                                Text("Смотреть")
+                                            }
+                                        }
+                                    }
+                                }
+                            } else {
+                                Text(
+                                    "Получаем метаданные. Список файлов появится автоматически.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
                             }
                         }
                     }

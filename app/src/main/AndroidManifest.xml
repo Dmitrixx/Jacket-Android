@@ -12,6 +12,7 @@
         android:banner="@drawable/tv_banner"
         android:label="Jacket"
         android:icon="@drawable/ic_jacket"
+        android:networkSecurityConfig="@xml/network_security_config"
         android:supportsRtl="true"
         android:theme="@style/Theme.Jacket">
         <service

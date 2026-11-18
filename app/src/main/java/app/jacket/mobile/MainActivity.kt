@@ -3,9 +3,10 @@ package app.jacket.mobile
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.provider.OpenableColumns
 import android.content.Intent
-import android.net.Uri
 import android.os.Bundle
+import android.net.Uri
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -15,6 +16,8 @@ import androidx.compose.material3.Surface
 import androidx.lifecycle.viewmodel.compose.viewModel
 import app.jacket.mobile.data.TorrentEntry
 import app.jacket.mobile.torrent.TorrentDownloadService
+import app.jacket.mobile.torrent.TorrentQueueStore
+import java.io.File
 import app.jacket.mobile.ui.JacketApp
 import app.jacket.mobile.ui.MainViewModel
 import app.jacket.mobile.ui.theme.JacketTheme
@@ -59,26 +62,79 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun handleIncomingIntent(incoming: Intent?) {
-        val sharedText = when (incoming?.action) {
+        if (incoming == null) return
+        val sharedText = when (incoming.action) {
             Intent.ACTION_VIEW -> incoming.dataString
             Intent.ACTION_SEND -> incoming.getStringExtra(Intent.EXTRA_TEXT)
             else -> null
         }?.trim().orEmpty()
 
         val magnet = Regex("magnet:\\?[^\\s]+", RegexOption.IGNORE_CASE).find(sharedText)?.value
-            ?: return
-        val title = runCatching { Uri.parse(magnet).getQueryParameter("dn") }
-            .getOrNull()
-            ?.takeIf { it.isNotBlank() }
-            ?: "Magnet-загрузка"
-
-        runCatching {
+        if (magnet != null) {
+            val title = runCatching { Uri.parse(magnet).getQueryParameter("dn") }
+                .getOrNull()?.takeIf { it.isNotBlank() } ?: "Magnet-загрузка"
             TorrentDownloadService.add(applicationContext, magnet, title)
-        }.onSuccess {
             Toast.makeText(this, "Торрент добавлен в Jacket", Toast.LENGTH_SHORT).show()
-        }.onFailure {
-            Toast.makeText(this, "Не удалось добавить magnet-ссылку", Toast.LENGTH_LONG).show()
+            return
         }
+
+        val sharedUri = when (incoming.action) {
+            Intent.ACTION_VIEW -> incoming.data
+            Intent.ACTION_SEND -> if (android.os.Build.VERSION.SDK_INT >= 33) {
+                incoming.getParcelableExtra(Intent.EXTRA_STREAM, Uri::class.java)
+            } else {
+                @Suppress("DEPRECATION")
+                incoming.getParcelableExtra(Intent.EXTRA_STREAM) as? Uri
+            }
+            else -> null
+        }
+        val remoteTorrent = sharedText.takeIf {
+            runCatching { Uri.parse(it).scheme == "https" && Uri.parse(it).path.orEmpty().endsWith(".torrent", true) }.getOrDefault(false)
+        }
+        if (remoteTorrent != null) {
+            TorrentDownloadService.addTorrentUrl(applicationContext, remoteTorrent, "Торрент-файл")
+            Toast.makeText(this, "Загружаю .torrent в Jacket", Toast.LENGTH_SHORT).show()
+            return
+        }
+        if (sharedUri != null) {
+            importTorrentUri(sharedUri)
+        }
+    }
+
+    private fun importTorrentUri(uri: Uri) {
+        Thread {
+            val result = runCatching {
+                val directory = File(filesDir, "torrent-imports").apply { mkdirs() }
+                val name = contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+                    val column = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                    if (column >= 0 && cursor.moveToFirst()) cursor.getString(column) else null
+                }?.takeIf { it.endsWith(".torrent", true) } ?: "shared.torrent"
+                val target = File.createTempFile("incoming_", ".torrent", directory)
+                contentResolver.openInputStream(uri).use { input ->
+                    requireNotNull(input) { "Не удалось открыть файл" }
+                    target.outputStream().use { output ->
+                        val buffer = ByteArray(8192)
+                        var total = 0L
+                        while (true) {
+                            val count = input.read(buffer)
+                            if (count < 0) break
+                            total += count
+                            require(total <= TorrentQueueStore.MAX_TORRENT_BYTES) { "Файл .torrent превышает 8 МиБ" }
+                            output.write(buffer, 0, count)
+                        }
+                    }
+                }
+                target to name
+            }
+            runOnUiThread {
+                result.onSuccess { (file, name) ->
+                    TorrentDownloadService.addTorrentFile(applicationContext, file.absolutePath, name.removeSuffix(".torrent"))
+                    Toast.makeText(this, ".torrent добавлен во встроенную очередь", Toast.LENGTH_SHORT).show()
+                }.onFailure { error ->
+                    Toast.makeText(this, "Не удалось импортировать .torrent: ${error.message}", Toast.LENGTH_LONG).show()
+                }
+            }
+        }.start()
     }
 }
 
