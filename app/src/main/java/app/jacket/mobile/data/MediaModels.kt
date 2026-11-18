@@ -78,7 +78,8 @@ data class SourceResult(
     val seeders: Int? = null,
     val leechers: Int? = null,
     val licenseUrl: String? = null,
-    val pageUrl: String? = null
+    val pageUrl: String? = null,
+    val category: String? = null
 )
 
 fun CatalogItem.toJson(): JSONObject = JSONObject()
@@ -113,3 +114,24 @@ fun catalogItemFromJson(json: JSONObject): CatalogItem? = runCatching {
         catalogUrl = json.optString("catalogUrl").takeIf(String::isNotBlank)
     )
 }.getOrNull()
+
+
+data class IndexerFailure(
+    val indexerId: String,
+    val indexerName: String,
+    val message: String
+)
+
+data class IndexerSearchOutcome(
+    val results: List<SourceResult>,
+    val failures: List<IndexerFailure>
+)
+
+data class ReleaseMetadata(
+    val quality: String?,
+    val hdr: Boolean,
+    val dolbyVision: Boolean,
+    val videoCodec: String?,
+    val audioTags: List<String>,
+    val sourceTags: List<String>
+)

@@ -5,6 +5,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import app.jacket.mobile.data.CatalogItem
 import app.jacket.mobile.data.IndexerConfig
+import app.jacket.mobile.data.IndexerFailure
 import app.jacket.mobile.data.IndexerRegistry
 import app.jacket.mobile.data.MediaCatalogClient
 import app.jacket.mobile.data.MediaDetails
@@ -37,6 +38,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _indexerStatuses = MutableStateFlow<Map<String, String>>(emptyMap())
     val indexerStatuses: StateFlow<Map<String, String>> = _indexerStatuses.asStateFlow()
+
+    private val _indexerErrors = MutableStateFlow<List<IndexerFailure>>(emptyList())
+    val indexerErrors: StateFlow<List<IndexerFailure>> = _indexerErrors.asStateFlow()
 
     private val _homeSections = MutableStateFlow<List<MediaSection>>(emptyList())
     val homeSections: StateFlow<List<MediaSection>> = _homeSections.asStateFlow()
@@ -140,7 +144,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun findSources(item: CatalogItem) {
-        runSourceSearch(item.title, includeArchive = true)
+        val year = item.year.takeIf { it.matches(Regex("\\d{4}")) }
+        val query = listOfNotNull(item.title, year).joinToString(" ")
+        runSourceSearch(query, includeArchive = true)
     }
 
     /** Manual search from the indexer dashboard; queries all enabled user indexers in parallel order. */
@@ -157,17 +163,23 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         sourcesJob = viewModelScope.launch {
             _isSearchingSources.value = true
             _sourceResults.value = emptyList()
+            _indexerErrors.value = emptyList()
             clearMessage()
             try {
-                val found = withContext(Dispatchers.IO) {
-                    indexers.search(query, _customIndexers.value, includeArchive)
+                val outcome = withContext(Dispatchers.IO) {
+                    indexers.searchDetailed(query, _customIndexers.value, includeArchive)
                 }
-                _sourceResults.value = found
-                _message.value = if (found.isEmpty()) {
-                    "Ничего не найдено. Проверьте URL, авторизацию и включённые индексаторы."
+                _sourceResults.value = outcome.results
+                _indexerErrors.value = outcome.failures
+                val resultMessage = if (outcome.results.isEmpty()) {
+                    "Ничего не найдено"
                 } else {
-                    "Найдено результатов: ${found.size}"
+                    "Найдено результатов: ${outcome.results.size}"
                 }
+                _message.value = if (outcome.failures.isEmpty()) resultMessage else {
+                    "$resultMessage • ошибок источников: ${outcome.failures.size}"
+                }
+                _isError.value = outcome.results.isEmpty() && outcome.failures.isNotEmpty()
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Exception) {
@@ -237,6 +249,21 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _message.value = "Индексатор удалён"
         _isError.value = false
     }
+    fun exportIndexersJson(): String = settings.exportIndexersJson()
+
+    fun importIndexersJson(json: String): Int {
+        return try {
+            val count = settings.importIndexersJson(json)
+            _customIndexers.value = settings.indexers()
+            _message.value = "Импортировано индексаторов: $count. Секреты нужно ввести заново."
+            _isError.value = false
+            count
+        } catch (error: Exception) {
+            showError(error.message ?: "Не удалось импортировать список индексаторов")
+            0
+        }
+    }
+
 
     fun testIndexer(id: String) {
         val config = _customIndexers.value.firstOrNull { it.id == id } ?: return
@@ -256,23 +283,22 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun testAllIndexers() {
         indexerTestJob?.cancel()
         indexerTestJob = viewModelScope.launch {
-            val configs = _customIndexers.value
+            val configs = _customIndexers.value.filter { it.enabled }
             if (configs.isEmpty()) {
-                _message.value = "Сначала добавьте хотя бы один индексатор"
+                _message.value = "Нет включённых индексаторов для проверки"
                 _isError.value = false
                 return@launch
             }
+            configs.forEach { _indexerStatuses.value = _indexerStatuses.value + (it.id to "Проверка…") }
+            val failures = withContext(Dispatchers.IO) { indexers.testAll(configs) }
+            val failedIds = failures.map { it.indexerId }.toSet()
             configs.forEach { config ->
-                _indexerStatuses.value = _indexerStatuses.value + (config.id to "Проверка…")
-                val result = runCatching { withContext(Dispatchers.IO) { indexers.test(config) } }
+                val failure = failures.firstOrNull { it.indexerId == config.id }
                 _indexerStatuses.value = _indexerStatuses.value + (
-                    config.id to result.fold(
-                        onSuccess = { "Доступен • результатов теста: $it" },
-                        onFailure = { "Ошибка: ${it.message ?: "не удалось подключиться"}" }
-                    )
+                    config.id to if (failure == null) "Доступен" else "Ошибка: ${failure.message}"
                 )
             }
-            val ok = configs.count { _indexerStatuses.value[it.id]?.startsWith("Доступен") == true }
+            val ok = configs.size - failedIds.size
             _message.value = "Проверка завершена: $ok из ${configs.size} доступны"
             _isError.value = ok == 0
         }

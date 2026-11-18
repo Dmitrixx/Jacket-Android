@@ -87,6 +87,54 @@ class MediaSettingsStore(context: Context) {
         saveIndexer(IndexerConfig(id = "", name = name, searchUrlTemplate = urlTemplate))
     }
 
+    /** Export only non-secret fields; authentication must be re-entered after import. */
+    fun exportIndexersJson(): String {
+        val root = JSONArray()
+        indexers().forEach { item ->
+            root.put(
+                JSONObject()
+                    .put("name", item.name)
+                    .put("url", item.searchUrlTemplate)
+                    .put("protocol", item.protocol.name)
+                    .put("categories", item.categories)
+                    .put("tags", item.tags)
+                    .put("freeleechOnly", item.freeleechOnly)
+                    .put("sortBy", item.sortBy)
+                    .put("sortOrder", item.sortOrder)
+                    .put("enabled", item.enabled)
+            )
+        }
+        return root.toString(2)
+    }
+
+    /** Import replaces nothing: each validated source is added with blank credentials. */
+    @Synchronized
+    fun importIndexersJson(json: String): Int {
+        require(json.length <= MAX_IMPORT_BYTES) { "Файл настроек слишком большой" }
+        val root = JSONArray(json)
+        var imported = 0
+        for (i in 0 until minOf(root.length(), MAX_INDEXERS)) {
+            val item = root.optJSONObject(i) ?: continue
+            val config = runCatching {
+                IndexerConfig(
+                    id = "",
+                    name = item.optString("name"),
+                    searchUrlTemplate = item.optString("url"),
+                    protocol = runCatching { IndexerProtocol.valueOf(item.optString("protocol", "RSS")) }
+                        .getOrDefault(IndexerProtocol.RSS),
+                    categories = item.optString("categories"),
+                    tags = item.optString("tags"),
+                    freeleechOnly = item.optBoolean("freeleechOnly", false),
+                    sortBy = item.optString("sortBy", "created"),
+                    sortOrder = item.optString("sortOrder", "desc"),
+                    enabled = item.optBoolean("enabled", true)
+                )
+            }.getOrNull() ?: continue
+            if (runCatching { saveIndexer(config) }.isSuccess) imported++
+        }
+        return imported
+    }
+
     @Synchronized
     fun setIndexerEnabled(id: String, enabled: Boolean) {
         val updated = indexers().map { if (it.id == id) it.copy(enabled = enabled) else it }
@@ -200,6 +248,7 @@ class MediaSettingsStore(context: Context) {
         const val KEY_FAVORITES = "catalog_favorites"
         const val KEY_HISTORY = "catalog_history"
         const val MAX_INDEXERS = 100
+        const val MAX_IMPORT_BYTES = 256 * 1024
         const val MAX_SAVED_ITEMS = 200
         const val MAX_HISTORY = 30
         const val ANDROID_KEYSTORE = "AndroidKeyStore"

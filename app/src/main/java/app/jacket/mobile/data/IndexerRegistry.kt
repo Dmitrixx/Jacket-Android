@@ -8,6 +8,9 @@ import java.io.ByteArrayOutputStream
 import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
+import java.util.concurrent.Callable
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 
 /**
  * Pluggable direct indexer federation. Supports user-configured RSS/Atom and Torznab/Newznab
@@ -20,28 +23,93 @@ class IndexerRegistry(
         query: String,
         customIndexers: List<IndexerConfig>,
         includeArchive: Boolean = true
-    ): List<SourceResult> {
-        val results = ArrayList<SourceResult>()
-        if (includeArchive) {
-            runCatching { catalog.archiveSources(query) }.getOrDefault(emptyList()).forEach(results::add)
-        }
-        customIndexers.asSequence()
+    ): List<SourceResult> = searchDetailed(query, customIndexers, includeArchive).results
+
+    /** Runs no more than four source requests concurrently; one failed provider never cancels peers. */
+    fun searchDetailed(
+        query: String,
+        customIndexers: List<IndexerConfig>,
+        includeArchive: Boolean = true
+    ): IndexerSearchOutcome {
+        val active = customIndexers.asSequence()
             .filter { it.enabled }
             .take(MAX_INDEXERS)
-            .forEach { config ->
-                runCatching { searchFeed(config, query) }
-                    .getOrDefault(emptyList())
-                    .forEach(results::add)
+            .toList()
+        val executor = Executors.newFixedThreadPool(MAX_PARALLEL_REQUESTS)
+        try {
+            val tasks = buildList {
+                if (includeArchive) {
+                    add(
+                        "archive" to "Internet Archive" to executor.submit(Callable {
+                            runCatching { catalog.archiveSources(query) }
+                        })
+                    )
+                }
+                active.forEach { config ->
+                    add(
+                        config.id to config.name to executor.submit(Callable {
+                            runCatching { searchFeed(config, query) }
+                        })
+                    )
+                }
             }
 
-        return results
-            .distinctBy { it.magnetUri ?: it.downloadUrl ?: it.streamUrl ?: it.id }
-            .sortedWith(compareByDescending<SourceResult> { it.seeders ?: -1 }.thenBy { it.title.lowercase() })
-            .take(MAX_TOTAL_RESULTS)
+            val results = ArrayList<SourceResult>()
+            val failures = ArrayList<IndexerFailure>()
+            tasks.forEach { task ->
+                val (keyAndName, future) = task
+                val (id, name) = keyAndName
+                try {
+                    val result = future.get()
+                    result.onSuccess(results::addAll).onFailure { error ->
+                        failures += IndexerFailure(
+                            indexerId = id,
+                            indexerName = name,
+                            message = safeError(error)
+                        )
+                    }
+                } catch (error: Exception) {
+                    failures += IndexerFailure(id, name, safeError(error))
+                }
+            }
+
+            val unique = results
+                .distinctBy { it.magnetUri ?: it.downloadUrl ?: it.streamUrl ?: it.id }
+                .sortedWith(
+                    compareByDescending<SourceResult> { it.seeders ?: -1 }
+                        .thenBy { it.title.lowercase() }
+                )
+                .take(MAX_TOTAL_RESULTS)
+            return IndexerSearchOutcome(unique, failures)
+        } finally {
+            executor.shutdownNow()
+            runCatching { executor.awaitTermination(250, TimeUnit.MILLISECONDS) }
+        }
     }
 
     /** A valid empty response still means that the authenticated indexer is reachable. */
     fun test(config: IndexerConfig): Int = searchFeed(config, "jacket-connectivity-test").size
+
+    fun testAll(configs: List<IndexerConfig>): List<IndexerFailure> {
+        val executor = Executors.newFixedThreadPool(MAX_PARALLEL_REQUESTS)
+        try {
+            val futures = configs.filter { it.enabled }.take(MAX_INDEXERS).map { config ->
+                config to executor.submit(Callable { runCatching { searchFeed(config, "jacket-connectivity-test") } })
+            }
+            return futures.mapNotNull { (config, future) ->
+                val result = runCatching { future.get() }.getOrElse {
+                    Result.failure(it)
+                }
+                result.exceptionOrNull()?.let { IndexerFailure(config.id, config.name, safeError(it)) }
+            }
+        } finally {
+            executor.shutdownNow()
+            runCatching { executor.awaitTermination(250, TimeUnit.MILLISECONDS) }
+        }
+    }
+
+    internal fun parseFeedXml(xml: String, config: IndexerConfig): List<SourceResult> =
+        parseFeed(xml.toByteArray(Charsets.UTF_8), config)
 
     private fun searchFeed(config: IndexerConfig, query: String): List<SourceResult> {
         val requestUrl = buildRequestUrl(config, query)
@@ -124,6 +192,7 @@ class IndexerRegistry(
         var size: Long? = null
         var seeders: Int? = null
         var leechers: Int? = null
+        var category: String? = null
 
         fun reset() {
             title = ""
@@ -133,6 +202,7 @@ class IndexerRegistry(
             size = null
             seeders = null
             leechers = null
+            category = null
         }
 
         var event = parser.eventType
@@ -152,7 +222,9 @@ class IndexerRegistry(
                             val value = href?.takeIf(String::isNotBlank) ?: parser.nextText().trim()
                             when {
                                 value.startsWith("magnet:", true) -> magnet = value
-                                rel.equals("enclosure", true) && value.endsWith(".torrent", true) -> torrentUrl = value
+                                rel.equals("enclosure", true) &&
+                                    (value.endsWith(".torrent", true) || parser.getAttributeValue(null, "type").orEmpty().contains("bittorrent", true)) ->
+                                    torrentUrl = value
                                 value.isNotBlank() && pageUrl == null -> pageUrl = value
                             }
                         }
@@ -165,8 +237,12 @@ class IndexerRegistry(
                                 value.startsWith("https://") && pageUrl == null -> pageUrl = value
                             }
                         }
-                        "guid", "id" -> if (inEntry && pageUrl == null) {
-                            pageUrl = parser.nextText().trim()
+                        "guid", "id" -> if (inEntry && pageUrl == null) pageUrl = parser.nextText().trim()
+                        "category" -> if (inEntry) {
+                            val value = parser.getAttributeValue(null, "id")
+                                ?: parser.getAttributeValue(null, "term")
+                                ?: parser.nextText()
+                            category = value.trim().takeIf(String::isNotBlank)
                         }
                         "attr" -> if (inEntry) {
                             val attr = parser.getAttributeValue(null, "name")?.lowercase().orEmpty()
@@ -175,7 +251,11 @@ class IndexerRegistry(
                                 "magneturl" -> if (!value.isNullOrBlank()) magnet = value
                                 "seeders" -> seeders = value?.toIntOrNull()?.takeIf { it >= 0 }
                                 "peers", "leechers" -> leechers = value?.toIntOrNull()?.takeIf { it >= 0 }
-                                "size" -> size = value?.toLongOrNull()?.takeIf { it >= 0L }
+                                "size", "length" -> {
+                                    val parsed = value?.toLongOrNull()?.takeIf { it >= 0L }
+                                    if (parsed != null) size = parsed
+                                }
+                                "category", "categoryid" -> if (!value.isNullOrBlank()) category = value
                             }
                         }
                     }
@@ -196,7 +276,8 @@ class IndexerRegistry(
                                 sizeBytes = size,
                                 seeders = seeders,
                                 leechers = leechers,
-                                pageUrl = safePage
+                                pageUrl = safePage,
+                                category = category
                             )
                         }
                         inEntry = false
@@ -213,11 +294,18 @@ class IndexerRegistry(
         uri.scheme == "https" && !uri.host.isNullOrBlank() && uri.userInfo == null
     }.getOrDefault(false)
 
+    private fun safeError(error: Throwable): String =
+        (error.cause?.message ?: error.message ?: error.javaClass.simpleName)
+            .replace(Regex("[\\r\\n\\t]+"), " ")
+            .take(MAX_ERROR_LENGTH)
+
     private companion object {
         const val MAX_INDEXERS = 100
+        const val MAX_PARALLEL_REQUESTS = 4
         const val MAX_TOTAL_RESULTS = 200
         const val MAX_FEED_RESULTS = 100
         const val MAX_FEED_BYTES = 4 * 1024 * 1024
+        const val MAX_ERROR_LENGTH = 180
         const val CONNECT_TIMEOUT_MS = 10_000
         const val READ_TIMEOUT_MS = 25_000
         const val USER_AGENT = "JacketAndroid/2.1 (direct indexer federation)"

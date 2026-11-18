@@ -94,6 +94,7 @@ import androidx.compose.ui.unit.dp
 import app.jacket.mobile.data.CatalogItem
 import app.jacket.mobile.data.IndexerConfig
 import app.jacket.mobile.data.IndexerProtocol
+import app.jacket.mobile.data.ReleaseHeuristics
 import app.jacket.mobile.data.MediaKind
 import app.jacket.mobile.data.MediaSection
 import app.jacket.mobile.data.SourceResult
@@ -745,6 +746,21 @@ private fun DetailScreen(
     val message by viewModel.message.collectAsState()
     val isError by viewModel.isError.collectAsState()
     val context = LocalContext.current
+    val indexerErrors by viewModel.indexerErrors.collectAsState()
+    var minSeeders by rememberSaveable { mutableStateOf("0") }
+    var qualityFilter by rememberSaveable { mutableStateOf("Все") }
+    var hdrOnly by rememberSaveable { mutableStateOf(false) }
+    var magnetOnly by rememberSaveable { mutableStateOf(false) }
+    var torrentOnly by rememberSaveable { mutableStateOf(false) }
+    val minSeedersValue = minSeeders.toIntOrNull()?.coerceAtLeast(0) ?: 0
+    val filteredSources = sources.filter { source ->
+        val release = ReleaseHeuristics.classify(source.title)
+        (source.seeders ?: 0) >= minSeedersValue &&
+            (qualityFilter == "Все" || release.quality == qualityFilter) &&
+            (!hdrOnly || release.hdr || release.dolbyVision) &&
+            (!magnetOnly || source.magnetUri != null) &&
+            (!torrentOnly || source.downloadUrl != null)
+    }
     val isTv = (context.resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_TYPE_MASK) == android.content.res.Configuration.UI_MODE_TYPE_TELEVISION
 
     Scaffold(
@@ -858,25 +874,79 @@ private fun DetailScreen(
                     MessageCard(message.orEmpty(), isError, Modifier.padding(horizontal = 16.dp))
                 }
 
-                if (sources.isNotEmpty()) {
-                    Text(
-                        "Доступные источники",
+                if (indexerErrors.isNotEmpty()) {
+                    Column(
                         modifier = Modifier.padding(horizontal = 16.dp),
-                        style = MaterialTheme.typography.titleLarge,
-                        fontWeight = FontWeight.Bold
-                    )
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Text("Источники с ошибками", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                        indexerErrors.forEach { failure ->
+                            MessageCard("${failure.indexerName}: ${failure.message}", true)
+                        }
+                    }
+                }
+
+                if (sources.isNotEmpty()) {
                     Column(
                         modifier = Modifier.padding(horizontal = 16.dp),
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        sources.forEach { source ->
-                            SourceCard(
-                                source = source,
-                                onPlay = { url -> onPlay(source.title, url) },
-                                onMagnet = { magnet -> TorrentDownloadService.add(context, magnet, source.title) },
-                                onTorrent = { url -> TorrentDownloadService.addTorrentUrl(context, url, source.title) },
-                                onPage = { url -> openExternal(context, url) }
+                        Text(
+                            "Доступные раздачи • ${filteredSources.size} из ${sources.size}",
+                            style = MaterialTheme.typography.titleLarge,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            OutlinedTextField(
+                                value = minSeeders,
+                                onValueChange = { value -> minSeeders = value.filter(Char::isDigit).take(5) },
+                                modifier = Modifier.weight(1f),
+                                label = { Text("Мин. сидов") },
+                                singleLine = true,
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
                             )
+                            OutlinedButton(onClick = {
+                                qualityFilter = when (qualityFilter) {
+                                    "Все" -> "720p"
+                                    "720p" -> "1080p"
+                                    "1080p" -> "2160p"
+                                    else -> "Все"
+                                }
+                            }) { Text(qualityFilter) }
+                        }
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            OutlinedButton(onClick = { hdrOnly = !hdrOnly }) { Text(if (hdrOnly) "✓ HDR / DV" else "HDR / DV") }
+                            OutlinedButton(onClick = {
+                                magnetOnly = !magnetOnly
+                                if (magnetOnly) torrentOnly = false
+                            }) { Text(if (magnetOnly) "✓ Magnet" else "Magnet") }
+                            OutlinedButton(onClick = {
+                                torrentOnly = !torrentOnly
+                                if (torrentOnly) magnetOnly = false
+                            }) { Text(if (torrentOnly) "✓ .torrent" else ".torrent") }
+                        }
+                    }
+
+                    if (filteredSources.isEmpty()) {
+                        MessageCard("По этим фильтрам раздачи не найдены. Ослабьте фильтры или сбросьте их.", false, Modifier.padding(horizontal = 16.dp))
+                    } else {
+                        Column(
+                            modifier = Modifier.padding(horizontal = 16.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            filteredSources.forEach { source ->
+                                SourceCard(
+                                    source = source,
+                                    onPlay = { url -> onPlay(source.title, url) },
+                                    onMagnet = { magnet -> TorrentDownloadService.add(context, magnet, source.title) },
+                                    onTorrent = { url -> TorrentDownloadService.addTorrentUrl(context, url, source.title) },
+                                    onPage = { url -> openExternal(context, url) }
+                                )
+                            }
                         }
                     }
                 }
@@ -895,11 +965,24 @@ private fun SourceCard(
     onTorrent: (String) -> Unit,
     onPage: (String) -> Unit
 ) {
+    val release = ReleaseHeuristics.classify(source.title)
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Text(source.title, fontWeight = FontWeight.SemiBold)
+            if (release.quality != null || release.videoCodec != null || release.hdr || release.dolbyVision || release.audioTags.isNotEmpty() || release.sourceTags.isNotEmpty()) {
+                Text(
+                    listOfNotNull(
+                        release.quality,
+                        release.videoCodec,
+                        if (release.hdr) "HDR" else null,
+                        if (release.dolbyVision) "DV" else null
+                    ).plus(release.audioTags).plus(release.sourceTags).distinct().joinToString(" • "),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.primary
+                )
+            }
             Text(
-                listOfNotNull(source.providerName, source.sizeBytes?.let(::formatBytes), source.seeders?.let { "Сиды: $it" })
+                listOfNotNull(source.providerName, source.category, source.sizeBytes?.let(::formatBytes), source.seeders?.let { "Сиды: $it" }, source.leechers?.let { "Пиры: $it" })
                     .joinToString(" • "),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -1103,6 +1186,35 @@ private fun SettingsScreen(
     val searchingSources by viewModel.isSearchingSources.collectAsState()
     val context = LocalContext.current
     var token by remember(currentToken) { mutableStateOf(currentToken) }
+    val exportIndexers = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
+        if (uri != null) {
+            runCatching {
+                context.contentResolver.openOutputStream(uri)?.use { output ->
+                    output.write(viewModel.exportIndexersJson().toByteArray(Charsets.UTF_8))
+                } ?: error("Не удалось создать файл")
+            }.onFailure { Toast.makeText(context, "Экспорт не удался: ${it.message}", Toast.LENGTH_LONG).show() }
+        }
+    }
+    val importIndexers = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) {
+            runCatching {
+                val bytes = context.contentResolver.openInputStream(uri)?.use { input ->
+                    val out = java.io.ByteArrayOutputStream()
+                    val buffer = ByteArray(8192)
+                    var size = 0
+                    while (true) {
+                        val count = input.read(buffer)
+                        if (count < 0) break
+                        size += count
+                        require(size <= 256 * 1024) { "JSON-файл больше 256 КиБ" }
+                        out.write(buffer, 0, count)
+                    }
+                    out.toByteArray()
+                } ?: error("Не удалось открыть файл")
+                viewModel.importIndexersJson(bytes.toString(Charsets.UTF_8))
+            }.onFailure { Toast.makeText(context, "Импорт не удался: ${it.message}", Toast.LENGTH_LONG).show() }
+        }
+    }
 
     var editingId by remember { mutableStateOf("") }
     var sourceName by remember { mutableStateOf("") }
@@ -1356,13 +1468,17 @@ private fun SettingsScreen(
             }
 
             item {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Text("Настроенные индексаторы (${indexers.size})", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                    OutlinedButton(onClick = { viewModel.testAllIndexers() }) { Text("Тестировать все") }
+                Text("Настроенные индексаторы (${indexers.size})", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(onClick = { viewModel.testAllIndexers() }, modifier = Modifier.weight(1f)) {
+                        Text("Тестировать все")
+                    }
+                    OutlinedButton(onClick = { exportIndexers.launch("jacket-indexers.json") }, modifier = Modifier.weight(1f)) {
+                        Text("Экспорт JSON")
+                    }
+                    OutlinedButton(onClick = { importIndexers.launch(arrayOf("application/json", "text/json")) }, modifier = Modifier.weight(1f)) {
+                        Text("Импорт JSON")
+                    }
                 }
                 Text(
                     "Включайте/отключайте источники, проверяйте соединение и редактируйте регистрационные данные.",
@@ -1446,7 +1562,7 @@ private fun SettingsScreen(
 
             item {
                 Text(
-                    "Секреты (API key, пароль и cookie) шифруются через Android Keystore. Используйте только источники, к которым у вас есть законный доступ. Некоторые сайты требуют собственный браузерный вход, CAPTCHA или интерактивную 2FA — такие схемы пока не автоматизируются; для них можно добавить вручную выданный cookie.",
+                    "Экспорт JSON содержит адреса и настройки, но не API key, пароль или cookie. После импорта добавьте секреты заново. Секреты в локальном хранилище шифруются через Android Keystore. Используйте только источники, к которым у вас есть законный доступ. Некоторые сайты требуют собственный браузерный вход, CAPTCHA или интерактивную 2FA — такие схемы пока не автоматизируются; для них можно добавить вручную выданный cookie.",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
