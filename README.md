@@ -1,4 +1,4 @@
-# Jacket — Android media center 2.2.1
+# Jacket — Android media center 2.3.0
 
 Jacket is a single Android application for phones, tablets and Android TV / Google TV. It combines a poster-based media catalog, a user-configurable indexer cabinet, an integrated BitTorrent engine and a loopback HTTP media server.
 
@@ -14,7 +14,7 @@ The project is under active development. CI verifies JVM unit tests and APK asse
 - **My library** — favorites and recently opened cards.
 - **Sources** — manual search, indexer management, connectivity tests, source errors and quality filters.
 - **Downloads** — magnet and `.torrent` tasks, file list, selected-file priorities, pause/resume, speed and progress.
-- **Player** — Media3 / ExoPlayer, seek controls, audio/subtitle track selection, downloaded sidecar subtitles and external-player handoff.
+- **Player** — Media3 / ExoPlayer, seek controls, audio/subtitle track selection, downloaded sidecar subtitles, external-player handoff, progressive video, HLS and DASH playback.
 - **Settings** — LAMPA-inspired section menu for website searches, torrent indexers, catalog metadata, download limits and Wi-Fi-only mode.
 
 ## Indexer cabinet — no Jackett server
@@ -37,7 +37,7 @@ Example Torznab search template:
 https://your-authorized-indexer.example/api?t=search&q={query}
 ```
 
-The URL must use HTTPS and include `{query}`; optionally include `{apikey}` where the provider expects the key in the URL. The adapter understands common Torznab attributes including magnet URL, seeders, peers, size/length and category.
+The URL must use HTTPS and include `{query}`; optionally include `{apikey}` where the provider expects the key in the URL. The adapter understands common Torznab attributes including magnet URL, seeders, peers, size/length and category. RSS/Atom enclosures and Media RSS `media:content` may also publish direct HTTPS video URLs (`video/*`, MP4/WebM/MKV), HLS playlists (`.m3u8`) or DASH manifests (`.mpd`). Jacket recognizes those declared media links and plays them directly in Media3; it does not need to inspect arbitrary pages.
 
 Release labels such as 720p / 1080p / 2160p, HDR / DV, HEVC / x264 and common audio/dubbing tags are extracted heuristically from the release title. They are not authoritative tracker metadata. Filters operate on the current results and do not issue another request.
 
@@ -53,7 +53,7 @@ Example template shape:
 https://your-authorized-site.example/search?q={query}
 ```
 
-These website shortcuts are deliberately link-based: Jacket does not scrape arbitrary HTML, automate private logins or CAPTCHA, extract media URLs from a page, bypass DRM, or circumvent regional restrictions. Use only services available to you lawfully. RSS / Atom and Torznab remain the structured in-app source integrations.
+Website shortcuts remain link-based and open the site in the browser. Structured in-app playback is supported when a source explicitly publishes a direct HTTPS media URL in an RSS/Atom enclosure or Media RSS `media:content`. Jacket does not scrape arbitrary HTML pages, unpack obfuscated player scripts, automate private logins or CAPTCHA, extract hidden streams, bypass DRM, or circumvent regional access restrictions. Use only services and media you are authorized to access. For a licensed provider, prefer its documented API or feed.
 
 ## Torrent engine and local stream server
 
