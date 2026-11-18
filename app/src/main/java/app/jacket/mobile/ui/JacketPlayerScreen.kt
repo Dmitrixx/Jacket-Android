@@ -26,6 +26,8 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.OpenInNew
 import androidx.compose.material.icons.filled.Subtitles
 import androidx.compose.material3.Button
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -33,6 +35,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -43,6 +46,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.key
@@ -54,6 +59,7 @@ import androidx.compose.ui.unit.dp
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
+import androidx.media3.common.PlaybackException
 import androidx.media3.common.MimeTypes
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
@@ -80,6 +86,7 @@ fun JacketPlayerScreen(
     val progressStore = remember(context) { PlaybackProgressStore(context) }
     var playWhenReady by remember(streamUrl) { mutableStateOf(true) }
     var playerHasFocus by remember(streamUrl) { mutableStateOf(false) }
+    var playbackError by remember(streamUrl) { mutableStateOf<String?>(null) }
     val player = remember(streamUrl, subtitles) {
         val subtitleConfigurations = subtitles.map { subtitle ->
             MediaItem.SubtitleConfiguration.Builder(Uri.parse(subtitle.url))
@@ -93,6 +100,13 @@ fun JacketPlayerScreen(
             setMediaItem(
                 MediaItem.Builder()
                     .setUri(streamUrl)
+                    .apply {
+                        val path = Uri.parse(streamUrl).lastPathSegment.orEmpty().lowercase()
+                        when {
+                            path.endsWith(".m3u8") -> setMimeType(MimeTypes.APPLICATION_M3U8)
+                            path.endsWith(".mpd") -> setMimeType(MimeTypes.APPLICATION_MPD)
+                        }
+                    }
                     .setSubtitleConfigurations(subtitleConfigurations)
                     .build()
             )
@@ -118,6 +132,14 @@ fun JacketPlayerScreen(
         val listener = object : Player.Listener {
             override fun onPlayWhenReadyChanged(isReady: Boolean, reason: Int) {
                 playWhenReady = isReady
+            }
+
+            override fun onPlayerError(error: PlaybackException) {
+                playbackError = error.localizedMessage ?: "Проверьте ссылку и доступ к потоку"
+            }
+
+            override fun onPlaybackStateChanged(playbackState: Int) {
+                if (playbackState == Player.STATE_READY) playbackError = null
             }
         }
         player.addListener(listener)
@@ -188,7 +210,8 @@ fun JacketPlayerScreen(
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             AndroidView(
-                modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f),
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp)
+                    .aspectRatio(16f / 9f).clip(RoundedCornerShape(20.dp)),
                 factory = { viewContext ->
                     PlayerView(viewContext).apply {
                         this.player = player
@@ -204,6 +227,35 @@ fun JacketPlayerScreen(
                 },
                 update = { it.player = player }
             )
+            if (playbackError != null) {
+                Card(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer),
+                    shape = RoundedCornerShape(18.dp)
+                ) {
+                    Column(
+                        modifier = Modifier.fillMaxWidth().padding(14.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Text(
+                            "Не удалось начать воспроизведение",
+                            style = MaterialTheme.typography.titleSmall,
+                            color = MaterialTheme.colorScheme.onErrorContainer
+                        )
+                        Text(
+                            playbackError.orEmpty(),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onErrorContainer
+                        )
+                        TextButton(onClick = {
+                            playbackError = null
+                            player.prepare()
+                            player.playWhenReady = true
+                        }) { Text("Повторить") }
+                    }
+                }
+            }
+
             Row(
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
                 horizontalArrangement = Arrangement.Center

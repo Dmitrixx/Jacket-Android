@@ -12,8 +12,8 @@ android {
         applicationId = "app.jacket.mobile"
         minSdk = 28
         targetSdk = 36
-        versionCode = 6
-        versionName = "2.2.1"
+        versionCode = 7
+        versionName = "2.3.0"
         vectorDrawables { useSupportLibrary = true }
     }
 
@@ -58,6 +58,8 @@ dependencies {
     // In-app playback for direct, licensed media streams.
     val media3Version = "1.11.1"
     implementation("androidx.media3:media3-exoplayer:$media3Version")
+    implementation("androidx.media3:media3-exoplayer-hls:$media3Version")
+    implementation("androidx.media3:media3-exoplayer-dash:$media3Version")
     implementation("androidx.media3:media3-ui:$media3Version")
 
     val libtorrentVersion = "2.1.0-39"

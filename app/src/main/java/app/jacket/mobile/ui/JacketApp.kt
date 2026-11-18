@@ -2074,7 +2074,7 @@ private fun SettingsScreen(
                     fontWeight = FontWeight.Bold
                 )
                 Text(
-                    "Поддерживаются прямые RSS/Atom и совместимые Torznab/Newznab API. URL должен быть HTTPS и содержать {query}; API-ключ можно указать ниже или в URL как {apikey}.",
+                    "RSS/Atom и Torznab/Newznab. RSS/Atom может публиковать прямые HTTPS-видео, HLS (.m3u8) и DASH (.mpd) через enclosure или media:content. URL поиска должен содержать {query}; API-ключ — ниже или как {apikey}.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
