@@ -9,7 +9,7 @@ internal object IndexerErrorSanitizer {
     )
     private val sensitiveHeader = Regex("(?i)\\b(authorization|cookie|x-api-key)\\s*:\\s*[^\\r\\n]*")
     private val basicCredentials = Regex("(?i)\\bBasic\\s+[A-Za-z0-9+/=]+")
-    private val url = Regex("(?i)https?://[^\\s<>\\"']+")
+    private val url = Regex("""(?i)https?://[^\s<>"']+""")
     private val whitespace = Regex("[\\r\\n\\t]+")
 
     fun sanitize(error: Throwable, configuredSecrets: Collection<String> = emptyList()): String {
