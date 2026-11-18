@@ -1783,11 +1783,66 @@ private fun SettingsScreen(
 
             if (selectedSettingsSection == "home") {
                 item {
-                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        Text("МЕДИАЦЕНТР JACKET", style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold, letterSpacing = 1.3.sp)
-                        Text("Настройте каталог, источники и воспроизведение.",
-                            style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(26.dp),
+                        colors = CardDefaults.cardColors(containerColor = Color.Transparent),
+                        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier.fillMaxWidth().background(
+                                Brush.linearGradient(
+                                    listOf(
+                                        Color(0xFF202D40),
+                                        Color(0xFF18202F),
+                                        Color(0xFF29203C)
+                                    )
+                                )
+                            ).padding(20.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(14.dp)
+                            ) {
+                                Column(
+                                    modifier = Modifier.weight(1f),
+                                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    Text(
+                                        "JACKET  •  CONTROL CENTER",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.primary,
+                                        fontWeight = FontWeight.Black,
+                                        letterSpacing = 1.2.sp
+                                    )
+                                    Text(
+                                        "Всё под контролем",
+                                        style = MaterialTheme.typography.headlineSmall,
+                                        fontWeight = FontWeight.ExtraBold,
+                                        color = Color.White
+                                    )
+                                    Text(
+                                        "Каталог, сайты поиска, торрент-источники и воспроизведение.",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = Color(0xFFCCD5E2)
+                                    )
+                                }
+                                Surface(
+                                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.16f),
+                                    shape = RoundedCornerShape(20.dp)
+                                ) {
+                                    Box(Modifier.size(58.dp), contentAlignment = Alignment.Center) {
+                                        Icon(
+                                            Icons.Default.Settings,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(30.dp),
+                                            tint = MaterialTheme.colorScheme.primary
+                                        )
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
                 item {
@@ -2348,31 +2403,54 @@ private fun SettingsMenuRow(
     onClick: () -> Unit,
     icon: @Composable () -> Unit
 ) {
+    val context = LocalContext.current
+    val isTv = (context.resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_TYPE_MASK) ==
+        android.content.res.Configuration.UI_MODE_TYPE_TELEVISION
+    var focused by remember { mutableStateOf(false) }
+    val scale by animateFloatAsState(
+        targetValue = if (isTv && focused) 1.018f else 1f,
+        label = "settings-row-focus"
+    )
     Card(
-        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick),
-        shape = MaterialTheme.shapes.large,
+        modifier = Modifier.fillMaxWidth()
+            .graphicsLayer { scaleX = scale; scaleY = scale }
+            .onFocusChanged { focused = it.isFocused }
+            .border(
+                width = if (isTv && focused) 2.dp else 0.dp,
+                color = if (isTv && focused) MaterialTheme.colorScheme.primary else Color.Transparent,
+                shape = RoundedCornerShape(22.dp)
+            )
+            .clickable(onClick = onClick),
+        shape = RoundedCornerShape(22.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
-        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+        elevation = CardDefaults.cardElevation(defaultElevation = if (isTv && focused) 7.dp else 2.dp)
     ) {
         Row(
-            modifier = Modifier.fillMaxWidth().padding(15.dp),
+            modifier = Modifier.fillMaxWidth().padding(16.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(13.dp)
         ) {
             Surface(
-                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.14f),
-                shape = RoundedCornerShape(14.dp)
+                color = MaterialTheme.colorScheme.primary.copy(alpha = if (focused) 0.22f else 0.14f),
+                shape = RoundedCornerShape(15.dp)
             ) {
-                Box(Modifier.size(46.dp), contentAlignment = Alignment.Center) { icon() }
+                Box(Modifier.size(48.dp), contentAlignment = Alignment.Center) { icon() }
             }
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-                Text(subtitle, style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                Text(
+                    subtitle,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 2
+                )
             }
             if (badge != null) MetadataPill(badge, accent = true)
-            Icon(Icons.Default.OpenInNew, contentDescription = "Открыть раздел",
-                tint = MaterialTheme.colorScheme.onSurfaceVariant)
+            Icon(
+                Icons.Default.OpenInNew,
+                contentDescription = "Открыть раздел",
+                tint = if (focused) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+            )
         }
     }
 }
