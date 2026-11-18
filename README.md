@@ -1,100 +1,113 @@
-# Jacket — Android media center
+# Jacket — Android media center 2.1.0
 
-Jacket is evolving from a Jackett companion into a self-contained Android media center: poster-based film and series catalog, direct indexer federation, favorites, watch history, in-app playback for licensed media, and an integrated BitTorrent queue.
+Jacket is a single Android application for phones, tablets and Android TV / Google TV. It combines a poster-based media catalog, a user-configurable indexer cabinet, an integrated BitTorrent engine and a loopback HTTP media server.
 
-**A separate Jackett server is not required.** The app does not call the Jackett API. It queries its own providers directly on the device.
+**No separately installed Jackett or TorrServer is required.** Neither service is bundled, launched as a second process, nor called over an external API. Indexers are queried directly by the app; torrent files are handled by the in-process libtorrent4j session and served to ExoPlayer through `127.0.0.1`.
 
-> The project is under active development. A green GitHub Actions build and real-device playback/network testing are required before treating a commit as a release.
+The project is under active development. CI verifies JVM unit tests and APK assembly; real-device streaming, Android TV remote navigation and process-kill recovery still require hands-on acceptance testing.
 
 ## Main areas
 
-- **Home** — featured title and horizontal shelves of recommendations and collections.
-- **Movies / Series** — poster cards, ratings, years, descriptions and details.
-- **Search** — search the built-in catalog and metadata provider.
+- **Home / Movies / Series** — poster shelves and grids, ratings, years and details.
+- **Search** — catalog search with a short debounce.
+- **Series details** — TMDB seasons and episode lists; an episode search adds its `SxxExx` code to the indexer query.
 - **My library** — favorites and recently opened cards.
-- **Downloads** — integrated libtorrent4j queue, progress, speed, peers, pause and resume.
-- **Settings and sources** — optional TMDB token, configurable RSS/Atom and Torznab/Newznab aggregators, credentials, category filters, freeleech filter, sort order, connection tests and manual search.
-- **Android TV** — Leanback launcher entry, TV home-screen banner, D-pad navigation rail and larger focused poster cards; the same APK remains usable on phones and tablets.
+- **Sources** — manual search, indexer management, connectivity tests, source errors and quality filters.
+- **Downloads** — magnet and `.torrent` tasks, file list, selected-file priorities, pause/resume, speed and progress.
+- **Player** — Media3 / ExoPlayer, seek controls, audio/subtitle track selection, downloaded sidecar subtitles and external-player handoff.
+- **Settings** — TMDB token, indexers, download/upload speed limits and Wi-Fi-only mode.
 
-## Built-in providers — no Jackett server
+## Indexer cabinet — no Jackett server
 
-### Internet Archive catalog
+Add user-owned HTTPS endpoints:
 
-The app queries the Internet Archive Advanced Search endpoint and reads item metadata directly. It can show the catalog, poster thumbnails, descriptions, dates and creator information. On a detail page it looks for video and torrent files.
+- RSS / Atom feeds.
+- Torznab / Newznab-compatible search endpoints. A Jackett or Prowlarr Torznab URL can be entered as an ordinary user-configured endpoint if it is reachable and authorized; Jacket does not install either service.
+- API key, HTTP Basic username/password, or a manually supplied session cookie.
+- Categories, tags, Freeleech flag, sort field and sort order.
+- Enable/disable, edit, individual test, test all and a per-indexer probe search.
 
-Jacket only offers in-app playback / direct archive torrent actions when the item metadata includes a license URL. The presence of a file alone is not treated as proof of permission. Always review the source item's license and access conditions.
+A search runs enabled providers in parallel with at most four concurrent requests. A failed provider is reported by name and does not cancel successful peers. Feed responses are limited to 4 MiB, 100 entries per feed and 200 merged results. Connection and read timeouts are 10 and 25 seconds.
 
-### TMDB metadata (optional)
+Indexer settings can be exported/imported as JSON. **API keys, passwords and cookies are deliberately omitted from exports** and must be entered again after import. Locally stored secrets are encrypted with Android Keystore using AES/GCM.
 
-To display current popular films, series, ratings, posters and expanded descriptions, enter your own TMDB API Read Access Token in Settings. The token is encrypted with Android Keystore. TMDB provides catalog metadata and artwork; it does not provide the film/video stream.
-
-This product uses the TMDB API but is not endorsed or certified by TMDB.
-
-### User-configured indexers
-
-Add your own HTTPS RSS/Atom feeds or Torznab/Newznab-compatible endpoints in Settings. Each search URL must include `{query}`, which Jacket replaces with the URL-encoded search text. Torznab requests can include API-key authentication, categories, tags, freeleech filtering, sort field and order.
-
-Private indexers can use HTTP Basic username/password, an API key, or a manually supplied session cookie. Credentials are encrypted at rest with Android Keystore (AES/GCM). Indexers can be enabled/disabled, edited, individually tested or tested together; the settings page also provides manual cross-indexer search.
-
-Example Torznab URL:
+Example Torznab search template:
 
 ```text
 https://your-authorized-indexer.example/api?t=search&q={query}
 ```
 
-The protocol adapter handles standard Torznab/Newznab XML attributes and RSS/Atom entries. A site requiring a proprietary login flow, CAPTCHA, anti-bot challenge or interactive 2FA is not automatically supported; a user-provided session cookie may work where the source permits it.
+The URL must use HTTPS and include `{query}`; optionally include `{apikey}` where the provider expects the key in the URL. The adapter understands common Torznab attributes including magnet URL, seeders, peers, size/length and category.
 
-Example format:
+Release labels such as 720p / 1080p / 2160p, HDR / DV, HEVC / x264 and common audio/dubbing tags are extracted heuristically from the release title. They are not authoritative tracker metadata. Filters operate on the current results and do not issue another request.
 
-```text
-https://your-authorized-source.example/search/rss?q={query}
-```
+The app does not ship tracker lists, private credentials or site-specific scraping presets. CAPTCHA, anti-bot challenges, proprietary sign-in flows and interactive 2FA are not automated. A manually entered cookie may work where the source permits it.
 
-Jacket fetches feeds directly from the phone, parses RSS/Atom entries and common torrent attributes, and merges results. There is no Jackett URL or Jackett API key. Sources are user-managed; only add sources you are authorized to access and use.
+## Torrent engine and local stream server
 
-The built-in adapter layer is intentionally extensible: new provider adapters can be added without changing the catalog UI.
+The app uses one in-process libtorrent4j session:
 
-## Playback and downloads
+1. Add a magnet or import a `.torrent` file from the app picker, Android Share, or an HTTPS result.
+2. After metadata arrives, inspect the files in the torrent.
+3. Select one file to watch. Jacket gives it the highest file priority, marks the other files `IGNORE`, enables sequential download and raises priority for the first pieces and the final piece.
+4. ExoPlayer requests the selected file from the local HTTP server while libtorrent is still downloading the required pieces.
 
-- Media3 / ExoPlayer provides in-app playback for supported HTTPS video streams.
-- Existing libtorrent4j engine handles magnet links.
-- Direct `.torrent` URLs are currently handed to an installed torrent-capable app; importing them into the internal engine is a planned enhancement.
-- The download queue is stored locally. Full native libtorrent resume-data persistence is not yet implemented.
-- Download files are stored in the app-private `Android/data/app.jacket.mobile/files/Downloads` directory.
+The local endpoint:
 
-## Requirements
+- Binds only to `127.0.0.1`, using port 8090–8099.
+- Supports `GET`, `HEAD`, byte `Range`, `206 Partial Content`, `Content-Range`, `Accept-Ranges` and MIME types based on the filename.
+- Waits a bounded interval for each requested torrent piece instead of requiring the entire file to finish first.
+- Rejects non-loopback Host headers, malformed hashes, invalid file indices and traversal-like routes.
+- Is not exposed to the home network or LAN.
+
+The download queue and the native resume data are stored in app-private storage. Resume data is requested periodically and on pause; the queue retains the magnet or private copy of the `.torrent` so a task can be recreated if no resume file exists. Startup restores queued tasks when the app/service starts. A hard process kill can lose work since the most recent resume-data save; this is not a guarantee of crash-proof zero-loss recovery.
+
+Downloaded files remain in the app-specific `Downloads` directory. “Remove from queue” preserves downloaded data. Deleting data is a separate, explicit action.
+
+### Playback and foreground service
+
+- ExoPlayer plays the torrent through the loopback Range endpoint before the download reaches 100%.
+- Direct Internet Archive video playback remains HTTPS and is offered only when the source metadata contains a recognized Creative Commons / public-domain license URL. Review the source item's actual terms.
+- Playback position is stored locally every few seconds; a torrent position is keyed by infohash and file index, and a direct stream position by a non-reversible URL hash. Positions at or beyond about 90% of a known duration are cleared.
+- Audio and text tracks can be selected from those available in the media. A matching `.srt` / `.vtt` file already fully downloaded in the same torrent can be offered as a sidecar subtitle.
+- The player includes 10-second seek controls, D-pad left/right and play/pause, keeps the display awake and can hand the loopback URL to an external player.
+
+While watching a torrent, the service uses foreground-service type `mediaPlayback`. Background downloading uses `dataSync`. Android 15+ applies a cumulative time limit to `dataSync`; when that limit is reached without active playback, Jacket saves resume data and stops the background session. **Uninterrupted all-day downloading or seeding is not promised.** Reopen Jacket to restore the queued work.
+
+## Android TV
+
+The same APK declares Leanback support as optional and touchscreen as not required. Android TV / Google TV has a Leanback launcher entry and banner, a navigation rail, larger poster cards, visible focus states and D-pad navigation. The player handles Back, play/pause and left/right seeking.
+
+## Requirements and build
 
 - Android 9 (API 28) or newer.
-- Android TV / Google TV is supported by the same APK; use the remote's D-pad, OK and Back buttons.
-- Build: JDK 17, Android SDK Platform 36, Build Tools 36.0.0, Gradle 9.5.0.
-- A TMDB API Read Access Token is optional; Internet Archive browsing works without it.
-- Internet access is required for online catalogs, RSS feeds, poster images and remote media streams.
-
-## Build
+- Internet access for catalog metadata, remote artwork, indexers and remote media.
+- TMDB Read Access Token is optional. Without it, the open Internet Archive catalog remains available.
+- Build with JDK 17, Android SDK Platform 36, Build Tools 36.0.0 and Gradle 9.5.0.
 
 ```bash
 ./gradlew testDebugUnitTest assembleDebug
 ```
 
-Debug APK:
+GitHub Actions runs unit tests and builds a debug APK on pushes to `main` and `feat/**`, and on pull requests to `main`.
 
-`app/build/outputs/apk/debug/app-debug.apk`
+## Tests in this iteration
 
-GitHub Actions runs unit tests and builds a debug APK on pushes and pull requests to `main`. Release tags use the `v*` pattern.
+The JVM test suite covers:
+- Torznab/RSS XML parsing for magnet, `.torrent`, seeders, peers, size and category.
+- Rejection of insecure-only links and deduplication / seed sorting.
+- Title-only release heuristics.
+- Queue serialization and restoration independent of JNI.
+- Range parsing and 200 / 206 response headers.
+- Local-stream route and Host validation.
 
-## Security and content rights
+These tests do not replace manual streaming tests on physical Android 9+, Android 14/15 and Android TV devices. In particular, verify a real torrent's piece availability, container seek behavior and process recovery on hardware.
 
-- TMDB token, indexer API keys, usernames/passwords and session cookies are encrypted with AES/GCM using a key held by Android Keystore.
-- TV builds declare Leanback support as optional and touchscreen as not required, with a dedicated TV launcher banner.
-- Catalog and RSS requests use bounded response sizes and timeouts.
-- Custom indexers require HTTPS and cannot embed URL user-info credentials.
-- The app does not ship lists of piracy trackers, bypass paywalls, or claim that an arbitrary source is licensed.
-- Use only media and torrent sources you have the right to access and use. See [SECURITY.md](SECURITY.md).
+## Security and scope
 
-## Android background limits
-
-The integrated torrent service currently uses Android foreground-service type `dataSync`. Android 15+ applies a cumulative background time limit to this service type. It is not yet a guarantee of uninterrupted all-day torrent seeding. A separate user-initiated transfer lifecycle and native resume-data persistence remain on the roadmap.
-
-## Architecture
-
-See [docs-ARCHITECTURE.md](docs-ARCHITECTURE.md), [CHANGELOG.md](CHANGELOG.md) and [CONTRIBUTING.md](CONTRIBUTING.md).
+- No tracker presets, credentials or piracy-site lists are embedded.
+- Indexer URL templates must be HTTPS and cannot contain URL user-info.
+- API keys, usernames/passwords and cookies are encrypted at rest; JSON exports exclude them.
+- Torrent HTTP streaming binds only to loopback and is not a local-network media server.
+- No separate Jackett, Prowlarr or TorrServer process is included.
+- Use only sources and media you are authorized to access and use. See [SECURITY.md](SECURITY.md).

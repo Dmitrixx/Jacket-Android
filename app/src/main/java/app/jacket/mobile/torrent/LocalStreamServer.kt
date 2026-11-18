@@ -105,14 +105,10 @@ class LocalStreamServer(
                 }
 
                 if (!validHost(headers["host"])) return sendError(client.getOutputStream(), 403, "Forbidden")
-                val route = request[1].substringBefore('?').split('/')
-                if (route.size != 4 || route[1] != "stream" ||
-                    !route[2].matches(Regex("(?i)([a-f0-9]{40}|[a-f0-9]{64})"))
-                ) return sendError(client.getOutputStream(), 404, "Not Found")
-                val fileIndex = route[3].toIntOrNull()?.takeIf { it >= 0 }
+                val route = LocalStreamRouteParser.parse(request[1])
                     ?: return sendError(client.getOutputStream(), 404, "Not Found")
-
-                val id = route[2].lowercase()
+                val fileIndex = route.fileIndex
+                val id = route.infoHash
                 val target = try {
                     metadata(id, fileIndex)
                 } catch (error: Exception) {
@@ -132,21 +128,11 @@ class LocalStreamServer(
                     ))
                     return
                 }
-                val start = range?.start ?: 0L
-                val end = range?.endInclusive ?: (target.sizeBytes - 1L)
-                val contentLength = end - start + 1L
+                val response = RangeResponseBuilder.build(range, target.sizeBytes, contentType(target.name))
+                val start = response.start
+                val end = response.endInclusive
                 val out = client.getOutputStream()
-                val headersOut = mutableListOf(
-                    "Content-Type: ${contentType(target.name)}",
-                    "Accept-Ranges: bytes",
-                    "Content-Length: $contentLength",
-                    "Connection: close",
-                    "Cache-Control: no-store"
-                )
-                val status = if (range != null) 206 else 200
-                val reason = if (status == 206) "Partial Content" else "OK"
-                if (range != null) headersOut += "Content-Range: bytes $start-$end/${target.sizeBytes}"
-                writeHeaders(out, status, reason, headersOut)
+                writeHeaders(out, response.statusCode, response.reason, response.headers)
                 if (method == "HEAD") return
 
                 var offset = start
@@ -173,12 +159,7 @@ class LocalStreamServer(
         }
     }
 
-    private fun validHost(value: String?): Boolean {
-        if (value.isNullOrBlank()) return false
-        val host = value.substringBefore(':').lowercase()
-        val requestedPort = value.substringAfter(':', "").toIntOrNull()
-        return host == "127.0.0.1" && (requestedPort == null || requestedPort == port)
-    }
+    private fun validHost(value: String?): Boolean = LocalStreamHostPolicy.accepts(value, port)
 
     private fun contentType(filename: String): String = when (filename.substringAfterLast('.', "").lowercase()) {
         "mp4", "m4v" -> "video/mp4"

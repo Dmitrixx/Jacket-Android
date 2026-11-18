@@ -3,6 +3,8 @@ package app.jacket.mobile.ui
 import android.app.Activity
 import android.content.Intent
 import android.view.WindowManager
+import android.view.View
+import android.net.Uri
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -13,9 +15,14 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Audiotrack
+import androidx.compose.material.icons.filled.FastForward
+import androidx.compose.material.icons.filled.FastRewind
+import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.OpenInNew
 import androidx.compose.material.icons.filled.Subtitles
 import androidx.compose.material3.Button
@@ -31,19 +38,30 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.nativeKeyEvent
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.unit.dp
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
+import androidx.media3.common.Player
+import androidx.media3.common.MimeTypes
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
 import androidx.media3.ui.TrackSelectionDialogBuilder
 import app.jacket.mobile.torrent.PlaybackProgressStore
+import app.jacket.mobile.torrent.PlaybackSubtitle
 import kotlinx.coroutines.delay
+
+private const val PLAYER_SEEK_STEP_MS = 10_000L
 
 @OptIn(ExperimentalMaterial3Api::class, androidx.media3.common.util.UnstableApi::class)
 @Composable
@@ -52,17 +70,43 @@ fun JacketPlayerScreen(
     streamUrl: String,
     progressKey: String? = null,
     initialPositionMs: Long = 0L,
+    subtitles: List<PlaybackSubtitle> = emptyList(),
     onBack: () -> Unit
 ) {
     val context = LocalContext.current
     val activity = context as? Activity
     val onBackState by rememberUpdatedState(onBack)
     val progressStore = remember(context) { PlaybackProgressStore(context) }
-    val player = remember(streamUrl) {
+    var playWhenReady by remember(streamUrl) { mutableStateOf(true) }
+    var playerHasFocus by remember(streamUrl) { mutableStateOf(false) }
+    val player = remember(streamUrl, subtitles) {
+        val subtitleConfigurations = subtitles.map { subtitle ->
+            MediaItem.SubtitleConfiguration.Builder(Uri.parse(subtitle.url))
+                .setMimeType(subtitle.mimeType)
+                .setLanguage(subtitle.language)
+                .setLabel(subtitle.label)
+                .setSelectionFlags(C.SELECTION_FLAG_DEFAULT)
+                .build()
+        }
         ExoPlayer.Builder(context).build().apply {
-            setMediaItem(MediaItem.fromUri(streamUrl))
+            setMediaItem(
+                MediaItem.Builder()
+                    .setUri(streamUrl)
+                    .setSubtitleConfigurations(subtitleConfigurations)
+                    .build()
+            )
             if (initialPositionMs > 0L) seekTo(initialPositionMs)
             prepare()
+            playWhenReady = true
+        }
+    }
+
+    fun togglePlayback() {
+        if (player.isPlaying || player.playWhenReady) {
+            player.pause()
+            playWhenReady = false
+        } else {
+            player.play()
             playWhenReady = true
         }
     }
@@ -70,11 +114,18 @@ fun JacketPlayerScreen(
     BackHandler(onBack = onBackState)
 
     DisposableEffect(player) {
+        val listener = object : Player.Listener {
+            override fun onPlayWhenReadyChanged(isReady: Boolean, reason: Int) {
+                playWhenReady = isReady
+            }
+        }
+        player.addListener(listener)
         activity?.window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         onDispose {
             progressKey?.let { key ->
                 progressStore.save(key, player.currentPosition, player.duration.coerceAtLeast(0L))
             }
+            player.removeListener(listener)
             activity?.window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
             player.release()
         }
@@ -105,7 +156,32 @@ fun JacketPlayerScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .background(MaterialTheme.colorScheme.background)
-                .padding(padding),
+                .padding(padding)
+                .onPreviewKeyEvent { event ->
+                    if (!playerHasFocus || event.type != KeyEventType.KeyDown) {
+                        false
+                    } else {
+                        when (event.nativeKeyEvent.keyCode) {
+                            android.view.KeyEvent.KEYCODE_DPAD_LEFT -> {
+                                player.seekTo((player.currentPosition - PLAYER_SEEK_STEP_MS).coerceAtLeast(0L))
+                                true
+                            }
+                            android.view.KeyEvent.KEYCODE_DPAD_RIGHT -> {
+                                val duration = player.duration
+                                val target = player.currentPosition + PLAYER_SEEK_STEP_MS
+                                player.seekTo(if (duration > 0L) target.coerceAtMost(duration) else target)
+                                true
+                            }
+                            android.view.KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE,
+                            android.view.KeyEvent.KEYCODE_DPAD_CENTER,
+                            android.view.KeyEvent.KEYCODE_ENTER -> {
+                                togglePlayback()
+                                true
+                            }
+                            else -> false
+                        }
+                    }
+                },
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             AndroidView(
@@ -117,11 +193,39 @@ fun JacketPlayerScreen(
                         setShowBuffering(PlayerView.SHOW_BUFFERING_ALWAYS)
                         isFocusable = true
                         isFocusableInTouchMode = true
+                        onFocusChangeListener = View.OnFocusChangeListener { _, focused ->
+                            playerHasFocus = focused
+                        }
                         requestFocus()
                     }
                 },
                 update = { it.player = player }
             )
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
+                horizontalArrangement = Arrangement.Center
+            ) {
+                IconButton(
+                    onClick = { player.seekTo((player.currentPosition - PLAYER_SEEK_STEP_MS).coerceAtLeast(0L)) }
+                ) {
+                    Icon(Icons.Default.FastRewind, contentDescription = "Назад на 10 секунд")
+                }
+                IconButton(onClick = { togglePlayback() }) {
+                    Icon(
+                        if (playWhenReady) Icons.Default.Pause else Icons.Default.PlayArrow,
+                        contentDescription = if (playWhenReady) "Пауза" else "Воспроизвести"
+                    )
+                }
+                IconButton(
+                    onClick = {
+                        val duration = player.duration
+                        val target = player.currentPosition + PLAYER_SEEK_STEP_MS
+                        player.seekTo(if (duration > 0L) target.coerceAtMost(duration) else target)
+                    }
+                ) {
+                    Icon(Icons.Default.FastForward, contentDescription = "Вперёд на 10 секунд")
+                }
+            }
             Row(
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)

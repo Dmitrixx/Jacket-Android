@@ -51,6 +51,60 @@ class MediaCatalogClient {
         return (metadata + archive).distinctBy { it.id }.take(MAX_RESULTS)
     }
 
+    fun seasons(item: CatalogItem, tmdbToken: String): List<MediaSeason> {
+        if (item.kind != MediaKind.SERIES || item.providerId != TMDB_PROVIDER || tmdbToken.isBlank()) return emptyList()
+        val json = requestJson("https://api.themoviedb.org/3/tv/${item.providerItemId}?language=ru-RU", bearer = tmdbToken)
+        val array = json.optJSONArray("seasons") ?: return emptyList()
+        return buildList {
+            for (i in 0 until minOf(array.length(), MAX_SEASONS)) {
+                val season = array.optJSONObject(i) ?: continue
+                val number = season.optInt("season_number", -1)
+                if (number <= 0) continue // season 0 is Specials, not a numbered season
+                val poster = season.optString("poster_path").takeIf(String::isNotBlank)
+                    ?.let { "https://image.tmdb.org/t/p/w500$it" }
+                add(
+                    MediaSeason(
+                        seasonNumber = number,
+                        name = season.optString("name").ifBlank { "Сезон $number" },
+                        episodeCount = season.optInt("episode_count").coerceAtLeast(0),
+                        posterUrl = poster,
+                        overview = season.optString("overview")
+                    )
+                )
+            }
+        }.sortedBy { it.seasonNumber }
+    }
+
+    fun episodes(item: CatalogItem, seasonNumber: Int, tmdbToken: String): List<MediaEpisode> {
+        if (item.kind != MediaKind.SERIES || item.providerId != TMDB_PROVIDER || tmdbToken.isBlank() || seasonNumber <= 0) {
+            return emptyList()
+        }
+        val json = requestJson(
+            "https://api.themoviedb.org/3/tv/${item.providerItemId}/season/$seasonNumber?language=ru-RU",
+            bearer = tmdbToken
+        )
+        val array = json.optJSONArray("episodes") ?: return emptyList()
+        return buildList {
+            for (i in 0 until minOf(array.length(), MAX_EPISODES_PER_SEASON)) {
+                val episode = array.optJSONObject(i) ?: continue
+                val number = episode.optInt("episode_number", -1)
+                if (number <= 0) continue
+                val still = episode.optString("still_path").takeIf(String::isNotBlank)
+                    ?.let { "https://image.tmdb.org/t/p/w500$it" }
+                add(
+                    MediaEpisode(
+                        seasonNumber = seasonNumber,
+                        episodeNumber = number,
+                        name = episode.optString("name").ifBlank { "Серия $number" },
+                        overview = episode.optString("overview"),
+                        airDate = episode.optString("air_date").takeIf(String::isNotBlank),
+                        stillUrl = still
+                    )
+                )
+            }
+        }.sortedBy { it.episodeNumber }
+    }
+
     fun archiveSources(query: String): List<SourceResult> {
         val items = archiveSearch(query, "mediatype:movies AND (${escapeLucene(query)})")
         return items.take(MAX_SOURCE_DETAILS).mapNotNull { item ->
@@ -366,6 +420,8 @@ class MediaCatalogClient {
         const val TMDB_PROVIDER = "tmdb"
         const val ARCHIVE_PROVIDER = "archive"
         const val MAX_RESULTS = 24
+        const val MAX_SEASONS = 40
+        const val MAX_EPISODES_PER_SEASON = 100
         const val MAX_SOURCE_DETAILS = 8
         const val CONNECT_TIMEOUT_MS = 12_000
         const val READ_TIMEOUT_MS = 25_000

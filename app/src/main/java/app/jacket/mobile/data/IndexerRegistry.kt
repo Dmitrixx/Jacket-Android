@@ -73,18 +73,17 @@ class IndexerRegistry(
                 }
             }
 
-            val unique = results
-                .distinctBy { it.magnetUri ?: it.downloadUrl ?: it.streamUrl ?: it.id }
-                .sortedWith(
-                    compareByDescending<SourceResult> { it.seeders ?: -1 }
-                        .thenBy { it.title.lowercase() }
-                )
-                .take(MAX_TOTAL_RESULTS)
-            return IndexerSearchOutcome(unique, failures)
+            return IndexerSearchOutcome(orderResults(results), failures)
         } finally {
             executor.shutdownNow()
             runCatching { executor.awaitTermination(250, TimeUnit.MILLISECONDS) }
         }
+    }
+
+    fun searchOne(config: IndexerConfig, query: String): List<SourceResult> {
+        require(config.enabled) { "Индексатор отключён" }
+        require(query.isNotBlank()) { "Введите поисковый запрос" }
+        return searchFeed(config, query.trim())
     }
 
     /** A valid empty response still means that the authenticated indexer is reachable. */
@@ -109,7 +108,17 @@ class IndexerRegistry(
     }
 
     internal fun parseFeedXml(xml: String, config: IndexerConfig): List<SourceResult> =
-        parseFeed(xml.toByteArray(Charsets.UTF_8), config)
+        parseFeed(xml.toByteArray(Charsets.UTF_8), config, Xml.newPullParser())
+
+    /** Parser injection keeps RSS/Torznab fixtures testable without Android framework classes. */
+    internal fun parseFeedXml(xml: String, config: IndexerConfig, parser: XmlPullParser): List<SourceResult> =
+        parseFeed(xml.toByteArray(Charsets.UTF_8), config, parser)
+
+    internal fun orderResults(results: List<SourceResult>): List<SourceResult> =
+        results
+            .distinctBy { it.magnetUri ?: it.downloadUrl ?: it.streamUrl ?: it.id }
+            .sortedWith(compareByDescending<SourceResult> { it.seeders ?: -1 }.thenBy { it.title.lowercase() })
+            .take(MAX_TOTAL_RESULTS)
 
     private fun searchFeed(config: IndexerConfig, query: String): List<SourceResult> {
         val requestUrl = buildRequestUrl(config, query)
@@ -177,8 +186,10 @@ class IndexerRegistry(
         return builder.build().toString()
     }
 
-    private fun parseFeed(xml: ByteArray, config: IndexerConfig): List<SourceResult> {
-        val parser = Xml.newPullParser()
+    private fun parseFeed(xml: ByteArray, config: IndexerConfig): List<SourceResult> =
+        parseFeed(xml, config, Xml.newPullParser())
+
+    private fun parseFeed(xml: ByteArray, config: IndexerConfig, parser: XmlPullParser): List<SourceResult> {
         parser.setFeature(XmlPullParser.FEATURE_PROCESS_NAMESPACES, false)
         parser.setFeature(XmlPullParser.FEATURE_PROCESS_DOCDECL, false)
         parser.setInput(xml.inputStream(), "UTF-8")
@@ -277,7 +288,8 @@ class IndexerRegistry(
                                 seeders = seeders,
                                 leechers = leechers,
                                 pageUrl = safePage,
-                                category = category
+                                category = category,
+                                indexerId = config.id
                             )
                         }
                         inEntry = false

@@ -1,6 +1,8 @@
 package app.jacket.mobile.torrent
 
 import android.content.Context
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.util.AtomicFile
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -79,7 +81,10 @@ object TorrentEngine {
     @Synchronized
     fun start(context: Context) {
         appContext = context.applicationContext
-        if (manager?.isRunning == true) return
+        if (manager?.isRunning == true) {
+            restorePending(context)
+            return
+        }
 
         val instance = SessionManager()
         val listener = object : AlertListener {
@@ -120,11 +125,7 @@ object TorrentEngine {
         instance.startDht()
         manager = instance
 
-        TorrentQueueStore(context).all().forEach { item ->
-            runCatching { restoreItem(context, item) }
-                .onFailure { errors[item.id] = it.message ?: "Не удалось восстановить загрузку" }
-        }
-        refresh()
+        restorePending(context)
     }
 
     @Synchronized
@@ -158,7 +159,7 @@ object TorrentEngine {
     fun add(context: Context, magnet: String, title: String) {
         start(context)
         val queued = TorrentQueueStore(context).add(magnet, title)
-        if (findHandle(queued.id) == null) {
+        if (findHandle(queued.id) == null && !wifiOnlyRestricted(context)) {
             manager?.download(queued.magnetUri!!, downloadDirectory(context), torrent_flags_t())
         }
         refresh()
@@ -179,7 +180,7 @@ object TorrentEngine {
         if (source.canonicalFile != target.canonicalFile) source.copyTo(target, overwrite = true)
         val queued = TorrentQueueStore(context).addTorrentFile(target, id, title ?: info.name())
         start(context)
-        if (findHandle(id) == null) {
+        if (findHandle(id) == null && !wifiOnlyRestricted(context)) {
             manager?.download(info, downloadDirectory(context), null, null, null, torrent_flags_t())
         }
         refresh()
@@ -245,6 +246,8 @@ object TorrentEngine {
             if (selected != null && handle.torrentFile() != null) applyFileSelection(handle, selected)
             handle.setFlags(TorrentFlags.AUTO_MANAGED, TorrentFlags.AUTO_MANAGED)
             handle.resume()
+        } else {
+            restorePending(context)
         }
         refresh()
     }
@@ -286,7 +289,51 @@ object TorrentEngine {
         return prefs.getInt(KEY_DOWNLOAD_KBPS, 0) to prefs.getInt(KEY_UPLOAD_KBPS, 0)
     }
 
+    fun isWifiOnly(context: Context): Boolean =
+        context.applicationContext.getSharedPreferences(RATE_PREFS, Context.MODE_PRIVATE)
+            .getBoolean(KEY_WIFI_ONLY, false)
+
+    @Synchronized
+    fun setWifiOnly(context: Context, enabled: Boolean) {
+        context.applicationContext.getSharedPreferences(RATE_PREFS, Context.MODE_PRIVATE).edit()
+            .putBoolean(KEY_WIFI_ONLY, enabled).apply()
+        // A service poll will start any queued tasks when Wi-Fi becomes available.
+    }
+
+    /** Resumes persisted queue entries that do not yet have a live native handle. */
+    @Synchronized
+    fun restorePending(context: Context) {
+        if (manager == null || wifiOnlyRestricted(context)) {
+            refresh()
+            return
+        }
+        val store = TorrentQueueStore(context)
+        store.all().forEach { item ->
+            if (findHandle(item.id) == null) {
+                runCatching { restoreItem(context, item) }
+                    .onFailure { errors[item.id] = it.message ?: "Не удалось восстановить загрузку" }
+            }
+        }
+        refresh()
+    }
+
+    private fun wifiOnlyRestricted(context: Context): Boolean {
+        if (!isWifiOnly(context)) return false
+        val connectivity = context.applicationContext.getSystemService(ConnectivityManager::class.java)
+            ?: return true
+        val network = connectivity.activeNetwork ?: return true
+        val capabilities = connectivity.getNetworkCapabilities(network) ?: return true
+        return !capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)
+    }
+
+
     private fun kbpsToBytes(value: Int): Int = if (value <= 0) 0 else (value.toLong() * 1024L).coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
+
+    fun reportError(id: String, message: String) {
+        val safeId = id.takeIf { it.matches(Regex("(?i)([a-f0-9]{40}|[a-f0-9]{64})")) } ?: "unknown"
+        errors[safeId] = message.replace(Regex("[\\r\\n\\t]+"), " ").take(300)
+        refresh()
+    }
 
     @Synchronized
     fun setLocalStreamPort(port: Int?) {
@@ -369,6 +416,24 @@ object TorrentEngine {
                     error.message ?: "Ошибка чтения состояния торрента"
             }
         }
+        val activeIds = rows.mapTo(HashSet()) { it.id }
+        store.all().filterNot { it.id in activeIds }.forEach { queued ->
+            rows += TorrentSnapshot(
+                id = queued.id,
+                name = queued.title,
+                progress = 0f,
+                downloadedBytes = 0L,
+                totalBytes = 0L,
+                downloadBytesPerSecond = 0,
+                uploadBytesPerSecond = 0,
+                seeds = 0,
+                peers = 0,
+                state = if (wifiOnlyRestricted(context)) "WAITING_FOR_WIFI" else "QUEUED",
+                paused = store.isPaused(queued.id),
+                error = errors[queued.id],
+                localStreamPort = localStreamPort
+            )
+        }
         _snapshots.value = rows.sortedBy { it.name.lowercase() }
     }
 
@@ -381,12 +446,17 @@ object TorrentEngine {
         val storage = info.files()
         require(fileIndex in 0 until storage.numFiles()) { "Неверный индекс файла" }
         val fileSize = storage.fileSize(fileIndex)
-        require(start < fileSize && start + length <= fileSize) { "Запрошенный диапазон выходит за пределы файла" }
+        require(start < fileSize && length <= fileSize - start) { "Запрошенный диапазон выходит за пределы файла" }
         val selected = TorrentQueueStore(appContext!!).get(id)?.selectedFileIndex
         if (selected != fileIndex) {
-            selectFile(appContext!!, id, fileIndex)
+            val completedBytes = handle.fileProgress().getOrNull(fileIndex) ?: 0L
+            if (completedBytes < fileSize) {
+                throw IllegalStateException("Дополнительный файл не загружен полностью")
+            }
+            // Fully downloaded subtitle sidecars can be served without switching priorities.
         }
         val absoluteStart = storage.fileOffset(fileIndex) + start
+        require(length - 1L <= Long.MAX_VALUE - absoluteStart) { "Диапазон слишком большой" }
         val absoluteEnd = absoluteStart + length - 1L
         val pieceLength = storage.pieceLength().toLong()
         val firstPiece = (absoluteStart / pieceLength).toInt()
@@ -407,7 +477,7 @@ object TorrentEngine {
         val root = File(handle.savePath()).canonicalFile
         val file = File(storage.filePath(fileIndex, root.absolutePath)).canonicalFile
         require(file.toPath().startsWith(root.toPath())) { "Путь файла выходит за каталог загрузки" }
-        require(file.isFile && file.length() >= start + length) { "Файл ещё не записан на диск" }
+        require(file.isFile && file.length() >= start && length <= file.length() - start) { "Файл ещё не записан на диск" }
         return file
     }
 
@@ -426,6 +496,30 @@ object TorrentEngine {
             filePath = storage.filePath(fileIndex),
             progress = if (size <= 0L) 0f else (progress.toFloat() / size.toFloat()).coerceIn(0f, 1f)
         )
+    }
+
+    /** Returns matching subtitle tracks already present in the torrent metadata. */
+    fun subtitleTargets(id: String, videoFileIndex: Int): List<TorrentStreamTarget> {
+        val handle = findHandle(id) ?: return emptyList()
+        val info = handle.torrentFile() ?: return emptyList()
+        val storage = info.files()
+        if (videoFileIndex !in 0 until storage.numFiles()) return emptyList()
+        val videoName = storage.fileName(videoFileIndex)
+        val baseName = videoName.substringAfterLast('/').substringBeforeLast('.').lowercase()
+        val fileProgress = handle.fileProgress()
+        return (0 until storage.numFiles()).mapNotNull { index ->
+            if (index == videoFileIndex || storage.padFileAt(index)) return@mapNotNull null
+            val name = storage.fileName(index)
+            val extension = name.substringAfterLast('.', "").lowercase()
+            if (extension !in setOf("srt", "vtt")) return@mapNotNull null
+            val candidateBase = name.substringAfterLast('/').substringBeforeLast('.').lowercase()
+            if (candidateBase != baseName && !candidateBase.startsWith("$baseName.")) return@mapNotNull null
+            val size = storage.fileSize(index)
+            // Never change selected-file priorities while ExoPlayer requests subtitle bytes.
+            // A sidecar is exposed only when it is already fully available on disk.
+            if (size <= 0L || fileProgress.getOrNull(index) != size) return@mapNotNull null
+            target(id, index)
+        }.take(MAX_SUBTITLE_TRACKS)
     }
 
     @Synchronized
@@ -511,4 +605,6 @@ object TorrentEngine {
     private const val RATE_PREFS = "jacket_torrent_settings"
     private const val KEY_DOWNLOAD_KBPS = "download_kbps"
     private const val KEY_UPLOAD_KBPS = "upload_kbps"
+    private const val KEY_WIFI_ONLY = "wifi_only"
+    private const val MAX_SUBTITLE_TRACKS = 12
 }

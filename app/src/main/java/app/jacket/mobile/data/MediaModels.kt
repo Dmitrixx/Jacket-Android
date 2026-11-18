@@ -79,7 +79,8 @@ data class SourceResult(
     val leechers: Int? = null,
     val licenseUrl: String? = null,
     val pageUrl: String? = null,
-    val category: String? = null
+    val category: String? = null,
+    val indexerId: String? = null
 )
 
 fun CatalogItem.toJson(): JSONObject = JSONObject()
@@ -135,3 +136,24 @@ data class ReleaseMetadata(
     val audioTags: List<String>,
     val sourceTags: List<String>
 )
+
+
+data class MediaSeason(
+    val seasonNumber: Int,
+    val name: String,
+    val episodeCount: Int,
+    val posterUrl: String? = null,
+    val overview: String = ""
+)
+
+data class MediaEpisode(
+    val seasonNumber: Int,
+    val episodeNumber: Int,
+    val name: String,
+    val overview: String = "",
+    val airDate: String? = null,
+    val stillUrl: String? = null
+) {
+    val releaseCode: String
+        get() = "S${seasonNumber.toString().padStart(2, '0')}E${episodeNumber.toString().padStart(2, '0')}"
+}

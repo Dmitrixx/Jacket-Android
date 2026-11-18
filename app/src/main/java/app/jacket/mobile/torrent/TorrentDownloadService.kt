@@ -16,6 +16,7 @@ import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
 import app.jacket.mobile.R
 import app.jacket.mobile.MainActivity
+import app.jacket.mobile.data.MediaSettingsStore
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -29,6 +30,7 @@ import java.io.File
 import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
+import java.net.URI
 import java.util.concurrent.atomic.AtomicBoolean
 
 /** Single-process foreground owner of the BitTorrent session and loopback media server. */
@@ -65,7 +67,11 @@ class TorrentDownloadService : Service() {
                         ACTION_ADD_TORRENT_URL -> {
                             val url = intent?.getStringExtra(EXTRA_TORRENT_URL).orEmpty()
                             val title = intent?.getStringExtra(EXTRA_TITLE).orEmpty()
-                            val file = downloadTorrentFile(url, title)
+                            val file = downloadTorrentFile(
+                                url,
+                                title,
+                                intent?.getStringExtra(EXTRA_INDEXER_ID)
+                            )
                             TorrentEngine.addTorrent(applicationContext, file, title)
                         }
                         ACTION_PAUSE -> TorrentEngine.pause(applicationContext, intent?.getStringExtra(EXTRA_ID).orEmpty())
@@ -109,14 +115,32 @@ class TorrentDownloadService : Service() {
             TorrentEngine.selectFile(applicationContext, id, fileIndex)
             val server = streamServer ?: LocalStreamServer(
                 metadata = TorrentEngine::target,
-                awaitRange = { hash, index, start, length -> TorrentEngine.awaitRange(hash, index, start, length) }
+                awaitRange = { hash, index, start, length ->
+                    try {
+                        TorrentEngine.awaitRange(hash, index, start, length)
+                    } catch (error: Exception) {
+                        TorrentEngine.reportError(hash, error.message ?: "Ошибка локального видеопотока")
+                        throw error
+                    }
+                }
             ).also {
                 it.start()
                 streamServer = it
                 TorrentEngine.setLocalStreamPort(it.port)
             }
             val item = TorrentEngine.target(id, fileIndex)
-            Triple(server.url(id, fileIndex), item, server.port)
+            val subtitles = TorrentEngine.subtitleTargets(id, fileIndex).map { subtitle ->
+                val language = subtitle.name.substringAfterLast('/').substringBeforeLast('.')
+                    .substringAfterLast('.')
+                    .takeIf { it.matches(Regex("(?i)[a-z]{2,3}")) }
+                PlaybackSubtitle(
+                    url = server.url(id, subtitle.fileIndex),
+                    mimeType = if (subtitle.name.endsWith(".vtt", true)) "text/vtt" else "application/x-subrip",
+                    language = language,
+                    label = subtitle.name.substringAfterLast('/')
+                )
+            }
+            Triple(server.url(id, fileIndex), item, subtitles)
         }
         val key = PlaybackProgressStore.torrentKey(id, fileIndex)
         val savedPosition = PlaybackProgressStore(applicationContext).position(key)
@@ -127,7 +151,8 @@ class TorrentDownloadService : Service() {
                 title = target.second.name,
                 url = target.first,
                 progressKey = key,
-                initialPositionMs = savedPosition
+                initialPositionMs = savedPosition,
+                subtitles = target.third
             )
         )
     }
@@ -150,6 +175,7 @@ class TorrentDownloadService : Service() {
             var lastResumeSave = 0L
             while (isActive) {
                 withContext(Dispatchers.IO) {
+                    TorrentEngine.restorePending(applicationContext)
                     TorrentEngine.refresh()
                     val now = System.currentTimeMillis()
                     if (now - lastResumeSave >= RESUME_SAVE_INTERVAL_MS) {
@@ -196,44 +222,101 @@ class TorrentDownloadService : Service() {
         }
     }
 
-    private fun downloadTorrentFile(urlValue: String, title: String): File {
-        val uri = Uri.parse(urlValue)
-        require(uri.scheme == "https" && !uri.host.isNullOrBlank() && uri.userInfo == null) {
+    private fun downloadTorrentFile(urlValue: String, title: String, indexerId: String?): File {
+        val sourceConfig = indexerId?.let { wanted ->
+            MediaSettingsStore(applicationContext).indexers().firstOrNull { it.id == wanted }
+        }
+        var currentUrl = urlValue
+        val originalUri = Uri.parse(urlValue)
+        require(originalUri.scheme == "https" && !originalUri.host.isNullOrBlank() && originalUri.userInfo == null) {
             "Torrent-файл можно получать только по HTTPS"
         }
-        val connection = (URL(urlValue).openConnection() as HttpURLConnection).apply {
-            connectTimeout = 10_000
-            readTimeout = 25_000
-            instanceFollowRedirects = false
-            setRequestProperty("User-Agent", "JacketAndroid/2.1")
+        if (sourceConfig != null && sourceConfig.apiKey.isNotBlank()) {
+            val uri = Uri.parse(currentUrl)
+            currentUrl = if (uri.getQueryParameter("apikey") == null) {
+                uri.buildUpon().appendQueryParameter("apikey", sourceConfig.apiKey).build().toString()
+            } else currentUrl
         }
+
         val dir = File(filesDir, "torrent-imports").apply { mkdirs() }
         val safeName = title.replace(Regex("[^a-zA-Z0-9._-]"), "_").take(64).ifBlank { "release" }
         val target = File.createTempFile("${safeName}_", ".torrent", dir)
+        var activeUrl = currentUrl
+        var redirectCount = 0
         try {
-            val code = connection.responseCode
-            if (code !in 200..299) throw IOException("HTTP $code при загрузке .torrent")
-            connection.inputStream.use { input ->
-                target.outputStream().use { output ->
-                    val buffer = ByteArray(8192)
-                    var total = 0L
-                    while (true) {
-                        val count = input.read(buffer)
-                        if (count < 0) break
-                        total += count
-                        if (total > TorrentQueueStore.MAX_TORRENT_BYTES) throw IOException("Файл .torrent превышает 8 МиБ")
-                        output.write(buffer, 0, count)
+            while (true) {
+                val uri = Uri.parse(activeUrl)
+                require(uri.scheme == "https" && !uri.host.isNullOrBlank() && uri.userInfo == null) {
+                    "Перенаправление torrent-файла должно оставаться HTTPS"
+                }
+                val sameOrigin = uri.host.equals(originalUri.host, ignoreCase = true) &&
+                    effectivePort(uri) == effectivePort(originalUri)
+                val requestUrl = if (
+                    sameOrigin && sourceConfig?.apiKey?.isNotBlank() == true &&
+                    uri.getQueryParameter("apikey") == null
+                ) {
+                    uri.buildUpon().appendQueryParameter("apikey", sourceConfig.apiKey).build().toString()
+                } else activeUrl
+                val connection = (URL(requestUrl).openConnection() as HttpURLConnection).apply {
+                    connectTimeout = 10_000
+                    readTimeout = 25_000
+                    instanceFollowRedirects = false
+                    setRequestProperty("User-Agent", "JacketAndroid/2.1")
+                    if (sameOrigin && sourceConfig != null) {
+                        if (sourceConfig.username.isNotBlank() || sourceConfig.password.isNotBlank()) {
+                            val credentials = "${sourceConfig.username}:${sourceConfig.password}"
+                            val encoded = android.util.Base64.encodeToString(
+                                credentials.toByteArray(Charsets.UTF_8),
+                                android.util.Base64.NO_WRAP
+                            )
+                            setRequestProperty("Authorization", "Basic $encoded")
+                        }
+                        if (sourceConfig.cookie.isNotBlank()) setRequestProperty("Cookie", sourceConfig.cookie.take(4096))
+                        if (sourceConfig.apiKey.isNotBlank()) setRequestProperty("X-Api-Key", sourceConfig.apiKey.take(512))
                     }
                 }
+                try {
+                    val code = connection.responseCode
+                    if (code in REDIRECT_CODES) {
+                        if (redirectCount++ >= MAX_TORRENT_REDIRECTS) throw IOException("Слишком много перенаправлений .torrent")
+                        val location = connection.getHeaderField("Location")
+                            ?: throw IOException("Сервер вернул перенаправление без Location")
+                        activeUrl = URL(activeUrl).toURI().resolve(URI(location)).toString()
+                        continue
+                    }
+                    if (code !in 200..299) throw IOException("HTTP $code при загрузке .torrent")
+                    val declaredLength = connection.getHeaderFieldLong("Content-Length", -1L)
+                    if (declaredLength > TorrentQueueStore.MAX_TORRENT_BYTES) {
+                        throw IOException("Файл .torrent превышает 8 МиБ")
+                    }
+                    connection.inputStream.use { input ->
+                        target.outputStream().use { output ->
+                            val buffer = ByteArray(8192)
+                            var total = 0L
+                            while (true) {
+                                val count = input.read(buffer)
+                                if (count < 0) break
+                                total += count
+                                if (total > TorrentQueueStore.MAX_TORRENT_BYTES) {
+                                    throw IOException("Файл .torrent превышает 8 МиБ")
+                                }
+                                output.write(buffer, 0, count)
+                            }
+                        }
+                    }
+                    return target
+                } finally {
+                    connection.disconnect()
+                }
             }
-            return target
         } catch (error: Exception) {
             target.delete()
             throw error
-        } finally {
-            connection.disconnect()
         }
     }
+
+    private fun effectivePort(uri: Uri): Int =
+        if (uri.port >= 0) uri.port else if (uri.scheme.equals("https", true)) 443 else -1
 
     @android.annotation.TargetApi(35)
     override fun onTimeout(startId: Int, fgsType: Int) {
@@ -315,6 +398,7 @@ class TorrentDownloadService : Service() {
         const val EXTRA_FILE_INDEX = "file_index"
         const val EXTRA_TORRENT_PATH = "torrent_path"
         const val EXTRA_TORRENT_URL = "torrent_url"
+        const val EXTRA_INDEXER_ID = "indexer_id"
         const val EXTRA_DELETE_FILES = "delete_files"
 
         private const val ACTION_RESTORE = "app.jacket.action.RESTORE"
@@ -331,6 +415,8 @@ class TorrentDownloadService : Service() {
         private const val NOTIFICATION_ID = 4101
         private const val POLL_INTERVAL_MS = 1_000L
         private const val RESUME_SAVE_INTERVAL_MS = 30_000L
+        private const val MAX_TORRENT_REDIRECTS = 3
+        private val REDIRECT_CODES = setOf(301, 302, 303, 307, 308)
 
         private fun send(context: Context, action: String, extras: Intent.() -> Unit = {}) {
             val intent = Intent(context, TorrentDownloadService::class.java).setAction(action).apply(extras)
@@ -346,9 +432,10 @@ class TorrentDownloadService : Service() {
             putExtra(EXTRA_TORRENT_PATH, path)
             putExtra(EXTRA_TITLE, title)
         }
-        fun addTorrentUrl(context: Context, url: String, title: String) = send(context, ACTION_ADD_TORRENT_URL) {
+        fun addTorrentUrl(context: Context, url: String, title: String, indexerId: String? = null) = send(context, ACTION_ADD_TORRENT_URL) {
             putExtra(EXTRA_TORRENT_URL, url)
             putExtra(EXTRA_TITLE, title)
+            putExtra(EXTRA_INDEXER_ID, indexerId)
         }
         fun pause(context: Context, id: String) = send(context, ACTION_PAUSE) { putExtra(EXTRA_ID, id) }
         fun resume(context: Context, id: String) = send(context, ACTION_RESUME) { putExtra(EXTRA_ID, id) }

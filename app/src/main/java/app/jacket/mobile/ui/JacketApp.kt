@@ -124,6 +124,7 @@ fun JacketApp(viewModel: MainViewModel) {
     var playerTitle by rememberSaveable { mutableStateOf("") }
     var playerProgressKey by rememberSaveable { mutableStateOf<String?>(null) }
     var playerInitialPosition by rememberSaveable { mutableLongStateOf(0L) }
+    var playerSubtitles by remember { mutableStateOf(emptyList<app.jacket.mobile.torrent.PlaybackSubtitle>()) }
     var isTorrentPlayback by rememberSaveable { mutableStateOf(false) }
 
     val context = LocalContext.current
@@ -138,6 +139,7 @@ fun JacketApp(viewModel: MainViewModel) {
             playerUrl = request.url
             playerProgressKey = request.progressKey
             playerInitialPosition = request.initialPositionMs
+            playerSubtitles = request.subtitles
             isTorrentPlayback = true
         }
     }
@@ -148,6 +150,7 @@ fun JacketApp(viewModel: MainViewModel) {
         playerTitle = ""
         playerProgressKey = null
         playerInitialPosition = 0L
+        playerSubtitles = emptyList()
         isTorrentPlayback = false
     }
 
@@ -172,6 +175,7 @@ fun JacketApp(viewModel: MainViewModel) {
             streamUrl = playerUrl.orEmpty(),
             progressKey = playerProgressKey,
             initialPositionMs = playerInitialPosition,
+            subtitles = playerSubtitles,
             onBack = ::closePlayer
         )
         return
@@ -199,6 +203,7 @@ fun JacketApp(viewModel: MainViewModel) {
                 playerUrl = url
                 playerProgressKey = PlaybackProgressStore.urlKey(url)
                 playerInitialPosition = PlaybackProgressStore(context).position(playerProgressKey!!)
+                playerSubtitles = emptyList()
                 isTorrentPlayback = false
             }
         )
@@ -633,6 +638,12 @@ private fun SearchScreen(
     val message by viewModel.message.collectAsState()
     val isError by viewModel.isError.collectAsState()
 
+    LaunchedEffect(query) {
+        kotlinx.coroutines.delay(400)
+        if (query.trim().length >= 2) viewModel.search(query.trim())
+        else viewModel.clearSearch()
+    }
+
     Column(modifier.fillMaxSize()) {
         Text(
             "Найти фильм или сериал",
@@ -744,10 +755,15 @@ private fun DetailScreen(
     onPlay: (String, String) -> Unit
 ) {
     val details by viewModel.selectedDetails.collectAsState()
+    val tmdbToken by viewModel.tmdbToken.collectAsState()
     val favorites by viewModel.favorites.collectAsState()
     val loading by viewModel.isLoading.collectAsState()
     val sources by viewModel.sourceResults.collectAsState()
     val searchingSources by viewModel.isSearchingSources.collectAsState()
+    val seasons by viewModel.seasons.collectAsState()
+    val episodes by viewModel.episodes.collectAsState()
+    val selectedSeason by viewModel.selectedSeasonNumber.collectAsState()
+    val loadingEpisodes by viewModel.isLoadingEpisodes.collectAsState()
     val message by viewModel.message.collectAsState()
     val isError by viewModel.isError.collectAsState()
     val context = LocalContext.current
@@ -824,6 +840,105 @@ private fun DetailScreen(
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.primary
                         )
+                    }
+
+                    if (item.kind == MediaKind.SERIES) {
+                        Spacer(Modifier.height(8.dp))
+                        Text("Сезоны и серии", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                        when {
+                            tmdbToken.isBlank() -> {
+                                MessageCard(
+                                    "Введите TMDB Read Access Token в настройках, чтобы загружать сезоны и серии.",
+                                    false
+                                )
+                            }
+                            seasons.isEmpty() -> {
+                                Text(
+                                    "Нет данных о сезонах или они ещё загружаются.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            else -> {
+                                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    items(seasons, key = { it.seasonNumber }) { season ->
+                                        val selected = selectedSeason == season.seasonNumber
+                                        OutlinedButton(
+                                            onClick = { viewModel.selectSeason(item, season.seasonNumber) }
+                                        ) {
+                                            Text(if (selected) "✓ ${season.name}" else season.name)
+                                        }
+                                    }
+                                }
+                                if (loadingEpisodes) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp),
+                                        horizontalArrangement = Arrangement.Center,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
+                                        Spacer(Modifier.width(10.dp))
+                                        Text("Загружаем серии…")
+                                    }
+                                } else if (episodes.isEmpty()) {
+                                    Text(
+                                        "Для выбранного сезона серии не найдены.",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                } else {
+                                    episodes.forEach { episode ->
+                                        Card(modifier = Modifier.fillMaxWidth()) {
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth().padding(10.dp),
+                                                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                                verticalAlignment = Alignment.CenterVertically
+                                            ) {
+                                                if (episode.stillUrl != null) {
+                                                    RemotePoster(
+                                                        url = episode.stillUrl,
+                                                        modifier = Modifier.width(if (isTv) 180.dp else 112.dp)
+                                                            .aspectRatio(16f / 9f)
+                                                    )
+                                                }
+                                                Column(
+                                                    modifier = Modifier.weight(1f),
+                                                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                                                ) {
+                                                    Text(
+                                                        "${episode.releaseCode} • ${episode.name}",
+                                                        fontWeight = FontWeight.SemiBold
+                                                    )
+                                                    if (!episode.airDate.isNullOrBlank()) {
+                                                        Text(
+                                                            episode.airDate,
+                                                            style = MaterialTheme.typography.labelSmall,
+                                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                        )
+                                                    }
+                                                    if (episode.overview.isNotBlank()) {
+                                                        Text(
+                                                            episode.overview,
+                                                            maxLines = if (isTv) 4 else 3,
+                                                            style = MaterialTheme.typography.bodySmall,
+                                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                        )
+                                                    }
+                                                    OutlinedButton(
+                                                        onClick = { viewModel.findSources(item, episode) },
+                                                        enabled = !searchingSources
+                                                    ) {
+                                                        Icon(Icons.Default.Search, contentDescription = null)
+                                                        Spacer(Modifier.width(6.dp))
+                                                        Text("Найти эту серию")
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
 
                     if (details!!.streamUrl != null) {
@@ -948,7 +1063,7 @@ private fun DetailScreen(
                                     source = source,
                                     onPlay = { url -> onPlay(source.title, url) },
                                     onMagnet = { magnet -> TorrentDownloadService.add(context, magnet, source.title) },
-                                    onTorrent = { url -> TorrentDownloadService.addTorrentUrl(context, url, source.title) },
+                                    onTorrent = { url -> TorrentDownloadService.addTorrentUrl(context, url, source.title, source.indexerId) },
                                     onPage = { url -> openExternal(context, url) }
                                 )
                             }
@@ -1120,6 +1235,14 @@ private fun DownloadsScreen(onBack: () -> Unit) {
                     Card(modifier = Modifier.fillMaxWidth()) {
                         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                             Text(item.name, fontWeight = FontWeight.SemiBold)
+                            if (item.state == "WAITING_FOR_WIFI") {
+                                MessageCard("Ожидает подключения к Wi-Fi. Задача сохранена и начнётся автоматически.", false)
+                            } else if (item.state == "QUEUED") {
+                                Text("Ожидает запуска", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                            if (item.localStreamPort != null) {
+                                Text("Локальный видеосервер: 127.0.0.1:${item.localStreamPort}", style = MaterialTheme.typography.labelSmall)
+                            }
                             LinearProgressIndicator(item.progress, modifier = Modifier.fillMaxWidth())
                             Text(
                                 "${(item.progress * 100).toInt()}% • ${formatBytes(item.downloadedBytes)} / ${formatBytes(item.totalBytes)}",
@@ -1215,6 +1338,10 @@ private fun SettingsScreen(
     val searchingSources by viewModel.isSearchingSources.collectAsState()
     val context = LocalContext.current
     var token by remember(currentToken) { mutableStateOf(currentToken) }
+    val savedRates = remember(context) { TorrentEngine.rateLimits(context) }
+    var downloadLimit by rememberSaveable { mutableStateOf(savedRates.first.toString()) }
+    var uploadLimit by rememberSaveable { mutableStateOf(savedRates.second.toString()) }
+    var wifiOnly by rememberSaveable { mutableStateOf(TorrentEngine.isWifiOnly(context)) }
     val exportIndexers = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
         if (uri != null) {
             runCatching {
@@ -1328,12 +1455,80 @@ private fun SettingsScreen(
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
                     minLines = 2
                 )
-                Button(onClick = { viewModel.saveTmdbToken(token) }, modifier = Modifier.fillMaxWidth()) {
-                    Text("Сохранить токен каталога")
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(
+                        onClick = { viewModel.saveTmdbToken(token) },
+                        modifier = Modifier.weight(1f)
+                    ) { Text("Сохранить токен") }
+                    OutlinedButton(
+                        onClick = {
+                            token = ""
+                            viewModel.saveTmdbToken("")
+                        }
+                    ) { Text("Сбросить") }
                 }
                 Text(
                     "Токен TMDB хранится в Android Keystore. TMDB предоставляет метаданные и изображения, но не видеопотоки.",
                     style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+
+            item {
+                Text("Загрузки и сеть", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                Text(
+                    "Лимиты применяются ко всей торрент-сессии. Значение 0 означает отсутствие ограничения.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        value = downloadLimit,
+                        onValueChange = { downloadLimit = it.filter(Char::isDigit).take(7) },
+                        modifier = Modifier.weight(1f),
+                        label = { Text("Загрузка КБ/с") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        singleLine = true
+                    )
+                    OutlinedTextField(
+                        value = uploadLimit,
+                        onValueChange = { uploadLimit = it.filter(Char::isDigit).take(7) },
+                        modifier = Modifier.weight(1f),
+                        label = { Text("Отдача КБ/с") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        singleLine = true
+                    )
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Только по Wi-Fi", fontWeight = FontWeight.SemiBold)
+                        Text(
+                            "Новые задачи будут ждать Wi-Fi. Уже запущенные загрузки и просмотр не отключаются автоматически.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Switch(checked = wifiOnly, onCheckedChange = { wifiOnly = it })
+                }
+                Button(
+                    onClick = {
+                        TorrentEngine.setRateLimits(
+                            context,
+                            downloadLimit.toIntOrNull()?.coerceAtLeast(0) ?: 0,
+                            uploadLimit.toIntOrNull()?.coerceAtLeast(0) ?: 0
+                        )
+                        TorrentEngine.setWifiOnly(context, wifiOnly)
+                        Toast.makeText(context, "Настройки загрузки сохранены", Toast.LENGTH_SHORT).show()
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                ) { Text("Сохранить настройки загрузки") }
+                Text(
+                    "Папка загрузок: ${TorrentEngine.downloadDirectory(context).absolutePath}",
+                    style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
@@ -1536,6 +1731,10 @@ private fun SettingsScreen(
                         )
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             OutlinedButton(onClick = { viewModel.testIndexer(indexer.id) }) { Text("Тест") }
+                            OutlinedButton(
+                                onClick = { viewModel.searchOneIndexer(indexer.id, manualQuery) },
+                                enabled = manualQuery.isNotBlank() && !searchingSources
+                            ) { Text("Пробный поиск") }
                             OutlinedButton(onClick = { editIndexer(indexer) }) { Text("Изменить") }
                             OutlinedButton(onClick = { viewModel.removeIndexer(indexer.id) }) {
                                 Icon(Icons.Default.DeleteOutline, contentDescription = "Удалить")

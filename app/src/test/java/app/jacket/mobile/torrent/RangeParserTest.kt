@@ -1,8 +1,10 @@
 package app.jacket.mobile.torrent
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertThrows
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class RangeParserTest {
@@ -54,5 +56,24 @@ class RangeParserTest {
         assertThrows(IllegalArgumentException::class.java) {
             RangeParser.parse("bytes=abc-def", 1_000L)
         }
+    }
+
+    @Test
+    fun rangeResponseIsPartialContentWithCorrectHeaders() {
+        val range = RangeParser.parse("bytes=10-19", 100L)
+        val response = RangeResponseBuilder.build(range, 100L, "video/mp4")
+        assertEquals(206, response.statusCode)
+        assertEquals("bytes 10-19/100", response.headers.first { it.startsWith("Content-Range:") }.substringAfter(": "))
+        assertEquals("10", response.contentLength.toString())
+        assertTrue(response.headers.contains("Accept-Ranges: bytes"))
+        assertTrue(response.headers.contains("Content-Type: video/mp4"))
+    }
+
+    @Test
+    fun fullResponseIsNotPartialAndHasNoContentRange() {
+        val response = RangeResponseBuilder.build(null, 100L, "video/mp4")
+        assertEquals(200, response.statusCode)
+        assertFalse(response.headers.any { it.startsWith("Content-Range:") })
+        assertEquals(100L, response.contentLength)
     }
 }

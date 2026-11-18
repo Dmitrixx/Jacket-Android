@@ -10,6 +10,8 @@ import app.jacket.mobile.data.IndexerRegistry
 import app.jacket.mobile.data.MediaCatalogClient
 import app.jacket.mobile.data.MediaDetails
 import app.jacket.mobile.data.MediaSection
+import app.jacket.mobile.data.MediaSeason
+import app.jacket.mobile.data.MediaEpisode
 import app.jacket.mobile.data.MediaSettingsStore
 import app.jacket.mobile.data.SourceResult
 import kotlinx.coroutines.CancellationException
@@ -29,6 +31,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private var catalogJob: Job? = null
     private var sourcesJob: Job? = null
     private var indexerTestJob: Job? = null
+    private var episodeJob: Job? = null
 
     private val _tmdbToken = MutableStateFlow(settings.tmdbToken())
     val tmdbToken: StateFlow<String> = _tmdbToken.asStateFlow()
@@ -56,6 +59,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _selectedDetails = MutableStateFlow<MediaDetails?>(null)
     val selectedDetails: StateFlow<MediaDetails?> = _selectedDetails.asStateFlow()
+
+    private val _seasons = MutableStateFlow<List<MediaSeason>>(emptyList())
+    val seasons: StateFlow<List<MediaSeason>> = _seasons.asStateFlow()
+
+    private val _episodes = MutableStateFlow<List<MediaEpisode>>(emptyList())
+    val episodes: StateFlow<List<MediaEpisode>> = _episodes.asStateFlow()
+
+    private val _selectedSeasonNumber = MutableStateFlow<Int?>(null)
+    val selectedSeasonNumber: StateFlow<Int?> = _selectedSeasonNumber.asStateFlow()
+
+    private val _isLoadingEpisodes = MutableStateFlow(false)
+    val isLoadingEpisodes: StateFlow<Boolean> = _isLoadingEpisodes.asStateFlow()
 
     private val _sourceResults = MutableStateFlow<List<SourceResult>>(emptyList())
     val sourceResults: StateFlow<List<SourceResult>> = _sourceResults.asStateFlow()
@@ -97,6 +112,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun loadMovies() = loadList { catalog.movies(_tmdbToken.value) }
     fun loadSeries() = loadList { catalog.series(_tmdbToken.value) }
 
+    fun clearSearch() {
+        catalogJob?.cancel()
+        _items.value = emptyList()
+        _message.value = null
+        _isError.value = false
+    }
+
     fun search(query: String) {
         val clean = query.trim()
         if (clean.isBlank()) {
@@ -110,18 +132,45 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun openItem(item: CatalogItem) {
         catalogJob?.cancel()
+        episodeJob?.cancel()
+        _seasons.value = emptyList()
+        _episodes.value = emptyList()
+        _selectedSeasonNumber.value = null
+        _isLoadingEpisodes.value = false
         catalogJob = viewModelScope.launch {
             _isLoading.value = true
             _selectedDetails.value = MediaDetails(item = item, description = item.overview, pageUrl = item.catalogUrl)
             _sourceResults.value = emptyList()
+            _indexerErrors.value = emptyList()
             clearMessage()
             try {
+                val token = _tmdbToken.value
                 val details = withContext(Dispatchers.IO) {
-                    catalog.tmdbDetails(item, _tmdbToken.value)
+                    catalog.tmdbDetails(item, token)
                 }
                 _selectedDetails.value = details
                 settings.addToHistory(details.item)
                 _history.value = settings.history()
+
+                // Seasons are optional metadata. A TMDB failure must never hide the card.
+                if (item.kind == app.jacket.mobile.data.MediaKind.SERIES && token.isNotBlank()) {
+                    val availableSeasons = runCatching {
+                        withContext(Dispatchers.IO) { catalog.seasons(item, token) }
+                    }.getOrDefault(emptyList())
+                    _seasons.value = availableSeasons
+                    val firstSeason = availableSeasons.firstOrNull { it.seasonNumber == 1 }
+                        ?: availableSeasons.firstOrNull()
+                    if (firstSeason != null) {
+                        _selectedSeasonNumber.value = firstSeason.seasonNumber
+                        _isLoadingEpisodes.value = true
+                        _episodes.value = runCatching {
+                            withContext(Dispatchers.IO) {
+                                catalog.episodes(item, firstSeason.seasonNumber, token)
+                            }
+                        }.getOrDefault(emptyList())
+                        _isLoadingEpisodes.value = false
+                    }
+                }
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Exception) {
@@ -133,19 +182,56 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 showError(error.message ?: "Не удалось загрузить подробности")
             } finally {
                 _isLoading.value = false
+                _isLoadingEpisodes.value = false
             }
         }
     }
 
     fun closeDetails() {
         catalogJob?.cancel()
+        episodeJob?.cancel()
         _selectedDetails.value = null
         _sourceResults.value = emptyList()
+        _indexerErrors.value = emptyList()
+        _seasons.value = emptyList()
+        _episodes.value = emptyList()
+        _selectedSeasonNumber.value = null
+        _isLoadingEpisodes.value = false
     }
 
-    fun findSources(item: CatalogItem) {
+    fun selectSeason(item: CatalogItem, seasonNumber: Int) {
+        if (seasonNumber <= 0 || _selectedSeasonNumber.value == seasonNumber) return
+        episodeJob?.cancel()
+        _selectedSeasonNumber.value = seasonNumber
+        _episodes.value = emptyList()
+        _isLoadingEpisodes.value = true
+        episodeJob = viewModelScope.launch {
+            try {
+                val loaded = withContext(Dispatchers.IO) {
+                    catalog.episodes(item, seasonNumber, _tmdbToken.value)
+                }
+                _episodes.value = loaded
+                if (loaded.isEmpty()) {
+                    _message.value = "В этом сезоне TMDB не вернул серии"
+                    _isError.value = false
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                showError(error.message ?: "Не удалось загрузить список серий")
+            } finally {
+                _isLoadingEpisodes.value = false
+            }
+        }
+    }
+
+    fun findSources(item: CatalogItem, episode: MediaEpisode? = null) {
         val year = item.year.takeIf { it.matches(Regex("\\d{4}")) }
-        val query = listOfNotNull(item.title, year).joinToString(" ")
+        val query = if (episode != null) {
+            listOf(item.title, episode.releaseCode, episode.name).joinToString(" ")
+        } else {
+            listOfNotNull(item.title, year).joinToString(" ")
+        }
         runSourceSearch(query, includeArchive = true)
     }
 
@@ -264,6 +350,35 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+
+    fun searchOneIndexer(id: String, query: String) {
+        val config = _customIndexers.value.firstOrNull { it.id == id } ?: return
+        if (query.isBlank()) {
+            showError("Введите название для пробного поиска")
+            return
+        }
+        sourcesJob?.cancel()
+        sourcesJob = viewModelScope.launch {
+            _isSearchingSources.value = true
+            _sourceResults.value = emptyList()
+            _indexerErrors.value = emptyList()
+            clearMessage()
+            try {
+                val results = withContext(Dispatchers.IO) { indexers.searchOne(config, query) }
+                _sourceResults.value = results
+                _message.value = if (results.isEmpty()) "Пробный поиск: результатов нет" else "Пробный поиск: ${results.size} результатов"
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                _indexerErrors.value = listOf(
+                    IndexerFailure(config.id, config.name, error.message ?: "Ошибка пробного поиска")
+                )
+                showError("Пробный поиск «${config.name}»: ${error.message ?: "ошибка источника"}")
+            } finally {
+                _isSearchingSources.value = false
+            }
+        }
+    }
 
     fun testIndexer(id: String) {
         val config = _customIndexers.value.firstOrNull { it.id == id } ?: return
