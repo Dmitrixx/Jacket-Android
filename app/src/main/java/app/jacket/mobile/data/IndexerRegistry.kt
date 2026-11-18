@@ -348,7 +348,7 @@ class IndexerRegistry(
         val mime = contentType.substringBefore(';').trim().lowercase()
         if (mime.startsWith("video/") || mime in PLAYLIST_MIME_TYPES) return true
         val path = runCatching { java.net.URI(value).rawPath.orEmpty().lowercase() }.getOrDefault("")
-        return VIDEO_EXTENSIONS.any(path::endsWith)
+        return VIDEO_EXTENSIONS.any { extension -> path.endsWith(extension) }
     }
 
     private fun isHttps(value: String): Boolean = runCatching {

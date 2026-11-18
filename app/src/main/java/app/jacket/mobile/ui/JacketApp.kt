@@ -2378,7 +2378,7 @@ private fun SettingsScreen(
                         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
                     ) {
                         Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Text("JACKET 2.2", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Black)
+                            Text("JACKET 2.3", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Black)
                             Text("Единое приложение для Android, планшетов и Android TV.",
                                 color = MaterialTheme.colorScheme.onSurfaceVariant)
                             Text("Поиск по сайтам открывает пользовательские HTTPS-ссылки в браузере. RSS / Atom и Torznab обрабатываются внутри приложения.")
