@@ -761,8 +761,10 @@ private fun SearchScreen(
     modifier: Modifier,
     onOpen: (CatalogItem) -> Unit
 ) {
-    val isTv = (LocalContext.current.resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_TYPE_MASK) == android.content.res.Configuration.UI_MODE_TYPE_TELEVISION
+    val context = LocalContext.current
+    val isTv = (context.resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_TYPE_MASK) == android.content.res.Configuration.UI_MODE_TYPE_TELEVISION
     var query by rememberSaveable { mutableStateOf("") }
+    val webProviders by viewModel.webSearchProviders.collectAsState()
     val items by viewModel.items.collectAsState()
     val loading by viewModel.isLoading.collectAsState()
     val message by viewModel.message.collectAsState()
@@ -797,6 +799,31 @@ private fun SearchScreen(
             )
             Button(onClick = { viewModel.search(query) }, enabled = query.isNotBlank() && !loading) {
                 Icon(Icons.Default.Search, contentDescription = "Найти")
+            }
+        }
+        val activeWebProviders = webProviders.filter { it.enabled }
+        if (query.trim().length >= 2 && activeWebProviders.isNotEmpty()) {
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text(
+                    "Искать также на сайтах",
+                    modifier = Modifier.padding(start = 16.dp, top = 4.dp),
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                LazyRow(
+                    contentPadding = PaddingValues(horizontal = 16.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    items(activeWebProviders, key = { "search-${it.id}" }) { provider ->
+                        OutlinedButton(
+                            onClick = { openWebsiteSearch(context, provider, query.trim()) }
+                        ) {
+                            Icon(Icons.Default.OpenInNew, contentDescription = null)
+                            Spacer(Modifier.width(6.dp))
+                            Text(provider.name, maxLines = 1)
+                        }
+                    }
+                }
             }
         }
         if (message != null) {
