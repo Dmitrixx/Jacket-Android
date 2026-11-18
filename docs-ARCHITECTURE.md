@@ -31,7 +31,7 @@ No external Jackett or TorrServer process is started or packaged.
 - Optional TMDB bearer token supplies movie/series metadata, artwork, season lists and episode lists. TMDB is a metadata provider, not a video source.
 - For an episode, the query builder combines the series title, the `SxxExx` code and episode title.
 - Internet Archive media playback/download actions are offered only when item metadata carries a recognized Creative Commons / public-domain license URL. This is a conservative gate, not a full license audit.
-- `PosterDiskCache` keeps bounded public artwork in memory and app cache; cache files contain no credentials.
+- `PosterDiskCache` keeps bounded public artwork in memory and app cache; cache files contain no credentials. It uses reference-counted per-URL locks, follows up to three HTTPS-only redirects and downsamples oversized source images before bitmap decoding.
 
 ## Indexer cabinet
 
@@ -39,6 +39,8 @@ No external Jackett or TorrServer process is started or packaged.
 
 - `IndexerRegistry.searchDetailed` launches enabled sources through a fixed pool of four workers.
 - Every provider failure is isolated as an `IndexerFailure`; other responses are still returned.
+- Each provider request is limited to 30 seconds wall time; a whole federated search or test-all run is limited to 60 seconds.
+- Error reporting strips configured credentials, Basic auth, cookie headers and URL query values before showing errors in the UI.
 - RSS/Atom and Torznab/Newznab are parsed into provider-neutral `SourceResult` values.
 - Common Torznab attributes are parsed: `magneturl`, `seeders`, `peers`, `size` / `length`, `category`.
 - Results are deduplicated by magnet, download URL, stream URL, then provider result ID; sorting is seeders descending, then release title.
@@ -63,6 +65,8 @@ The registry intentionally does not include tracker-specific HTML parsers or sol
 - Once metadata exists, UI can inspect files.
 - Selecting a video file sets its priority to TOP, all other files to IGNORE, enables sequential download and gives initial and final pieces elevated priority.
 - `LocalStreamServer` listens only on `127.0.0.1`, probes ports 8090–8099, and validates Host and route.
+- Every stream URL includes a random 128-bit per-server token verified with a constant-time comparison.
+- Request-line and header sizes are bounded, worker backlog is capped, and closing the server closes active client sockets.
 - Range responses are constructed by a pure `RangeResponseBuilder`; malformed and unsatisfiable ranges are rejected.
 - Before reading each chunk, the server asks the engine to wait for every intersecting piece, bounded to about 25 seconds per piece. It then reads the byte interval from the selected file.
 - Matching sidecar subtitles are exposed only when their files are already fully downloaded. Serving a subtitle never changes the selected video file's priority.
@@ -72,12 +76,13 @@ The registry intentionally does not include tracker-specific HTML parsers or sol
 
 - Queue serialization uses `TorrentQueueCodec`, independent from the native library. Older JSON queue records are migrated.
 - Queue metadata includes ID, title, magnet or private `.torrent` path, and selected file index.
-- Native fast-resume data is written under `filesDir/torrent-resume` using `AtomicFile`.
-- Resume data is requested periodically (about every 30 seconds) and after pause; queue entries provide a re-add fallback if resume data is not yet present.
+- Native fast-resume data is written under `filesDir/torrent-resume` using `AtomicFile` and a versioned CRC envelope; legacy raw resume files remain readable.
+- Restore checks the native parser error code and verifies that the saved infohash matches the queue item. A damaged checkpoint is discarded and the retained magnet or private metainfo is used to re-add the task.
+- Resume data is requested periodically (about every 30 seconds) and after pause. Orderly shutdown waits for native save-resume alert acknowledgements with a bounded timeout.
 - The service restores queued items on startup and retries pending tasks. Playback positions are persisted locally at short intervals and keyed by torrent hash/file or URL hash.
 - “Remove from queue” does not delete downloaded files. File deletion is explicit and path-checked.
 
-Resume data is asynchronous and periodic: abruptly killing the process can lose the most recent interval of torrent state. Device/network behavior and real tracker/torrent formats still require hardware testing.
+Resume data is asynchronous and periodic: abruptly killing the process can lose the most recent interval of torrent state. Device/network behavior, process-kill recovery, real tracker/torrent formats and Android TV remote interaction still require hardware testing.
 
 ## Foreground-service lifecycle
 

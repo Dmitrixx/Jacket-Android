@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased — reliability and playback hardening
+
+- Resume restoration validates the native fast-resume parser result and infohash, verifies a versioned CRC envelope, and falls back to the saved magnet or private metainfo copy when the checkpoint is invalid.
+- Orderly shutdown waits for libtorrent save-resume acknowledgements with a bounded timeout instead of relying on a fixed sleep.
+- Added a Continue Watching shelf backed by local torrent playback sessions; the exact torrent file and saved position can be resumed or removed from the shelf.
+- Protected local stream URLs with a random per-server access token, bounded HTTP request parsing, a capped client queue and active-socket cleanup. The listener remains loopback-only.
+- Added integration tests for actual HTTP HEAD / Range responses, byte payload integrity, rejected tokens and oversized request lines.
+- Added total request/search deadlines and secret redaction for indexer credentials, cookies, authorization headers and URL query parameters.
+- Cleaned up temporary imported .torrent files after their metainfo has been copied into app-private storage.
+- Made poster cache locking reference-counted, follows only HTTPS redirects, and downsamples oversized images before creating bitmaps.
+- Added unit tests for corrupted resume envelopes and indexer secret redaction.
+
 ## 2.1.0 — in-app torrent streaming and TV media center
 
 - Added a private local HTTP media server bound only to `127.0.0.1`, with GET/HEAD, byte Range and 206 responses.
