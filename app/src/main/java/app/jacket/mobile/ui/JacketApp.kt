@@ -1271,7 +1271,7 @@ private fun DetailScreen(
             ) {
                 Text("Источник", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
                 Text(
-                    "Выберите сайт. Поиск откроется в браузере с названием «${item.title}».",
+                    "Выберите сайт. Поиск откроется в браузере с названием «${details?.item?.title.orEmpty()}».",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -1294,11 +1294,13 @@ private fun DetailScreen(
                         Surface(
                             modifier = Modifier.fillMaxWidth().clickable {
                                 showWebsiteSearch = false
-                                val query = listOfNotNull(
-                                    item.title,
-                                    item.year.takeIf { it != "Год неизвестен" }
-                                ).joinToString(" ")
-                                openWebsiteSearch(context, provider, query)
+                                val query = details?.item?.let { media ->
+                                    listOfNotNull(
+                                        media.title,
+                                        media.year.takeIf { it != "Год неизвестен" }
+                                    ).joinToString(" ")
+                                }.orEmpty()
+                                if (query.isNotBlank()) openWebsiteSearch(context, provider, query)
                             },
                             color = MaterialTheme.colorScheme.surfaceVariant,
                             shape = MaterialTheme.shapes.large
@@ -1322,7 +1324,7 @@ private fun DetailScreen(
                                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                                     Text(provider.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
                                     Text(
-                                        "Искать «${item.title}»",
+                                        "Искать «${details?.item?.title.orEmpty()}»",
                                         style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                         maxLines = 1
