@@ -67,6 +67,14 @@ data class IndexerConfig(
     val enabled: Boolean = true
 )
 
+/** A user-configured website search link. Results open in the external browser. */
+data class WebSearchProvider(
+    val id: String,
+    val name: String,
+    val searchUrlTemplate: String,
+    val enabled: Boolean = true
+)
+
 data class SourceResult(
     val id: String,
     val title: String,

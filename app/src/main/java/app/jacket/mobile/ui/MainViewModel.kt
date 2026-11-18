@@ -13,6 +13,7 @@ import app.jacket.mobile.data.MediaSection
 import app.jacket.mobile.data.MediaSeason
 import app.jacket.mobile.data.MediaEpisode
 import app.jacket.mobile.data.MediaSettingsStore
+import app.jacket.mobile.data.WebSearchProvider
 import app.jacket.mobile.data.SourceResult
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -38,6 +39,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _customIndexers = MutableStateFlow(settings.indexers())
     val customIndexers: StateFlow<List<IndexerConfig>> = _customIndexers.asStateFlow()
+
+    private val _webSearchProviders = MutableStateFlow(settings.webSearchProviders())
+    val webSearchProviders: StateFlow<List<WebSearchProvider>> = _webSearchProviders.asStateFlow()
 
     private val _indexerStatuses = MutableStateFlow<Map<String, String>>(emptyMap())
     val indexerStatuses: StateFlow<Map<String, String>> = _indexerStatuses.asStateFlow()
@@ -318,6 +322,31 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             false
         }
     }
+    fun saveWebSearchProvider(provider: WebSearchProvider): Boolean {
+        return try {
+            settings.saveWebSearchProvider(provider)
+            _webSearchProviders.value = settings.webSearchProviders()
+            _message.value = "Сайт поиска сохранён"
+            _isError.value = false
+            true
+        } catch (error: Exception) {
+            showError(error.message ?: "Не удалось сохранить сайт поиска")
+            false
+        }
+    }
+
+    fun setWebSearchProviderEnabled(id: String, enabled: Boolean) {
+        settings.setWebSearchProviderEnabled(id, enabled)
+        _webSearchProviders.value = settings.webSearchProviders()
+    }
+
+    fun removeWebSearchProvider(id: String) {
+        settings.removeWebSearchProvider(id)
+        _webSearchProviders.value = settings.webSearchProviders()
+        _message.value = "Сайт поиска удалён"
+        _isError.value = false
+    }
+
     /** Kept for compatibility with the simple RSS add flow. */
     fun addIndexer(name: String, urlTemplate: String) {
         saveIndexer(IndexerConfig(id = "", name = name, searchUrlTemplate = urlTemplate))

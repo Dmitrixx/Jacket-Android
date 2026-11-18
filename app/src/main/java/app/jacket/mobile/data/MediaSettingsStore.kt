@@ -147,6 +147,52 @@ class MediaSettingsStore(context: Context) {
         saveIndexers(indexers().filterNot { it.id == id })
     }
 
+    fun webSearchProviders(): List<WebSearchProvider> = runCatching {
+        val array = JSONArray(preferences.getString(KEY_WEB_SEARCH_PROVIDERS, "[]"))
+        buildList {
+            for (i in 0 until array.length()) {
+                val item = array.optJSONObject(i) ?: continue
+                val provider = WebSearchProvider(
+                    id = item.optString("id"),
+                    name = item.optString("name"),
+                    searchUrlTemplate = item.optString("url"),
+                    enabled = item.optBoolean("enabled", true)
+                )
+                if (provider.id.isNotBlank() && provider.name.isNotBlank() &&
+                    runCatching { WebSearchUrlBuilder.validateTemplate(provider.searchUrlTemplate) }.isSuccess
+                ) add(provider)
+            }
+        }.distinctBy { it.id }.take(MAX_WEB_SEARCH_PROVIDERS)
+    }.getOrDefault(emptyList())
+
+    @Synchronized
+    fun saveWebSearchProvider(provider: WebSearchProvider): WebSearchProvider {
+        require(provider.name.isNotBlank()) { "Укажите название сайта" }
+        val normalized = provider.copy(
+            id = provider.id.ifBlank { UUID.randomUUID().toString() },
+            name = provider.name.trim().take(80),
+            searchUrlTemplate = WebSearchUrlBuilder.validateTemplate(provider.searchUrlTemplate)
+        )
+        val current = webSearchProviders().filterNot { it.id == normalized.id }
+        require(current.size < MAX_WEB_SEARCH_PROVIDERS) {
+            "Достигнут лимит в $MAX_WEB_SEARCH_PROVIDERS сайтов поиска"
+        }
+        saveWebSearchProviders(current + normalized)
+        return normalized
+    }
+
+    @Synchronized
+    fun setWebSearchProviderEnabled(id: String, enabled: Boolean) {
+        saveWebSearchProviders(webSearchProviders().map {
+            if (it.id == id) it.copy(enabled = enabled) else it
+        })
+    }
+
+    @Synchronized
+    fun removeWebSearchProvider(id: String) {
+        saveWebSearchProviders(webSearchProviders().filterNot { it.id == id })
+    }
+
     fun favorites(): List<CatalogItem> = loadItems(KEY_FAVORITES)
     fun history(): List<CatalogItem> = loadItems(KEY_HISTORY)
 
@@ -171,6 +217,20 @@ class MediaSettingsStore(context: Context) {
         val json = JSONArray()
         items.forEach { json.put(it.toJson()) }
         preferences.edit { putString(key, json.toString()) }
+    }
+
+    private fun saveWebSearchProviders(items: List<WebSearchProvider>) {
+        val json = JSONArray()
+        items.forEach { provider ->
+            json.put(
+                JSONObject()
+                    .put("id", provider.id)
+                    .put("name", provider.name)
+                    .put("url", provider.searchUrlTemplate)
+                    .put("enabled", provider.enabled)
+            )
+        }
+        preferences.edit { putString(KEY_WEB_SEARCH_PROVIDERS, json.toString()) }
     }
 
     private fun saveIndexers(items: List<IndexerConfig>) {
@@ -246,9 +306,11 @@ class MediaSettingsStore(context: Context) {
         const val PREFERENCES = "jacket_media_settings"
         const val KEY_TMDB_TOKEN = "tmdb_token_enc"
         const val KEY_INDEXERS = "rss_indexers"
+        const val KEY_WEB_SEARCH_PROVIDERS = "web_search_providers"
         const val KEY_FAVORITES = "catalog_favorites"
         const val KEY_HISTORY = "catalog_history"
         const val MAX_INDEXERS = 100
+        const val MAX_WEB_SEARCH_PROVIDERS = 50
         const val MAX_IMPORT_BYTES = 256 * 1024
         const val MAX_SAVED_ITEMS = 200
         const val MAX_HISTORY = 30

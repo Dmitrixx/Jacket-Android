@@ -60,6 +60,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.NavigationRail
@@ -105,6 +106,8 @@ import app.jacket.mobile.data.ReleaseHeuristics
 import app.jacket.mobile.data.MediaKind
 import app.jacket.mobile.data.MediaSection
 import app.jacket.mobile.data.SourceResult
+import app.jacket.mobile.data.WebSearchProvider
+import app.jacket.mobile.data.WebSearchUrlBuilder
 import app.jacket.mobile.data.formatBytes
 import app.jacket.mobile.torrent.TorrentDownloadService
 import app.jacket.mobile.torrent.TorrentEngine
@@ -205,6 +208,10 @@ fun JacketApp(viewModel: MainViewModel) {
         DetailScreen(
             viewModel = viewModel,
             onBack = viewModel::closeDetails,
+            onAddWebsite = {
+                viewModel.closeDetails()
+                showSettings = true
+            },
             onPlay = { title, url ->
                 playerTitle = title
                 playerUrl = url
@@ -889,6 +896,7 @@ private fun LibraryScreen(
 private fun DetailScreen(
     viewModel: MainViewModel,
     onBack: () -> Unit,
+    onAddWebsite: () -> Unit,
     onPlay: (String, String) -> Unit
 ) {
     val details by viewModel.selectedDetails.collectAsState()
@@ -905,6 +913,8 @@ private fun DetailScreen(
     val isError by viewModel.isError.collectAsState()
     val context = LocalContext.current
     val indexerErrors by viewModel.indexerErrors.collectAsState()
+    val webSearchProviders by viewModel.webSearchProviders.collectAsState()
+    var showWebsiteSearch by rememberSaveable { mutableStateOf(false) }
     var minSeeders by rememberSaveable { mutableStateOf("0") }
     var qualityFilter by rememberSaveable { mutableStateOf("Все") }
     var hdrOnly by rememberSaveable { mutableStateOf(false) }
@@ -1157,6 +1167,15 @@ private fun DetailScreen(
                         }
                         Text(if (searchingSources) "Ищем источники…" else "Найти источники")
                     }
+
+                    OutlinedButton(
+                        onClick = { showWebsiteSearch = true },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Icon(Icons.Default.OpenInNew, contentDescription = null)
+                        Spacer(Modifier.width(8.dp))
+                        Text("Поиск на сайтах (${webSearchProviders.count { it.enabled }})")
+                    }
                 }
 
                 if (message != null) {
@@ -1244,6 +1263,85 @@ private fun DetailScreen(
             }
         }
     }
+    if (showWebsiteSearch) {
+        ModalBottomSheet(onDismissRequest = { showWebsiteSearch = false }) {
+            Column(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp).padding(bottom = 28.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Text("Источник", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
+                Text(
+                    "Выберите сайт. Поиск откроется в браузере с названием «${item.title}».",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                val enabledWebProviders = webSearchProviders.filter { it.enabled }
+                if (enabledWebProviders.isEmpty()) {
+                    MessageCard("Сайты поиска ещё не добавлены или отключены.", false)
+                    Button(
+                        onClick = {
+                            showWebsiteSearch = false
+                            onAddWebsite()
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Icon(Icons.Default.Add, contentDescription = null)
+                        Spacer(Modifier.width(8.dp))
+                        Text("Добавить сайт поиска")
+                    }
+                } else {
+                    enabledWebProviders.forEach { provider ->
+                        Surface(
+                            modifier = Modifier.fillMaxWidth().clickable {
+                                showWebsiteSearch = false
+                                val query = listOfNotNull(
+                                    item.title,
+                                    item.year.takeIf { it != "Год неизвестен" }
+                                ).joinToString(" ")
+                                openWebsiteSearch(context, provider, query)
+                            },
+                            color = MaterialTheme.colorScheme.surfaceVariant,
+                            shape = MaterialTheme.shapes.large
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(15.dp),
+                                horizontalArrangement = Arrangement.spacedBy(14.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Surface(
+                                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.14f),
+                                    shape = RoundedCornerShape(14.dp)
+                                ) {
+                                    Icon(
+                                        Icons.Default.Search,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.padding(10.dp).size(24.dp)
+                                    )
+                                }
+                                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                    Text(provider.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                                    Text(
+                                        "Искать «${item.title}»",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 1
+                                    )
+                                }
+                                Icon(Icons.Default.OpenInNew, contentDescription = "Открыть")
+                            }
+                        }
+                    }
+                    Text(
+                        "Сайт открывается во внешнем браузере. Jacket не обходит авторизацию и не извлекает поток со страницы.",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+        }
+    }
+
 }
 
 @Composable
@@ -1523,8 +1621,10 @@ private fun SettingsScreen(
     viewModel: MainViewModel,
     onBack: () -> Unit
 ) {
+    var selectedSettingsSection by rememberSaveable { mutableStateOf("home") }
     val currentToken by viewModel.tmdbToken.collectAsState()
     val indexers by viewModel.customIndexers.collectAsState()
+    val webSearchProviders by viewModel.webSearchProviders.collectAsState()
     val statuses by viewModel.indexerStatuses.collectAsState()
     val sourceResults by viewModel.sourceResults.collectAsState()
     val searchingSources by viewModel.isSearchingSources.collectAsState()
@@ -1563,6 +1663,10 @@ private fun SettingsScreen(
             }.onFailure { Toast.makeText(context, "Импорт не удался: ${it.message}", Toast.LENGTH_LONG).show() }
         }
     }
+
+    var webEditingId by rememberSaveable { mutableStateOf("") }
+    var webName by rememberSaveable { mutableStateOf("") }
+    var webUrlTemplate by rememberSaveable { mutableStateOf("") }
 
     var editingId by remember { mutableStateOf("") }
     var sourceName by remember { mutableStateOf("") }
@@ -1614,13 +1718,29 @@ private fun SettingsScreen(
         sortOrder = config.sortOrder
     }
 
+    BackHandler(enabled = selectedSettingsSection != "home") {
+        selectedSettingsSection = "home"
+    }
+
+    val sectionTitle = when (selectedSettingsSection) {
+        "catalog" -> "Каталог"
+        "sites" -> "Сайты поиска"
+        "indexers" -> "Торрент-источники"
+        "network" -> "Загрузки и сеть"
+        "about" -> "О приложении"
+        else -> "Настройки"
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Настройки и источники") },
+                title = { Text(sectionTitle) },
                 navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Назад")
+                    IconButton(onClick = {
+                        if (selectedSettingsSection == "home") onBack()
+                        else selectedSettingsSection = "home"
+                    }) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = if (selectedSettingsSection == "home") "Назад" else "К разделам")
                     }
                 }
             )
@@ -1631,6 +1751,61 @@ private fun SettingsScreen(
             contentPadding = PaddingValues(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
+
+            if (selectedSettingsSection == "home") {
+                item {
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text("МЕДИАЦЕНТР JACKET", style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold, letterSpacing = 1.3.sp)
+                        Text("Настройте каталог, источники и воспроизведение.",
+                            style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+                item {
+                    SettingsMenuRow(
+                        title = "Сайты поиска",
+                        subtitle = "Свои сайты и сервисы • поиск открывается в браузере",
+                        badge = webSearchProviders.size.toString(),
+                        onClick = { selectedSettingsSection = "sites" },
+                        icon = { Icon(Icons.Default.Search, contentDescription = null) }
+                    )
+                }
+                item {
+                    SettingsMenuRow(
+                        title = "Торрент-источники",
+                        subtitle = "RSS / Atom, Torznab, API-ключи и тест подключения",
+                        badge = indexers.count { it.enabled }.toString(),
+                        onClick = { selectedSettingsSection = "indexers" },
+                        icon = { Icon(Icons.Default.Download, contentDescription = null) }
+                    )
+                }
+                item {
+                    SettingsMenuRow(
+                        title = "Каталог и постеры",
+                        subtitle = "Метаданные, рейтинги и TMDB",
+                        onClick = { selectedSettingsSection = "catalog" },
+                        icon = { Icon(Icons.Default.Movie, contentDescription = null) }
+                    )
+                }
+                item {
+                    SettingsMenuRow(
+                        title = "Загрузки и сеть",
+                        subtitle = "Скорость, Wi-Fi и папка файлов",
+                        onClick = { selectedSettingsSection = "network" },
+                        icon = { Icon(Icons.Default.Refresh, contentDescription = null) }
+                    )
+                }
+                item {
+                    SettingsMenuRow(
+                        title = "О приложении",
+                        subtitle = "Версия, архитектура и безопасность",
+                        onClick = { selectedSettingsSection = "about" },
+                        icon = { Icon(Icons.Default.Settings, contentDescription = null) }
+                    )
+                }
+            }
+
+            if (selectedSettingsSection == "catalog") {
             item {
                 Text("Каталог фильмов", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
                 Text(
@@ -1666,6 +1841,9 @@ private fun SettingsScreen(
                 )
             }
 
+            }
+
+            if (selectedSettingsSection == "network") {
             item {
                 Text("Загрузки и сеть", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
                 Text(
@@ -1725,6 +1903,127 @@ private fun SettingsScreen(
                 )
             }
 
+            }
+
+            if (selectedSettingsSection == "sites") {
+                item {
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Text(
+                            if (webEditingId.isBlank()) "Добавить сайт поиска" else "Изменить сайт",
+                            style = MaterialTheme.typography.titleLarge,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            "Укажите HTTPS-адрес поисковой страницы и вставьте {query} туда, где сайт ожидает название фильма. Результат откроется в браузере; автоматического сбора HTML нет.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        OutlinedTextField(
+                            value = webName,
+                            onValueChange = { webName = it },
+                            modifier = Modifier.fillMaxWidth(),
+                            label = { Text("Название сайта") },
+                            placeholder = { Text("Например, мой видеокаталог") },
+                            singleLine = true
+                        )
+                        OutlinedTextField(
+                            value = webUrlTemplate,
+                            onValueChange = { webUrlTemplate = it },
+                            modifier = Modifier.fillMaxWidth(),
+                            label = { Text("URL поиска с {query}") },
+                            placeholder = { Text("https://site.example/search?q={query}") },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
+                            minLines = 2
+                        )
+                        Button(
+                            onClick = {
+                                val saved = viewModel.saveWebSearchProvider(
+                                    WebSearchProvider(
+                                        id = webEditingId,
+                                        name = webName,
+                                        searchUrlTemplate = webUrlTemplate
+                                    )
+                                )
+                                if (saved) {
+                                    webEditingId = ""
+                                    webName = ""
+                                    webUrlTemplate = ""
+                                    Toast.makeText(context, "Сайт поиска сохранён", Toast.LENGTH_SHORT).show()
+                                } else {
+                                    Toast.makeText(context, "Проверьте название и HTTPS-шаблон с {query}", Toast.LENGTH_LONG).show()
+                                }
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Icon(Icons.Default.Add, contentDescription = null)
+                            Spacer(Modifier.width(8.dp))
+                            Text(if (webEditingId.isBlank()) "Добавить сайт" else "Сохранить изменения")
+                        }
+                        if (webEditingId.isNotBlank()) {
+                            OutlinedButton(
+                                onClick = {
+                                    webEditingId = ""
+                                    webName = ""
+                                    webUrlTemplate = ""
+                                },
+                                modifier = Modifier.fillMaxWidth()
+                            ) { Text("Отменить редактирование") }
+                        }
+                        Text(
+                            "Добавляйте только сайты, доступ к которым разрешён в вашей стране и на законном основании. Jacket не обходит блокировки, CAPTCHA, авторизацию или DRM.",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+                items(webSearchProviders, key = { "web-${it.id}" }) { provider ->
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+                    ) {
+                        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                    Text(provider.name, fontWeight = FontWeight.SemiBold)
+                                    Text(
+                                        if (provider.enabled) "Включён • поиск в браузере" else "Отключён",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                                Switch(
+                                    checked = provider.enabled,
+                                    onCheckedChange = { viewModel.setWebSearchProviderEnabled(provider.id, it) }
+                                )
+                            }
+                            Text(provider.searchUrlTemplate, style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 3)
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                OutlinedButton(
+                                    onClick = { openWebsiteSearch(context, provider, "Jacket test") },
+                                    enabled = provider.enabled
+                                ) { Text("Проверить") }
+                                OutlinedButton(
+                                    onClick = {
+                                        webEditingId = provider.id
+                                        webName = provider.name
+                                        webUrlTemplate = provider.searchUrlTemplate
+                                    }
+                                ) { Text("Изменить") }
+                                OutlinedButton(onClick = { viewModel.removeWebSearchProvider(provider.id) }) {
+                                    Icon(Icons.Default.DeleteOutline, contentDescription = "Удалить")
+                                }
+                            }
+                        }
+                    }
+                }
+                if (webSearchProviders.isEmpty()) {
+                    item { MessageCard("Сайтов пока нет. Добавьте HTTPS-шаблон поиска выше.", false) }
+                }
+            }
+
+
+            if (selectedSettingsSection == "indexers") {
             item {
                 Text("Встроенные источники", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
                 Card(modifier = Modifier.fillMaxWidth()) {
@@ -1986,7 +2285,65 @@ private fun SettingsScreen(
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
+            }            }
+
+            if (selectedSettingsSection == "about") {
+                item {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+                    ) {
+                        Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text("JACKET 2.2", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Black)
+                            Text("Единое приложение для Android, планшетов и Android TV.",
+                                color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text("Поиск по сайтам открывает пользовательские HTTPS-ссылки в браузере. RSS / Atom и Torznab обрабатываются внутри приложения.")
+                            Text("Jacket не извлекает медиапотоки с произвольных страниц и не обходит ограничения сайта.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                }
             }
+
+        }
+    }
+}
+
+
+@Composable
+private fun SettingsMenuRow(
+    title: String,
+    subtitle: String,
+    badge: String? = null,
+    onClick: () -> Unit,
+    icon: @Composable () -> Unit
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick),
+        shape = MaterialTheme.shapes.large,
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(15.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(13.dp)
+        ) {
+            Surface(
+                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.14f),
+                shape = RoundedCornerShape(14.dp)
+            ) {
+                Box(Modifier.size(46.dp), contentAlignment = Alignment.Center) { icon() }
+            }
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                Text(subtitle, style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            if (badge != null) MetadataPill(badge, accent = true)
+            Icon(Icons.Default.OpenInNew, contentDescription = "Открыть раздел",
+                tint = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }
@@ -2046,6 +2403,19 @@ private fun MessageCard(
         shape = MaterialTheme.shapes.medium
     ) {
         Text(message, modifier = Modifier.padding(12.dp), style = MaterialTheme.typography.bodySmall)
+    }
+}
+
+private fun openWebsiteSearch(
+    context: android.content.Context,
+    provider: WebSearchProvider,
+    query: String
+) {
+    runCatching {
+        val url = WebSearchUrlBuilder.build(provider.searchUrlTemplate, query)
+        openExternal(context, url)
+    }.onFailure {
+        Toast.makeText(context, "Не удалось открыть поиск: ${it.message}", Toast.LENGTH_LONG).show()
     }
 }
 

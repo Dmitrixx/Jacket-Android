@@ -1,4 +1,4 @@
-# Jacket — Android media center 2.1.0
+# Jacket — Android media center 2.2.1
 
 Jacket is a single Android application for phones, tablets and Android TV / Google TV. It combines a poster-based media catalog, a user-configurable indexer cabinet, an integrated BitTorrent engine and a loopback HTTP media server.
 
@@ -9,13 +9,13 @@ The project is under active development. CI verifies JVM unit tests and APK asse
 ## Main areas
 
 - **Home / Movies / Series** — poster shelves and grids, ratings, years and details.
-- **Search** — catalog search with a short debounce.
+- **Search** — catalog search with a short debounce; configurable website-search shortcuts open the matching query in the external browser.
 - **Series details** — TMDB seasons and episode lists; an episode search adds its `SxxExx` code to the indexer query.
 - **My library** — favorites and recently opened cards.
 - **Sources** — manual search, indexer management, connectivity tests, source errors and quality filters.
 - **Downloads** — magnet and `.torrent` tasks, file list, selected-file priorities, pause/resume, speed and progress.
 - **Player** — Media3 / ExoPlayer, seek controls, audio/subtitle track selection, downloaded sidecar subtitles and external-player handoff.
-- **Settings** — TMDB token, indexers, download/upload speed limits and Wi-Fi-only mode.
+- **Settings** — LAMPA-inspired section menu for website searches, torrent indexers, catalog metadata, download limits and Wi-Fi-only mode.
 
 ## Indexer cabinet — no Jackett server
 
@@ -42,6 +42,18 @@ The URL must use HTTPS and include `{query}`; optionally include `{apikey}` wher
 Release labels such as 720p / 1080p / 2160p, HDR / DV, HEVC / x264 and common audio/dubbing tags are extracted heuristically from the release title. They are not authoritative tracker metadata. Filters operate on the current results and do not issue another request.
 
 The app does not ship tracker lists, private credentials or site-specific scraping presets. CAPTCHA, anti-bot challenges, proprietary sign-in flows and interactive 2FA are not automated. A manually entered cookie may work where the source permits it.
+
+## User-configured website search
+
+Add up to 50 website search shortcuts with a name and an HTTPS URL template containing `{query}`. When a title is opened, Jacket shows an LAMPA-style source sheet; choosing a configured website opens its search URL in the external browser with the title and year encoded safely.
+
+Example template shape:
+
+```text
+https://your-authorized-site.example/search?q={query}
+```
+
+These website shortcuts are deliberately link-based: Jacket does not scrape arbitrary HTML, automate private logins or CAPTCHA, extract media URLs from a page, bypass DRM, or circumvent regional restrictions. Use only services available to you lawfully. RSS / Atom and Torznab remain the structured in-app source integrations.
 
 ## Torrent engine and local stream server
 
