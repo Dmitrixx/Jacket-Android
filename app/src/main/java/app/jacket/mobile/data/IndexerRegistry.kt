@@ -210,7 +210,7 @@ class IndexerRegistry(
         XmlPullParserFactory.newInstance().newPullParser()
 
     private fun parseFeed(xml: ByteArray, config: IndexerConfig): List<SourceResult> =
-        parseFeed(xml, config, Xml.newPullParser())
+        parseFeed(xml, config, newXmlParser())
 
     private fun parseFeed(xml: ByteArray, config: IndexerConfig, parser: XmlPullParser): List<SourceResult> {
         parser.setFeature(XmlPullParser.FEATURE_PROCESS_NAMESPACES, false)
