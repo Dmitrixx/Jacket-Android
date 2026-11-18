@@ -113,6 +113,7 @@ class TorrentDownloadService : Service() {
             ).also {
                 it.start()
                 streamServer = it
+                TorrentEngine.setLocalStreamPort(it.port)
             }
             val item = TorrentEngine.target(id, fileIndex)
             Triple(server.url(id, fileIndex), item, server.port)
@@ -137,6 +138,7 @@ class TorrentDownloadService : Service() {
         withContext(Dispatchers.IO) {
             streamServer?.close()
             streamServer = null
+            TorrentEngine.setLocalStreamPort(null)
         }
         startForegroundFor(mediaPlayback = false, status = "Загрузка продолжается в фоне")
     }
@@ -170,7 +172,7 @@ class TorrentDownloadService : Service() {
         val text = when {
             activeStream != null && selected != null -> {
                 val file = selected.files.firstOrNull { it.isSelected }
-                "Просмотр • ${(file?.progress ?: 0f).times(100).toInt()}% • ↓ ${formatRate(down)}"
+                "${activeStream.title} • ${(file?.progress ?: 0f).times(100).toInt()}% • ↓ ${formatRate(down)}"
             }
             rows.isEmpty() -> "Нет активных загрузок"
             else -> "${rows.size} задач · ↓ ${formatRate(down)} · ↑ ${formatRate(up)}"

@@ -27,27 +27,39 @@ class TorrentQueueStore(context: Context) {
     private val preferences = appContext.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
 
     @Synchronized
-    fun all(): List<QueuedTorrent> = runCatching {
-        val array = JSONArray(preferences.getString(KEY_QUEUE, "[]"))
-        buildList {
-            for (index in 0 until array.length()) {
-                val item = array.optJSONObject(index) ?: continue
-                val magnet = item.optString("magnet").takeIf { it.startsWith("magnet:?") }
-                val path = item.optString("torrentPath").takeIf { it.isNotBlank() && File(it).isFile }
-                if (magnet == null && path == null) continue
-                val id = item.optString("id").ifBlank { magnet?.let(::idFor) ?: idForFile(path!!) }
-                add(
-                    QueuedTorrent(
-                        id = id,
-                        title = item.optString("title").ifBlank { "Торрент ${id.take(10)}" },
-                        magnetUri = magnet,
-                        torrentPath = path,
-                        selectedFileIndex = item.optInt("selectedFileIndex", -1).takeIf { it >= 0 }
-                    )
-                )
-            }
-        }.distinctBy { it.id }.take(MAX_QUEUE_SIZE)
-    }.getOrDefault(emptyList())
+    fun all(): List<QueuedTorrent> {
+        val raw = preferences.getString(KEY_QUEUE, "[]").orEmpty()
+        val decoded = if (raw.startsWith("JACKET_QUEUE_V2")) {
+            runCatching { TorrentQueueCodec.decode(raw) }.getOrDefault(emptyList())
+        } else {
+            // One-time migration of the previous SharedPreferences JSON schema.
+            runCatching {
+                val array = JSONArray(raw)
+                buildList {
+                    for (index in 0 until array.length()) {
+                        val item = array.optJSONObject(index) ?: continue
+                        val magnet = item.optString("magnet").takeIf { it.startsWith("magnet:?") }
+                        val path = item.optString("torrentPath").takeIf { it.isNotBlank() && File(it).isFile }
+                        if (magnet == null && path == null) continue
+                        val id = item.optString("id").ifBlank { magnet?.let(::idFor) ?: idForFile(File(path!!)) }
+                        add(
+                            QueuedTorrent(
+                                id = id,
+                                title = item.optString("title").ifBlank { "Торрент ${id.take(10)}" },
+                                magnetUri = magnet,
+                                torrentPath = path,
+                                selectedFileIndex = item.optInt("selectedFileIndex", -1).takeIf { it >= 0 }
+                            )
+                        )
+                    }
+                }
+            }.getOrDefault(emptyList())
+        }
+        val valid = decoded.filter { it.magnetUri?.startsWith("magnet:?") == true ||
+            (!it.torrentPath.isNullOrBlank() && File(it.torrentPath).isFile) }.take(MAX_QUEUE_SIZE)
+        if (decoded.isNotEmpty() && !raw.startsWith("JACKET_QUEUE_V2")) save(valid)
+        return valid
+    }
 
     @Synchronized
     fun get(id: String): QueuedTorrent? = all().firstOrNull { it.id.equals(id, true) }
@@ -112,18 +124,7 @@ class TorrentQueueStore(context: Context) {
     }
 
     private fun save(items: List<QueuedTorrent>) {
-        val array = JSONArray()
-        items.forEach { item ->
-            array.put(
-                JSONObject()
-                    .put("id", item.id)
-                    .put("title", item.title)
-                    .put("magnet", item.magnetUri)
-                    .put("torrentPath", item.torrentPath)
-                    .put("selectedFileIndex", item.selectedFileIndex ?: -1)
-            )
-        }
-        preferences.edit().putString(KEY_QUEUE, array.toString()).apply()
+        preferences.edit().putString(KEY_QUEUE, TorrentQueueCodec.encode(items)).apply()
     }
 
     companion object {

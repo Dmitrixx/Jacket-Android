@@ -52,7 +52,8 @@ data class TorrentSnapshot(
     val files: List<TorrentFileSnapshot> = emptyList(),
     val selectedFileIndex: Int? = null,
     val selectedFileProgress: Float = 0f,
-    val error: String? = null
+    val error: String? = null,
+    val localStreamPort: Int? = null
 )
 
 data class TorrentStreamTarget(
@@ -71,6 +72,7 @@ object TorrentEngine {
     @Volatile private var alertListener: AlertListener? = null
 
     private val errors = ConcurrentHashMap<String, String>()
+    @Volatile private var localStreamPort: Int? = null
     private val _snapshots = MutableStateFlow<List<TorrentSnapshot>>(emptyList())
     val snapshots: StateFlow<List<TorrentSnapshot>> = _snapshots.asStateFlow()
 
@@ -287,6 +289,12 @@ object TorrentEngine {
     private fun kbpsToBytes(value: Int): Int = if (value <= 0) 0 else (value.toLong() * 1024L).coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
 
     @Synchronized
+    fun setLocalStreamPort(port: Int?) {
+        localStreamPort = port?.takeIf { it in 8090..8099 }
+        refresh()
+    }
+
+    @Synchronized
     fun refresh() {
         val current = manager ?: run {
             _snapshots.value = emptyList()
@@ -353,7 +361,8 @@ object TorrentEngine {
                     files = files,
                     selectedFileIndex = selectedIndex,
                     selectedFileProgress = selectedProgress,
-                    error = errors[id]
+                    error = errors[id],
+                    localStreamPort = localStreamPort
                 )
             } catch (error: Exception) {
                 errors[runCatching { handle.infoHash().toHex() }.getOrDefault("unknown")] =
@@ -428,6 +437,7 @@ object TorrentEngine {
         current.stop()
         manager = null
         alertListener = null
+        localStreamPort = null
         _snapshots.value = emptyList()
     }
 

@@ -48,6 +48,7 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Tv
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -68,6 +69,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -159,7 +161,10 @@ fun JacketApp(viewModel: MainViewModel) {
         }
     }
 
-    LaunchedEffect(Unit) { viewModel.loadHome() }
+    LaunchedEffect(Unit) {
+        viewModel.loadHome()
+        if (TorrentQueueStore(context).all().isNotEmpty()) TorrentDownloadService.restore(context)
+    }
 
     if (playerUrl != null) {
         JacketPlayerScreen(
@@ -1095,6 +1100,23 @@ private fun DownloadsScreen(onBack: () -> Unit) {
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 items(downloads, key = { it.id }) { item ->
+                    var confirmDeleteFiles by remember(item.id) { mutableStateOf(false) }
+                    if (confirmDeleteFiles) {
+                        AlertDialog(
+                            onDismissRequest = { confirmDeleteFiles = false },
+                            title = { Text("Удалить скачанные файлы?") },
+                            text = { Text("Файлы этой раздачи будут удалены из папки загрузок. Удаление нельзя отменить.") },
+                            confirmButton = {
+                                TextButton(onClick = {
+                                    confirmDeleteFiles = false
+                                    TorrentDownloadService.remove(context, item.id, deleteFiles = true)
+                                }) { Text("Удалить файлы") }
+                            },
+                            dismissButton = {
+                                TextButton(onClick = { confirmDeleteFiles = false }) { Text("Отмена") }
+                            }
+                        )
+                    }
                     Card(modifier = Modifier.fillMaxWidth()) {
                         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                             Text(item.name, fontWeight = FontWeight.SemiBold)
@@ -1122,9 +1144,16 @@ private fun DownloadsScreen(onBack: () -> Unit) {
                                     Icon(if (item.paused) Icons.Default.PlayArrow else Icons.Default.Pause, contentDescription = null)
                                     Text(if (item.paused) "Продолжить" else "Пауза")
                                 }
-                                IconButton(onClick = { TorrentDownloadService.remove(context, item.id) }) {
-                                    Icon(Icons.Default.DeleteOutline, contentDescription = "Убрать из очереди")
-                                }
+                                OutlinedButton(
+                                    onClick = { TorrentDownloadService.remove(context, item.id, deleteFiles = false) }
+                                ) { Text("Убрать из очереди") }
+                            }
+                            TextButton(
+                                onClick = { confirmDeleteFiles = true },
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Icon(Icons.Default.DeleteOutline, contentDescription = null)
+                                Text("Удалить скачанные файлы…")
                             }
                             if (item.files.isNotEmpty()) {
                                 Text("Файлы раздачи (${item.files.size})", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)

@@ -40,7 +40,7 @@ class LocalStreamServer(
                     reuseAddress = true
                     soTimeout = 1000
                 }
-                port = localPort
+                port = bound!!.localPort
                 break
             } catch (error: Exception) {
                 lastError = error
