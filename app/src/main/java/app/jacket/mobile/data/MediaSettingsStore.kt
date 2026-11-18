@@ -45,7 +45,7 @@ class MediaSettingsStore(context: Context) {
             ?.takeIf { it.matches(Regex("[a-fA-F0-9]{16}")) }
             ?.let { return it }
         val bytes = ByteArray(8).also(java.security.SecureRandom()::nextBytes)
-        val id = bytes.joinToString("") { "%02x".format(it) }
+        val id = bytes.joinToString("") { "%02x".format(it.toInt() and 0xff) }
         preferences.edit { putString(KEY_FILMIX_DEVICE_ID, id) }
         return id
     }

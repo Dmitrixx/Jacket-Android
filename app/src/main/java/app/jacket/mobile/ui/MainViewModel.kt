@@ -407,6 +407,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         withContext(Dispatchers.IO) {
                             FilmixDeviceAuth.pollActivation(pending, deviceName, vendor, osVersion, appVersion)
                         }
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
                     } catch (error: Exception) {
                         _filmixStatus.value = "Нет ответа от Filmix. Повторяем проверку…"
                         null

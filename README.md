@@ -1,4 +1,4 @@
-# Jacket — Android media center 2.3.0
+# Jacket — Android media center 2.4.0
 
 Jacket is a single Android application for phones, tablets and Android TV / Google TV. It combines a poster-based media catalog, a user-configurable indexer cabinet, an integrated BitTorrent engine and a loopback HTTP media server.
 
@@ -15,7 +15,19 @@ The project is under active development. CI verifies JVM unit tests and APK asse
 - **Sources** — manual search, indexer management, connectivity tests, source errors and quality filters.
 - **Downloads** — magnet and `.torrent` tasks, file list, selected-file priorities, pause/resume, speed and progress.
 - **Player** — Media3 / ExoPlayer, seek controls, audio/subtitle track selection, downloaded sidecar subtitles, external-player handoff, progressive video, HLS and DASH playback.
-- **Settings** — LAMPA-inspired section menu for website searches, torrent indexers, catalog metadata, download limits and Wi-Fi-only mode.
+- **Settings** — LAMPA-inspired control center for Filmix device-code pairing, HDRezka account/session, built-in tracker shortcuts, torrent indexers, catalog metadata and network limits.
+
+## Filmix and HDRezka accounts
+
+- **Filmix** uses a device-code flow: Jacket requests a short-lived code, the user confirms it on the Filmix device page, and the app polls for activation. The permanent device token is encrypted using Android Keystore. No Filmix password is requested.
+- **HDRezka** has HTTPS mirror, email/login, password and manual Cookie-session fields. The app attempts the normal site sign-in and saves returned cookies encrypted using Android Keystore. If a mirror presents CAPTCHA, Cloudflare or an interactive browser challenge, Jacket stops and does not attempt to bypass it; a session cookie can be entered manually after signing in through the user's regular browser.
+- Credentials and cookies stay on the device and are not included in diagnostics or tracker exports.
+
+These account screens manage authentication state. They do not claim universal playback support for arbitrary protected HTML player pages; direct media playback continues to require a source-published direct URL or a supported feed.
+
+## Built-in tracker shortcuts
+
+The first run seeds search shortcuts for RuTracker, NNM-Club, Rutor, Kinozal, 1337x, The Pirate Bay and Internet Archive. The user can enable, disable, edit or delete them and restore the preset list later. These shortcuts open the selected website in the external browser. They are not site-specific HTML scrapers or native torrent adapters. For in-app structured results, add a Torznab/Newznab or RSS endpoint under Torrent Sources.
 
 ## Indexer cabinet — no Jackett server
 
@@ -41,7 +53,7 @@ The URL must use HTTPS and include `{query}`; optionally include `{apikey}` wher
 
 Release labels such as 720p / 1080p / 2160p, HDR / DV, HEVC / x264 and common audio/dubbing tags are extracted heuristically from the release title. They are not authoritative tracker metadata. Filters operate on the current results and do not issue another request.
 
-The app does not ship tracker lists, private credentials or site-specific scraping presets. CAPTCHA, anti-bot challenges, proprietary sign-in flows and interactive 2FA are not automated. A manually entered cookie may work where the source permits it.
+The app does not ship private tracker credentials or site-specific page scrapers. CAPTCHA, anti-bot challenges, proprietary sign-in flows and interactive 2FA are not automated. A manually entered cookie may work where the source permits it.
 
 ## User-configured website search
 
