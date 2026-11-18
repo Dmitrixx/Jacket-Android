@@ -44,7 +44,8 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.key.KeyEventType
-import androidx.compose.ui.input.key.nativeKeyEvent
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalContext
@@ -161,20 +162,22 @@ fun JacketPlayerScreen(
                     if (!playerHasFocus || event.type != KeyEventType.KeyDown) {
                         false
                     } else {
-                        when (event.nativeKeyEvent.keyCode) {
-                            android.view.KeyEvent.KEYCODE_DPAD_LEFT -> {
+                        when (event.key) {
+                            Key.DirectionLeft -> {
                                 player.seekTo((player.currentPosition - PLAYER_SEEK_STEP_MS).coerceAtLeast(0L))
                                 true
                             }
-                            android.view.KeyEvent.KEYCODE_DPAD_RIGHT -> {
+                            Key.DirectionRight -> {
                                 val duration = player.duration
                                 val target = player.currentPosition + PLAYER_SEEK_STEP_MS
                                 player.seekTo(if (duration > 0L) target.coerceAtMost(duration) else target)
                                 true
                             }
-                            android.view.KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE,
-                            android.view.KeyEvent.KEYCODE_DPAD_CENTER,
-                            android.view.KeyEvent.KEYCODE_ENTER -> {
+                            Key.MediaPlayPause,
+                            Key.MediaPlay,
+                            Key.MediaPause,
+                            Key.DirectionCenter,
+                            Key.Enter -> {
                                 togglePlayback()
                                 true
                             }

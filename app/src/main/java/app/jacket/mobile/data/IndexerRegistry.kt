@@ -1,8 +1,6 @@
 package app.jacket.mobile.data
 
-import android.net.Uri
-import android.util.Base64
-import android.util.Xml
+import org.xmlpull.v1.XmlPullParserFactory
 import org.xmlpull.v1.XmlPullParser
 import java.io.ByteArrayOutputStream
 import java.io.IOException
@@ -108,7 +106,7 @@ class IndexerRegistry(
     }
 
     internal fun parseFeedXml(xml: String, config: IndexerConfig): List<SourceResult> =
-        parseFeed(xml.toByteArray(Charsets.UTF_8), config, Xml.newPullParser())
+        parseFeed(xml.toByteArray(Charsets.UTF_8), config, newXmlParser())
 
     /** Parser injection keeps RSS/Torznab fixtures testable without Android framework classes. */
     internal fun parseFeedXml(xml: String, config: IndexerConfig, parser: XmlPullParser): List<SourceResult> =
@@ -122,8 +120,8 @@ class IndexerRegistry(
 
     private fun searchFeed(config: IndexerConfig, query: String): List<SourceResult> {
         val requestUrl = buildRequestUrl(config, query)
-        val uri = Uri.parse(requestUrl)
-        if (uri.scheme != "https" || uri.host.isNullOrBlank() || uri.userInfo != null) {
+        val uri = runCatching { java.net.URI(requestUrl) }.getOrElse { throw IOException("Некорректный URL индексатора", it) }
+        if (!uri.scheme.equals("https", true) || uri.host.isNullOrBlank() || uri.rawUserInfo != null) {
             throw IOException("Источник «${config.name}» должен использовать HTTPS без логина в URL")
         }
 
@@ -136,7 +134,7 @@ class IndexerRegistry(
             setRequestProperty("User-Agent", USER_AGENT)
             if (config.username.isNotBlank() || config.password.isNotBlank()) {
                 val credentials = "${config.username}:${config.password}"
-                val encoded = Base64.encodeToString(credentials.toByteArray(Charsets.UTF_8), Base64.NO_WRAP)
+                val encoded = java.util.Base64.getEncoder().encodeToString(credentials.toByteArray(Charsets.UTF_8))
                 setRequestProperty("Authorization", "Basic $encoded")
             }
             if (config.cookie.isNotBlank()) setRequestProperty("Cookie", config.cookie.take(4096))
@@ -167,13 +165,27 @@ class IndexerRegistry(
     private fun buildRequestUrl(config: IndexerConfig, query: String): String {
         val template = config.searchUrlTemplate
         val substituted = template
-            .replace("{query}", Uri.encode(query))
-            .replace("{apikey}", Uri.encode(config.apiKey))
-        val builder = Uri.parse(substituted).buildUpon()
-        val existing = Uri.parse(substituted).queryParameterNames
-        fun appendIfMissing(key: String, value: String?) {
-            if (!value.isNullOrBlank() && key !in existing) builder.appendQueryParameter(key, value)
+            .replace("{query}", urlEncode(query))
+            .replace("{apikey}", urlEncode(config.apiKey))
+        val uri = runCatching { java.net.URI(substituted) }
+            .getOrElse { throw IOException("Некорректный URL индексатора", it) }
+        if (!uri.scheme.equals("https", true) || uri.host.isNullOrBlank() || uri.rawUserInfo != null) {
+            throw IOException("Индексатор должен использовать HTTPS без логина в URL")
         }
+
+        val queryParts = uri.rawQuery.orEmpty().split('&').filter(String::isNotBlank).toMutableList()
+        val existingNames = queryParts.mapTo(HashSet()) { part ->
+            runCatching { java.net.URLDecoder.decode(part.substringBefore('='), Charsets.UTF_8.name()) }
+                .getOrDefault(part.substringBefore('='))
+                .lowercase()
+        }
+        fun appendIfMissing(key: String, value: String?) {
+            if (!value.isNullOrBlank() && key.lowercase() !in existingNames) {
+                queryParts += "${urlEncode(key)}=${urlEncode(value)}"
+                existingNames += key.lowercase()
+            }
+        }
+
         appendIfMissing("apikey", config.apiKey.takeIf { it.isNotBlank() && "{apikey}" !in template })
         if (config.protocol == IndexerProtocol.TORZNAB) {
             appendIfMissing("t", "search")
@@ -183,8 +195,19 @@ class IndexerRegistry(
             appendIfMissing("order", config.sortOrder)
             if (config.freeleechOnly) appendIfMissing("freeleech", "1")
         }
-        return builder.build().toString()
+        return buildString {
+            append(uri.scheme).append("://").append(uri.rawAuthority)
+            if (!uri.rawPath.isNullOrEmpty()) append(uri.rawPath)
+            if (queryParts.isNotEmpty()) append('?').append(queryParts.joinToString("&"))
+            if (!uri.rawFragment.isNullOrEmpty()) append('#').append(uri.rawFragment)
+        }
     }
+
+    private fun urlEncode(value: String): String =
+        java.net.URLEncoder.encode(value, Charsets.UTF_8.name()).replace("+", "%20")
+
+    private fun newXmlParser(): XmlPullParser =
+        XmlPullParserFactory.newInstance().newPullParser()
 
     private fun parseFeed(xml: ByteArray, config: IndexerConfig): List<SourceResult> =
         parseFeed(xml, config, Xml.newPullParser())
@@ -302,8 +325,8 @@ class IndexerRegistry(
     }
 
     private fun isHttps(value: String): Boolean = runCatching {
-        val uri = Uri.parse(value)
-        uri.scheme == "https" && !uri.host.isNullOrBlank() && uri.userInfo == null
+        val uri = java.net.URI(value)
+        uri.scheme.equals("https", true) && !uri.host.isNullOrBlank() && uri.rawUserInfo == null
     }.getOrDefault(false)
 
     private fun safeError(error: Throwable): String =
