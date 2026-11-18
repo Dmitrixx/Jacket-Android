@@ -1,9 +1,14 @@
 package app.jacket.mobile.ui
 
 import android.app.Application
+import android.os.Build
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import app.jacket.mobile.data.CatalogItem
+import app.jacket.mobile.data.FilmixDeviceAuth
+import app.jacket.mobile.data.FilmixPendingDevice
+import app.jacket.mobile.data.HdRezkaLoginClient
+import app.jacket.mobile.data.HdRezkaSettings
 import app.jacket.mobile.data.IndexerConfig
 import app.jacket.mobile.data.IndexerFailure
 import app.jacket.mobile.data.IndexerRegistry
@@ -14,6 +19,7 @@ import app.jacket.mobile.data.MediaSeason
 import app.jacket.mobile.data.MediaEpisode
 import app.jacket.mobile.data.MediaSettingsStore
 import app.jacket.mobile.data.WebSearchProvider
+import app.jacket.mobile.BuildConfig
 import app.jacket.mobile.data.SourceResult
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -22,6 +28,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withContext
 
 /** UI state and orchestration for the self-contained catalog/indexer app. */
@@ -33,6 +41,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private var sourcesJob: Job? = null
     private var indexerTestJob: Job? = null
     private var episodeJob: Job? = null
+    private var filmixPairingJob: Job? = null
+    private var hdRezkaLoginJob: Job? = null
 
     private val _tmdbToken = MutableStateFlow(settings.tmdbToken())
     val tmdbToken: StateFlow<String> = _tmdbToken.asStateFlow()
@@ -42,6 +52,31 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _webSearchProviders = MutableStateFlow(settings.webSearchProviders())
     val webSearchProviders: StateFlow<List<WebSearchProvider>> = _webSearchProviders.asStateFlow()
+
+    private val _filmixToken = MutableStateFlow(settings.filmixToken())
+    val filmixToken: StateFlow<String> = _filmixToken.asStateFlow()
+
+    private val _filmixCode = MutableStateFlow<String?>(null)
+    val filmixCode: StateFlow<String?> = _filmixCode.asStateFlow()
+
+    private val _filmixStatus = MutableStateFlow(
+        if (_filmixToken.value.isBlank()) "Устройство не авторизовано" else "Токен сохранён"
+    )
+    val filmixStatus: StateFlow<String> = _filmixStatus.asStateFlow()
+
+    private val _isFilmixPairing = MutableStateFlow(false)
+    val isFilmixPairing: StateFlow<Boolean> = _isFilmixPairing.asStateFlow()
+
+    private val _hdRezkaSettings = MutableStateFlow(settings.hdRezkaSettings())
+    val hdRezkaSettings: StateFlow<HdRezkaSettings> = _hdRezkaSettings.asStateFlow()
+
+    private val _hdRezkaStatus = MutableStateFlow(
+        if (_hdRezkaSettings.value.connected) "Сессия HDRezka сохранена" else "Не авторизовано"
+    )
+    val hdRezkaStatus: StateFlow<String> = _hdRezkaStatus.asStateFlow()
+
+    private val _isHdRezkaBusy = MutableStateFlow(false)
+    val isHdRezkaBusy: StateFlow<Boolean> = _isHdRezkaBusy.asStateFlow()
 
     private val _indexerStatuses = MutableStateFlow<Map<String, String>>(emptyMap())
     val indexerStatuses: StateFlow<Map<String, String>> = _indexerStatuses.asStateFlow()
@@ -347,6 +382,124 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _isError.value = false
     }
 
+    fun startFilmixPairing() {
+        filmixPairingJob?.cancel()
+        filmixPairingJob = viewModelScope.launch {
+            _isFilmixPairing.value = true
+            _filmixCode.value = null
+            _filmixStatus.value = "Запрашиваем код у Filmix…"
+            try {
+                val deviceId = settings.filmixDeviceId()
+                val deviceName = Build.MODEL?.take(80)?.ifBlank { "Jacket" } ?: "Jacket"
+                val vendor = Build.MANUFACTURER?.take(80)?.ifBlank { "Android" } ?: "Android"
+                val osVersion = "Android ${Build.VERSION.RELEASE.orEmpty()}"
+                val appVersion = BuildConfig.VERSION_NAME
+                val pending = withContext(Dispatchers.IO) {
+                    FilmixDeviceAuth.requestCode(deviceId, deviceName, vendor, osVersion, appVersion)
+                }
+                _filmixCode.value = pending.code
+                _filmixStatus.value = "Введите код на странице устройств Filmix. Проверяем подтверждение автоматически."
+                val deadline = System.currentTimeMillis() + FILMIX_PAIRING_TIMEOUT_MS
+
+                while (isActive && System.currentTimeMillis() < deadline) {
+                    delay(FILMIX_PAIRING_POLL_MS)
+                    val activated = try {
+                        withContext(Dispatchers.IO) {
+                            FilmixDeviceAuth.pollActivation(pending, deviceName, vendor, osVersion, appVersion)
+                        }
+                    } catch (error: Exception) {
+                        _filmixStatus.value = "Нет ответа от Filmix. Повторяем проверку…"
+                        null
+                    }
+                    if (!activated.isNullOrBlank()) {
+                        settings.saveFilmixToken(activated)
+                        _filmixToken.value = settings.filmixToken()
+                        _filmixCode.value = null
+                        _filmixStatus.value = "Устройство авторизовано"
+                        return@launch
+                    }
+                }
+                if (isActive) {
+                    _filmixStatus.value = "Время действия запроса истекло. Получите новый код."
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                _filmixStatus.value = error.message ?: "Не удалось подключить Filmix"
+                _filmixCode.value = null
+            } finally {
+                _isFilmixPairing.value = false
+            }
+        }
+    }
+
+    fun cancelFilmixPairing() {
+        filmixPairingJob?.cancel()
+        filmixPairingJob = null
+        _isFilmixPairing.value = false
+        _filmixCode.value = null
+        _filmixStatus.value = if (_filmixToken.value.isBlank()) "Запрос отменён" else "Токен сохранён"
+    }
+
+    fun disconnectFilmix() {
+        cancelFilmixPairing()
+        settings.clearFilmixToken()
+        _filmixToken.value = ""
+        _filmixStatus.value = "Устройство не авторизовано"
+    }
+
+    fun saveHdRezkaSettings(config: HdRezkaSettings) {
+        try {
+            val saved = config.copy(connected = config.cookie.isNotBlank())
+            settings.saveHdRezkaSettings(saved)
+            _hdRezkaSettings.value = settings.hdRezkaSettings()
+            _hdRezkaStatus.value = if (saved.connected) "Cookie-сессия сохранена" else "Данные сохранены; вход не выполнен"
+        } catch (error: Exception) {
+            _hdRezkaStatus.value = error.message ?: "Не удалось сохранить настройки HDRezka"
+        }
+    }
+
+    fun loginHdRezka(config: HdRezkaSettings) {
+        hdRezkaLoginJob?.cancel()
+        hdRezkaLoginJob = viewModelScope.launch {
+            _isHdRezkaBusy.value = true
+            _hdRezkaStatus.value = "Подключаемся к HDRezka по HTTPS…"
+            try {
+                settings.saveHdRezkaSettings(config.copy(cookie = "", connected = false))
+                val result = withContext(Dispatchers.IO) {
+                    HdRezkaLoginClient.login(config.mirror, config.login, config.password)
+                }
+                val saved = config.copy(
+                    mirror = result.activeMirror,
+                    cookie = result.cookieHeader,
+                    connected = true
+                )
+                settings.saveHdRezkaSettings(saved)
+                _hdRezkaSettings.value = settings.hdRezkaSettings()
+                _hdRezkaStatus.value = "Авторизация подтверждена. Cookie-сессия сохранена."
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                _hdRezkaSettings.value = settings.hdRezkaSettings()
+                _hdRezkaStatus.value = error.message ?: "Не удалось войти в HDRezka"
+            } finally {
+                _isHdRezkaBusy.value = false
+            }
+        }
+    }
+
+    fun disconnectHdRezka() {
+        settings.disconnectHdRezka()
+        _hdRezkaSettings.value = settings.hdRezkaSettings()
+        _hdRezkaStatus.value = "Сессия удалена"
+    }
+
+    fun restoreDefaultTrackerShortcuts() {
+        _webSearchProviders.value = settings.restoreDefaultTrackerShortcuts()
+        _message.value = "Список сайтов поиска восстановлен"
+        _isError.value = false
+    }
+
     /** Kept for compatibility with the simple RSS add flow. */
     fun addIndexer(name: String, urlTemplate: String) {
         saveIndexer(IndexerConfig(id = "", name = name, searchUrlTemplate = urlTemplate))
@@ -484,5 +637,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private companion object {
         const val MAX_FAVORITES = 200
+        const val FILMIX_PAIRING_TIMEOUT_MS = 15 * 60 * 1000L
+        const val FILMIX_PAIRING_POLL_MS = 10_000L
     }
 }
