@@ -317,7 +317,7 @@ private fun MainNavigationRail(
     onSelect: (Int) -> Unit
 ) {
     Surface(color = MaterialTheme.colorScheme.surface, tonalElevation = 2.dp) {
-        NavigationRail(containerColor = Color.Transparent, tonalElevation = 0.dp) {
+        NavigationRail(containerColor = Color.Transparent) {
             NavigationRailItem(
                 selected = selectedTab == TAB_HOME,
                 onClick = { onSelect(TAB_HOME) },
