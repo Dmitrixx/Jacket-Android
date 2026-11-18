@@ -12,7 +12,7 @@ data class FilmixPendingDevice(
     val code: String,
     val temporaryToken: String,
     val deviceId: String,
-    val activationUrl: String = ACTIVATION_URL
+    val activationUrl: String = FilmixDeviceAuth.ACTIVATION_URL
 )
 
 /**
@@ -108,7 +108,7 @@ object FilmixDeviceAuth {
                     output.write(buffer, 0, count)
                 }
                 output.toByteArray()
-            }.orEmpty()
+            } ?: ByteArray(0)
             if (status !in 200..299) throw IOException("Filmix API вернул HTTP $status")
             return runCatching { JSONObject(body.toString(Charsets.UTF_8)) }
                 .getOrElse { throw IOException("Filmix вернул некорректный ответ", it) }

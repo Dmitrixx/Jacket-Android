@@ -178,7 +178,7 @@ object HdRezkaLoginClient {
                     output.write(buffer, 0, count)
                 }
                 output.toByteArray()
-            }.orEmpty()
+            } ?: ByteArray(0)
             return HttpResult(
                 status = status,
                 finalUrl = connection.url.toString(),
