@@ -935,13 +935,6 @@ private fun DetailScreen(
     val loading by viewModel.isLoading.collectAsState()
     val sources by viewModel.sourceResults.collectAsState()
     val searchingSources by viewModel.isSearchingSources.collectAsState()
-    val filmixToken by viewModel.filmixToken.collectAsState()
-    val filmixCode by viewModel.filmixCode.collectAsState()
-    val filmixStatus by viewModel.filmixStatus.collectAsState()
-    val isFilmixPairing by viewModel.isFilmixPairing.collectAsState()
-    val hdRezkaSettings by viewModel.hdRezkaSettings.collectAsState()
-    val hdRezkaStatus by viewModel.hdRezkaStatus.collectAsState()
-    val isHdRezkaBusy by viewModel.isHdRezkaBusy.collectAsState()
     val seasons by viewModel.seasons.collectAsState()
     val episodes by viewModel.episodes.collectAsState()
     val selectedSeason by viewModel.selectedSeasonNumber.collectAsState()
@@ -1667,6 +1660,13 @@ private fun SettingsScreen(
     val statuses by viewModel.indexerStatuses.collectAsState()
     val sourceResults by viewModel.sourceResults.collectAsState()
     val searchingSources by viewModel.isSearchingSources.collectAsState()
+    val filmixToken by viewModel.filmixToken.collectAsState()
+    val filmixCode by viewModel.filmixCode.collectAsState()
+    val filmixStatus by viewModel.filmixStatus.collectAsState()
+    val isFilmixPairing by viewModel.isFilmixPairing.collectAsState()
+    val hdRezkaSettings by viewModel.hdRezkaSettings.collectAsState()
+    val hdRezkaStatus by viewModel.hdRezkaStatus.collectAsState()
+    val isHdRezkaBusy by viewModel.isHdRezkaBusy.collectAsState()
     val context = LocalContext.current
     var token by remember(currentToken) { mutableStateOf(currentToken) }
     val savedRates = remember(context) { TorrentEngine.rateLimits(context) }
