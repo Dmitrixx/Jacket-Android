@@ -5,10 +5,12 @@ import org.xmlpull.v1.XmlPullParser
 import java.io.ByteArrayOutputStream
 import java.io.IOException
 import java.net.HttpURLConnection
+import java.net.SocketTimeoutException
 import java.net.URL
 import java.util.concurrent.Callable
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.TimeoutException
 
 /**
  * Pluggable direct indexer federation. Supports user-configured RSS/Atom and Torznab/Newznab
@@ -54,20 +56,27 @@ class IndexerRegistry(
 
             val results = ArrayList<SourceResult>()
             val failures = ArrayList<IndexerFailure>()
+            val deadlineNanos = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(MAX_TOTAL_SEARCH_TIME_MS)
             tasks.forEach { task ->
                 val (keyAndName, future) = task
                 val (id, name) = keyAndName
+                val config = active.firstOrNull { it.id == id }
                 try {
-                    val result = future.get()
+                    val remainingNanos = deadlineNanos - System.nanoTime()
+                    if (remainingNanos <= 0L) throw TimeoutException("Общий лимит поиска превышен")
+                    val result = future.get(remainingNanos, TimeUnit.NANOSECONDS)
                     result.onSuccess(results::addAll).onFailure { error ->
                         failures += IndexerFailure(
                             indexerId = id,
                             indexerName = name,
-                            message = safeError(error)
+                            message = safeError(error, config)
                         )
                     }
+                } catch (_: TimeoutException) {
+                    future.cancel(true)
+                    failures += IndexerFailure(id, name, "Общий лимит поиска по источникам превышен")
                 } catch (error: Exception) {
-                    failures += IndexerFailure(id, name, safeError(error))
+                    failures += IndexerFailure(id, name, safeError(error, config))
                 }
             }
 
@@ -81,11 +90,19 @@ class IndexerRegistry(
     fun searchOne(config: IndexerConfig, query: String): List<SourceResult> {
         require(config.enabled) { "Индексатор отключён" }
         require(query.isNotBlank()) { "Введите поисковый запрос" }
-        return searchFeed(config, query.trim())
+        return try {
+            searchFeed(config, query.trim())
+        } catch (error: Exception) {
+            throw IOException(safeError(error, config))
+        }
     }
 
     /** A valid empty response still means that the authenticated indexer is reachable. */
-    fun test(config: IndexerConfig): Int = searchFeed(config, "jacket-connectivity-test").size
+    fun test(config: IndexerConfig): Int = try {
+        searchFeed(config, "jacket-connectivity-test").size
+    } catch (error: Exception) {
+        throw IOException(safeError(error, config))
+    }
 
     fun testAll(configs: List<IndexerConfig>): List<IndexerFailure> {
         val executor = Executors.newFixedThreadPool(MAX_PARALLEL_REQUESTS)
@@ -93,11 +110,17 @@ class IndexerRegistry(
             val futures = configs.filter { it.enabled }.take(MAX_INDEXERS).map { config ->
                 config to executor.submit(Callable { runCatching { searchFeed(config, "jacket-connectivity-test") } })
             }
+            val deadlineNanos = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(MAX_TOTAL_SEARCH_TIME_MS)
             return futures.mapNotNull { (config, future) ->
-                val result = runCatching { future.get() }.getOrElse {
-                    Result.failure(it)
+                val result = runCatching {
+                    val remainingNanos = deadlineNanos - System.nanoTime()
+                    if (remainingNanos <= 0L) throw TimeoutException("Общий лимит проверки источников превышен")
+                    future.get(remainingNanos, TimeUnit.NANOSECONDS)
+                }.getOrElse { Result.failure(it) }
+                result.exceptionOrNull()?.let { error ->
+                    if (error is TimeoutException) future.cancel(true)
+                    IndexerFailure(config.id, config.name, safeError(error, config))
                 }
-                result.exceptionOrNull()?.let { IndexerFailure(config.id, config.name, safeError(it)) }
             }
         } finally {
             executor.shutdownNow()
@@ -125,10 +148,11 @@ class IndexerRegistry(
             throw IOException("Источник «${config.name}» должен использовать HTTPS без логина в URL")
         }
 
+        val deadlineNanos = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(REQUEST_DEADLINE_MS)
         val connection = (URL(requestUrl).openConnection() as HttpURLConnection).apply {
             requestMethod = "GET"
-            connectTimeout = CONNECT_TIMEOUT_MS
-            readTimeout = READ_TIMEOUT_MS
+            connectTimeout = minOf(CONNECT_TIMEOUT_MS, remainingRequestTimeoutMillis(deadlineNanos))
+            readTimeout = minOf(READ_TIMEOUT_MS, remainingRequestTimeoutMillis(deadlineNanos))
             instanceFollowRedirects = false
             setRequestProperty("Accept", "application/rss+xml, application/atom+xml, application/xml, text/xml")
             setRequestProperty("User-Agent", USER_AGENT)
@@ -148,6 +172,10 @@ class IndexerRegistry(
                 val buffer = ByteArray(8192)
                 var total = 0
                 while (true) {
+                    if (Thread.currentThread().isInterrupted) {
+                        throw java.io.InterruptedIOException("Запрос к индексатору отменён")
+                    }
+                    connection.readTimeout = minOf(READ_TIMEOUT_MS, remainingRequestTimeoutMillis(deadlineNanos))
                     val count = input.read(buffer)
                     if (count < 0) break
                     total += count
@@ -329,10 +357,22 @@ class IndexerRegistry(
         uri.scheme.equals("https", true) && !uri.host.isNullOrBlank() && uri.rawUserInfo == null
     }.getOrDefault(false)
 
-    private fun safeError(error: Throwable): String =
-        (error.cause?.message ?: error.message ?: error.javaClass.simpleName)
-            .replace(Regex("[\\r\\n\\t]+"), " ")
-            .take(MAX_ERROR_LENGTH)
+    private fun safeError(error: Throwable, config: IndexerConfig? = null): String =
+        IndexerErrorSanitizer.sanitize(
+            error,
+            listOfNotNull(config?.apiKey, config?.cookie, config?.username, config?.password)
+        )
+
+    private fun remainingRequestTimeoutMillis(deadlineNanos: Long): Int {
+        val remainingNanos = deadlineNanos - System.nanoTime()
+        if (remainingNanos <= 0L) {
+            throw SocketTimeoutException("Запрос к индексатору превысил лимит времени")
+        }
+        return TimeUnit.NANOSECONDS.toMillis(remainingNanos)
+            .coerceAtLeast(1L)
+            .coerceAtMost(READ_TIMEOUT_MS.toLong())
+            .toInt()
+    }
 
     private companion object {
         const val MAX_INDEXERS = 100
@@ -340,9 +380,10 @@ class IndexerRegistry(
         const val MAX_TOTAL_RESULTS = 200
         const val MAX_FEED_RESULTS = 100
         const val MAX_FEED_BYTES = 4 * 1024 * 1024
-        const val MAX_ERROR_LENGTH = 180
         const val CONNECT_TIMEOUT_MS = 10_000
         const val READ_TIMEOUT_MS = 25_000
+        const val REQUEST_DEADLINE_MS = 30_000L
+        const val MAX_TOTAL_SEARCH_TIME_MS = 60_000L
         const val USER_AGENT = "JacketAndroid/2.1 (direct indexer federation)"
     }
 }
