@@ -7,6 +7,7 @@ import androidx.activity.compose.BackHandler
 import android.net.Uri
 import android.widget.Toast
 import androidx.compose.foundation.background
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -87,6 +88,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -105,6 +107,8 @@ import app.jacket.mobile.torrent.TorrentDownloadService
 import app.jacket.mobile.torrent.TorrentEngine
 import app.jacket.mobile.torrent.TorrentPlaybackBus
 import app.jacket.mobile.torrent.PlaybackProgressStore
+import app.jacket.mobile.torrent.PlaybackSession
+import app.jacket.mobile.torrent.PlaybackSessionStore
 import app.jacket.mobile.torrent.TorrentQueueStore
 import java.io.File
 
@@ -413,12 +417,27 @@ private fun HomeScreen(
     val loading by viewModel.isLoading.collectAsState()
     val message by viewModel.message.collectAsState()
     val isError by viewModel.isError.collectAsState()
+    val context = LocalContext.current
+    val playbackStore = remember(context) { PlaybackSessionStore(context) }
+    val playbackSessions by playbackStore.sessions.collectAsState()
+    val isTv = (context.resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_TYPE_MASK) ==
+        android.content.res.Configuration.UI_MODE_TYPE_TELEVISION
 
     LazyColumn(
         modifier = modifier.fillMaxSize(),
-        contentPadding = PaddingValues(bottom = 28.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
+        contentPadding = PaddingValues(bottom = 36.dp),
+        verticalArrangement = Arrangement.spacedBy(20.dp)
     ) {
+        if (playbackSessions.isNotEmpty()) {
+            item(key = "continue-watching") {
+                ContinueWatchingShelf(
+                    sessions = playbackSessions,
+                    isTv = isTv,
+                    onResume = { session -> TorrentDownloadService.play(context, session.infoHash, session.fileIndex) },
+                    onRemove = { session -> playbackStore.remove(session.infoHash, session.fileIndex) }
+                )
+            }
+        }
         if (sections.firstOrNull()?.items?.isNotEmpty() == true) {
             item {
                 HeroCard(
@@ -471,44 +490,124 @@ private fun HomeScreen(
 @Composable
 private fun HeroCard(item: CatalogItem, onClick: () -> Unit) {
     val context = LocalContext.current
-    val isTv = (context.resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_TYPE_MASK) == android.content.res.Configuration.UI_MODE_TYPE_TELEVISION
+    val isTv = (context.resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_TYPE_MASK) ==
+        android.content.res.Configuration.UI_MODE_TYPE_TELEVISION
     var focused by remember { mutableStateOf(false) }
+    val scale by animateFloatAsState(if (isTv && focused) 1.018f else 1f, label = "hero-focus")
     Card(
-        modifier = Modifier
-            .fillMaxWidth()
+        modifier = Modifier.fillMaxWidth()
             .padding(horizontal = if (isTv) 28.dp else 16.dp)
+            .graphicsLayer { scaleX = scale; scaleY = scale }
             .onFocusChanged { focused = it.isFocused }
-            .border(
-                width = if (isTv && focused) 3.dp else 0.dp,
-                color = if (isTv && focused) MaterialTheme.colorScheme.primary else Color.Transparent,
-                shape = MaterialTheme.shapes.large
-            )
+            .border(if (isTv && focused) 3.dp else 0.dp,
+                if (isTv && focused) MaterialTheme.colorScheme.primary else Color.Transparent,
+                MaterialTheme.shapes.extraLarge)
             .clickable(onClick = onClick),
+        shape = MaterialTheme.shapes.extraLarge,
+        elevation = CardDefaults.cardElevation(defaultElevation = if (focused) 10.dp else 3.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
     ) {
-        val heroHeight = if (isTv) 320.dp else 190.dp
+        val height = if (isTv) 370.dp else 238.dp
         Box {
-            RemotePoster(
-                url = item.backdropUrl ?: item.posterUrl,
-                modifier = Modifier.fillMaxWidth().height(heroHeight)
-            )
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(heroHeight)
-                    .background(Brush.verticalGradient(listOf(androidx.compose.ui.graphics.Color.Transparent, androidx.compose.ui.graphics.Color(0xFF07101C))))
-            )
-            Column(
-                modifier = Modifier.align(Alignment.BottomStart).padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(4.dp)
-            ) {
-                Text("РЕКОМЕНДУЕМ", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
-                Text(item.title, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold, color = androidx.compose.ui.graphics.Color.White, maxLines = 2)
-                Text(
-                    listOfNotNull(item.year.takeIf { it != "Год неизвестен" }, item.kind.label).joinToString(" • "),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = androidx.compose.ui.graphics.Color.White
-                )
+            RemotePoster(url = item.backdropUrl ?: item.posterUrl, modifier = Modifier.fillMaxWidth().height(height))
+            Box(Modifier.fillMaxWidth().height(height).background(
+                Brush.verticalGradient(0f to Color.Transparent, 0.38f to Color(0x33070A10), 1f to Color(0xF5070A10))
+            ))
+            Row(Modifier.align(Alignment.TopStart).padding(14.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                Surface(color = MaterialTheme.colorScheme.primary, shape = MaterialTheme.shapes.small) {
+                    Text("JACKET • ВЫБОР", Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                        style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Black,
+                        color = MaterialTheme.colorScheme.onPrimary)
+                }
+                if (item.rating != null && item.rating > 0.0) {
+                    Surface(color = Color(0xD9171D27), shape = MaterialTheme.shapes.small) {
+                        Text("★ %.1f".format(item.rating), Modifier.padding(horizontal = 9.dp, vertical = 6.dp),
+                            style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold, color = Color.White)
+                    }
+                }
+            }
+            Column(Modifier.align(Alignment.BottomStart).padding(20.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                Text("РЕКОМЕНДУЕМ ПОСМОТРЕТЬ", style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
+                Text(item.title,
+                    style = if (isTv) MaterialTheme.typography.headlineLarge else MaterialTheme.typography.headlineMedium,
+                    fontWeight = FontWeight.ExtraBold, color = Color.White, maxLines = 2)
+                Text(listOfNotNull(item.year.takeIf { it != "Год неизвестен" }, item.kind.label).joinToString(" • "),
+                    style = MaterialTheme.typography.bodyMedium, color = Color(0xFFD8DEE9))
+                Surface(color = Color(0xE6FFFFFF), shape = MaterialTheme.shapes.large) {
+                    Text("Подробнее  →", Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+                        color = Color(0xFF111722), style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ContinueWatchingShelf(
+    sessions: List<PlaybackSession>,
+    isTv: Boolean,
+    onResume: (PlaybackSession) -> Unit,
+    onRemove: (PlaybackSession) -> Unit
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text("Продолжить просмотр", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                Text("Ваш прогресс сохранён на этом устройстве", style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            Text(sessions.size.toString(), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+        }
+        LazyRow(contentPadding = PaddingValues(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            items(sessions, key = { it.key }) { session ->
+                var focused by remember { mutableStateOf(false) }
+                val progress = session.progress
+                Card(
+                    modifier = Modifier.width(if (isTv) 320.dp else 270.dp).height(if (isTv) 190.dp else 176.dp)
+                        .onFocusChanged { focused = it.isFocused }
+                        .border(if (isTv && focused) 3.dp else 0.dp,
+                            if (isTv && focused) MaterialTheme.colorScheme.primary else Color.Transparent,
+                            MaterialTheme.shapes.large)
+                        .clickable { onResume(session) },
+                    shape = MaterialTheme.shapes.large,
+                    elevation = CardDefaults.cardElevation(defaultElevation = if (focused) 8.dp else 2.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+                ) {
+                    Box(Modifier.fillMaxSize()) {
+                        Box(Modifier.fillMaxSize().background(
+                            Brush.linearGradient(listOf(Color(0xFF29384B), Color(0xFF151B27), Color(0xFF10151E)))
+                        ))
+                        Column(Modifier.fillMaxSize().padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text("СМОТРЕЛИ РАНЬШЕ", Modifier.weight(1f),
+                                    style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary,
+                                    fontWeight = FontWeight.Bold)
+                                Text(if (session.durationMs > 0L) "${(progress * 100).toInt()}%" else "СОХРАНЕНО",
+                                    style = MaterialTheme.typography.labelSmall, color = Color.White)
+                            }
+                            Text(session.title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold,
+                                color = Color.White, maxLines = 2)
+                            LinearProgressIndicator(progress = progress, modifier = Modifier.fillMaxWidth().height(5.dp),
+                                color = MaterialTheme.colorScheme.primary, trackColor = Color(0xFF465163))
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                val left = (session.durationMs - session.positionMs).coerceAtLeast(0L) / 60_000L
+                                Text(if (session.durationMs > 0L) "Осталось ~${left / 60} ч ${left % 60} мин"
+                                    else "Продолжить с сохранённой позиции",
+                                    Modifier.weight(1f), style = MaterialTheme.typography.labelSmall,
+                                    color = Color(0xFFD0D7E2), maxLines = 1)
+                                IconButton(onClick = { onRemove(session) }) {
+                                    Icon(Icons.Default.DeleteOutline, "Убрать из продолжения", tint = Color(0xFFD0D7E2))
+                                }
+                                IconButton(onClick = { onResume(session) }) {
+                                    Icon(Icons.Default.PlayArrow, "Продолжить просмотр", tint = MaterialTheme.colorScheme.primary)
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
     }
@@ -538,53 +637,38 @@ private fun MediaShelf(
 }
 
 @Composable
-private fun MediaCard(
-    item: CatalogItem,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier
-) {
+private fun MediaCard(item: CatalogItem, onClick: () -> Unit, modifier: Modifier = Modifier) {
     val context = LocalContext.current
-    val isTv = (context.resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_TYPE_MASK) == android.content.res.Configuration.UI_MODE_TYPE_TELEVISION
+    val isTv = (context.resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_TYPE_MASK) ==
+        android.content.res.Configuration.UI_MODE_TYPE_TELEVISION
     var focused by remember { mutableStateOf(false) }
+    val scale by animateFloatAsState(if (isTv && focused) 1.045f else 1f, label = "poster-focus")
     Column(
-        modifier = modifier
-            .width(if (isTv) 184.dp else 142.dp)
+        modifier = modifier.width(if (isTv) 194.dp else 148.dp)
+            .graphicsLayer { scaleX = scale; scaleY = scale }
             .onFocusChanged { focused = it.isFocused }
-            .border(
-                width = if (isTv && focused) 3.dp else 0.dp,
-                color = if (isTv && focused) MaterialTheme.colorScheme.primary else Color.Transparent,
-                shape = MaterialTheme.shapes.medium
-            )
-            .clickable(onClick = onClick),
-        verticalArrangement = Arrangement.spacedBy(6.dp)
+            .border(if (isTv && focused) 3.dp else 0.dp,
+                if (isTv && focused) MaterialTheme.colorScheme.primary else Color.Transparent,
+                MaterialTheme.shapes.large)
+            .clickable(onClick = onClick).padding(3.dp),
+        verticalArrangement = Arrangement.spacedBy(7.dp)
     ) {
         Box {
-            RemotePoster(
-                url = item.posterUrl,
+            RemotePoster(url = item.posterUrl,
                 modifier = Modifier.fillMaxWidth().aspectRatio(2f / 3f).clip(MaterialTheme.shapes.medium),
-                contentDescription = item.title
-            )
+                contentDescription = item.title)
             if (item.rating != null && item.rating > 0.0) {
-                Surface(
-                    modifier = Modifier.align(Alignment.TopEnd).padding(6.dp),
-                    color = MaterialTheme.colorScheme.surface.copy(alpha = 0.94f),
-                    shape = MaterialTheme.shapes.small
-                ) {
-                    Text(
-                        String.format("%.1f", item.rating),
-                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp),
-                        style = MaterialTheme.typography.labelSmall,
-                        fontWeight = FontWeight.Bold
-                    )
+                Surface(Modifier.align(Alignment.TopEnd).padding(7.dp), color = Color(0xE610141D),
+                    shape = MaterialTheme.shapes.small) {
+                    Text("★ %.1f".format(item.rating), Modifier.padding(horizontal = 7.dp, vertical = 4.dp),
+                        style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, color = Color.White)
                 }
             }
         }
-        Text(item.title, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold, maxLines = 2)
-        Text(
-            item.year,
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
+        Text(item.title, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold,
+            maxLines = 2, minLines = 2)
+        Text(listOfNotNull(item.year.takeIf { it != "Год неизвестен" }, item.kind.label).joinToString(" • "),
+            style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
     }
 }
 
@@ -706,6 +790,11 @@ private fun LibraryScreen(
 ) {
     val favorites by viewModel.favorites.collectAsState()
     val history by viewModel.history.collectAsState()
+    val context = LocalContext.current
+    val playbackStore = remember(context) { PlaybackSessionStore(context) }
+    val playbackSessions by playbackStore.sessions.collectAsState()
+    val isTv = (context.resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_TYPE_MASK) ==
+        android.content.res.Configuration.UI_MODE_TYPE_TELEVISION
 
     LazyColumn(
         modifier = modifier.fillMaxSize(),
@@ -725,6 +814,15 @@ private fun LibraryScreen(
                 IconButton(onClick = onDownloads) {
                     Icon(Icons.Default.Download, contentDescription = "Загрузки")
                 }
+            }
+        }
+        if (playbackSessions.isNotEmpty()) {
+            item(key = "library-continue-watching") {
+                ContinueWatchingShelf(
+                    sessions = playbackSessions, isTv = isTv,
+                    onResume = { session -> TorrentDownloadService.play(context, session.infoHash, session.fileIndex) },
+                    onRemove = { session -> playbackStore.remove(session.infoHash, session.fileIndex) }
+                )
             }
         }
         item {
@@ -1295,8 +1393,7 @@ private fun DownloadsScreen(onBack: () -> Unit) {
                                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                             OutlinedButton(
                                                 onClick = {
-                                                    runCatching { TorrentEngine.selectFile(context, item.id, file.index) }
-                                                        .onFailure { Toast.makeText(context, it.message, Toast.LENGTH_LONG).show() }
+                                                    TorrentDownloadService.selectFile(context, item.id, file.index)
                                                 },
                                                 modifier = Modifier.weight(1f)
                                             ) { Text(if (file.isSelected) "Выбран для просмотра" else "Выбрать файл") }

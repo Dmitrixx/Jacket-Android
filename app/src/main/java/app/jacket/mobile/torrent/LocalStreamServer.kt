@@ -9,6 +9,8 @@ import java.net.InetAddress
 import java.net.ServerSocket
 import java.net.Socket
 import java.nio.charset.StandardCharsets
+import java.security.MessageDigest
+import java.security.SecureRandom
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
@@ -26,6 +28,7 @@ class LocalStreamServer(
     @Volatile private var workers: ExecutorService? = null
     @Volatile var port: Int = 0
         private set
+    private val accessToken = newAccessToken()
 
     val isRunning: Boolean get() = serverSocket?.isClosed == false
 
@@ -64,7 +67,7 @@ class LocalStreamServer(
         require(infoHash.matches(Regex("(?i)([a-f0-9]{40}|[a-f0-9]{64})")))
         require(fileIndex >= 0)
         check(isRunning) { "Локальный видеосервер не запущен" }
-        return "http://127.0.0.1:$port/stream/${infoHash.lowercase()}/$fileIndex"
+        return "http://127.0.0.1:$port/stream/$accessToken/${infoHash.lowercase()}/$fileIndex"
     }
 
     private fun acceptLoop() {
@@ -107,6 +110,7 @@ class LocalStreamServer(
                 if (!validHost(headers["host"])) return sendError(client.getOutputStream(), 403, "Forbidden")
                 val route = LocalStreamRouteParser.parse(request[1])
                     ?: return sendError(client.getOutputStream(), 404, "Not Found")
+                if (!validAccessToken(route.token)) return sendError(client.getOutputStream(), 403, "Forbidden")
                 val fileIndex = route.fileIndex
                 val id = route.infoHash
                 val target = try {
@@ -161,6 +165,12 @@ class LocalStreamServer(
 
     private fun validHost(value: String?): Boolean = LocalStreamHostPolicy.accepts(value, port)
 
+    private fun validAccessToken(candidate: String): Boolean =
+        MessageDigest.isEqual(
+            accessToken.toByteArray(StandardCharsets.US_ASCII),
+            candidate.toByteArray(StandardCharsets.US_ASCII)
+        )
+
     private fun contentType(filename: String): String = when (filename.substringAfterLast('.', "").lowercase()) {
         "mp4", "m4v" -> "video/mp4"
         "mkv" -> "video/x-matroska"
@@ -214,6 +224,12 @@ class LocalStreamServer(
     }
 
     companion object {
+        private fun newAccessToken(): String {
+            val bytes = ByteArray(16)
+            SecureRandom().nextBytes(bytes)
+            return bytes.joinToString("") { "%02x".format(it) }
+        }
+
         private const val FIRST_PORT = 8090
         private const val LAST_PORT = 8099
         private const val MAX_CLIENTS = 4

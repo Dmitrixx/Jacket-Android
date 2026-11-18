@@ -133,24 +133,42 @@ object TorrentEngine {
         val current = manager ?: return
         val resumeFile = resumeFile(context, item.id)
         if (resumeFile.isFile && resumeFile.length() > 0L) {
-            val raw = libtorrent.read_resume_data_ex(Vectors.bytes2byte_vector(resumeFile.readBytes()), error_code())
-            raw.setSave_path(downloadDirectory(context).absolutePath)
-            if (TorrentQueueStore(context).isPaused(item.id)) {
-                raw.setFlags(raw.getFlags().or_(TorrentFlags.PAUSED))
+            try {
+                val payload = ResumeDataEnvelope.decode(resumeFile.readBytes())
+                val parseError = error_code()
+                val raw = libtorrent.read_resume_data_ex(Vectors.bytes2byte_vector(payload), parseError)
+                require(parseError.value() == 0) {
+                    "Не удалось прочитать fast-resume: ${parseError.message()}"
+                }
+                val restoredHash = raw.getInfo_hashes().get_best().to_hex().lowercase()
+                require(restoredHash == item.id.lowercase()) {
+                    "Fast-resume относится к другой раздаче"
+                }
+                raw.setSave_path(downloadDirectory(context).absolutePath)
+                if (TorrentQueueStore(context).isPaused(item.id)) {
+                    raw.setFlags(raw.getFlags().or_(TorrentFlags.PAUSED))
+                }
+                current.swig().async_add_torrent(raw)
+                errors.remove(item.id)
+                return
+            } catch (error: Exception) {
+                resumeFile.delete()
+                errors[item.id] = "Сохранённое состояние повреждено. Проверяем раздачу заново."
             }
-            current.swig().async_add_torrent(raw)
-            return
         }
 
-        if (!item.torrentPath.isNullOrBlank()) {
-            val torrentFile = File(item.torrentPath)
-            require(torrentFile.isFile) { "Файл .torrent для «${item.title}» не найден" }
-            val info = TorrentInfo(torrentFile)
-            val flags = torrent_flags_t()
-            current.download(info, downloadDirectory(context), null, null, null, flags)
-        } else {
-            val magnet = item.magnetUri ?: throw IllegalStateException("В очереди отсутствует magnet и .torrent")
-            current.download(magnet, downloadDirectory(context), torrent_flags_t())
+        val torrentInfo = item.torrentPath
+            ?.takeIf { it.isNotBlank() }
+            ?.let { path -> runCatching { File(path).takeIf(File::isFile)?.let(::TorrentInfo) }.getOrNull() }
+            ?.takeIf { it.isValid }
+        when {
+            torrentInfo != null -> current.download(
+                torrentInfo, downloadDirectory(context), null, null, null, torrent_flags_t()
+            )
+            !item.magnetUri.isNullOrBlank() -> current.download(
+                item.magnetUri, downloadDirectory(context), torrent_flags_t()
+            )
+            else -> throw IllegalStateException("Не удалось восстановить раздачу: нет корректного .torrent или magnet")
         }
         if (TorrentQueueStore(context).isPaused(item.id)) findHandle(item.id)?.let(::pauseHandle)
     }
@@ -228,7 +246,7 @@ object TorrentEngine {
     fun pause(context: Context, id: String) {
         TorrentQueueStore(context).setPaused(id, true)
         findHandle(id)?.let(::pauseHandle)
-        requestResumeData(id)
+        findHandle(id)?.let(::requestResumeData)
         refresh()
     }
 
@@ -522,44 +540,73 @@ object TorrentEngine {
         }.take(MAX_SUBTITLE_TRACKS)
     }
 
-    @Synchronized
-    fun stop() {
-        val current = manager ?: return
-        saveAllResumeData()
-        try { Thread.sleep(900) } catch (_: InterruptedException) { Thread.currentThread().interrupt() }
+    /** Wait for native save-resume alerts before destroying libtorrent's session. */
+    suspend fun stop(timeoutMs: Long = RESUME_SAVE_SHUTDOWN_TIMEOUT_MS): Boolean {
+        val current = manager ?: return true
+        val saved = saveAllResumeDataAndAwait(timeoutMs)
         current.removeListener(alertListener)
         current.stop()
         manager = null
         alertListener = null
         localStreamPort = null
         _snapshots.value = emptyList()
+        return saved
     }
 
-    @Synchronized
     fun saveAllResumeData() {
         val current = manager ?: return
         val vector = current.swig().get_torrents()
         for (index in 0 until vector.size) {
             val handle = TorrentHandle(vector.get(index))
-            if (handle.isValid) runCatching { handle.saveResumeData(TorrentHandle.SAVE_INFO_DICT) }
-                .onFailure { errors[handle.infoHash().toHex()] = it.message ?: "Не удалось сохранить состояние" }
+            if (handle.isValid) requestResumeData(handle)
         }
     }
 
-    private fun requestResumeData(id: String) {
-        findHandle(id)?.let { handle ->
-            runCatching { handle.saveResumeData(TorrentHandle.SAVE_INFO_DICT) }
-                .onFailure { errors[id] = it.message ?: "Не удалось сохранить продолжение" }
+    suspend fun saveAllResumeDataAndAwait(timeoutMs: Long = RESUME_SAVE_SHUTDOWN_TIMEOUT_MS): Boolean {
+        val current = manager ?: return true
+        val vector = current.swig().get_torrents()
+        val requests = ArrayList<Pair<String, CompletableDeferred<Boolean>>>(vector.size)
+        for (index in 0 until vector.size) {
+            val handle = TorrentHandle(vector.get(index))
+            if (handle.isValid) {
+                val id = handle.infoHash().toHex().lowercase()
+                requests += id to requestResumeData(handle)
+            }
         }
+        if (requests.isEmpty()) return true
+        val results = withTimeoutOrNull(timeoutMs.coerceAtLeast(1L)) {
+            requests.map { it.second }.awaitAll()
+        }
+        if (results == null) {
+            requests.forEach { (id, ticket) ->
+                if (!ticket.isCompleted && pendingResumeSaves.remove(id, ticket)) ticket.cancel()
+            }
+            return false
+        }
+        return results.all { it }
+    }
+
+    private fun requestResumeData(handle: TorrentHandle): CompletableDeferred<Boolean> {
+        val id = handle.infoHash().toHex().lowercase()
+        val ticket = CompletableDeferred<Boolean>()
+        val active = pendingResumeSaves.putIfAbsent(id, ticket)
+        if (active != null) return active
+        runCatching { handle.saveResumeData(TorrentHandle.SAVE_INFO_DICT) }
+            .onFailure { error ->
+                pendingResumeSaves.remove(id, ticket)
+                errors[id] = friendlyError(error.message ?: "Не удалось запросить сохранение состояния")
+                ticket.complete(false)
+            }
+        return ticket
     }
 
     private fun saveResumeAlert(alert: SaveResumeDataAlert) {
         runCatching {
-            val id = alert.handle().infoHash().toHex()
+            val id = alert.handle().infoHash().toHex().lowercase()
             val context = appContext ?: return
             val file = resumeFile(context, id)
             file.parentFile?.mkdirs()
-            val bytes = AddTorrentParams.writeResumeDataBuf(alert.params())
+            val bytes = ResumeDataEnvelope.encode(AddTorrentParams.writeResumeDataBuf(alert.params()))
             val atomic = AtomicFile(file)
             val output = atomic.startWrite()
             try {
@@ -570,10 +617,19 @@ object TorrentEngine {
                 throw error
             }
             errors.remove(id)
-        }.onFailure { recordErrorFromAlert(alert, it.message ?: "Не удалось записать resume data") }
+            pendingResumeSaves.remove(id)?.complete(true)
+        }.onFailure {
+            val id = runCatching { alert.handle().infoHash().toHex().lowercase() }.getOrNull()
+            id?.let { hash -> pendingResumeSaves.remove(hash)?.complete(false) }
+            recordErrorFromAlert(alert, it.message ?: "Не удалось записать resume data")
+        }
     }
 
     private fun recordAlertError(alert: Alert<*>) {
+        val id = runCatching {
+            (alert as? org.libtorrent4j.alerts.TorrentAlert<*>)?.handle()?.infoHash()?.toHex()?.lowercase()
+        }.getOrNull()
+        id?.let { pendingResumeSaves.remove(it)?.complete(false) }
         recordErrorFromAlert(alert, alert.message().take(500))
     }
 
@@ -607,4 +663,41 @@ object TorrentEngine {
     private const val KEY_UPLOAD_KBPS = "upload_kbps"
     private const val KEY_WIFI_ONLY = "wifi_only"
     private const val MAX_SUBTITLE_TRACKS = 12
+}
+
+/** Versioned CRC envelope. Legacy raw libtorrent fast-resume files remain supported. */
+private object ResumeDataEnvelope {
+    private val MAGIC = "JACKETR1".toByteArray(Charsets.US_ASCII)
+    private const val HEADER_BYTES = 16
+    private const val MAX_PAYLOAD_BYTES = 64 * 1024 * 1024
+
+    fun encode(payload: ByteArray): ByteArray {
+        require(payload.isNotEmpty() && payload.size <= MAX_PAYLOAD_BYTES) { "Недопустимый размер resume data" }
+        val checksum = java.util.zip.CRC32().apply { update(payload) }.value
+        return java.nio.ByteBuffer.allocate(HEADER_BYTES + payload.size)
+            .order(java.nio.ByteOrder.BIG_ENDIAN)
+            .put(MAGIC)
+            .putInt(payload.size)
+            .putInt(checksum.toInt())
+            .put(payload)
+            .array()
+    }
+
+    fun decode(stored: ByteArray): ByteArray {
+        require(stored.isNotEmpty() && stored.size <= MAX_PAYLOAD_BYTES + HEADER_BYTES) {
+            "Resume data отсутствует или слишком велик"
+        }
+        if (stored.size < MAGIC.size || !stored.copyOfRange(0, MAGIC.size).contentEquals(MAGIC)) return stored
+        require(stored.size >= HEADER_BYTES) { "Обрезан заголовок resume data" }
+        val buffer = java.nio.ByteBuffer.wrap(stored).order(java.nio.ByteOrder.BIG_ENDIAN)
+        buffer.position(MAGIC.size)
+        val size = buffer.int
+        val checksum = buffer.int.toLong() and 0xffffffffL
+        require(size in 1..MAX_PAYLOAD_BYTES && buffer.remaining() == size) { "Некорректный размер resume data" }
+        val payload = ByteArray(size)
+        buffer.get(payload)
+        val actual = java.util.zip.CRC32().apply { update(payload) }.value
+        require(actual == checksum) { "Контрольная сумма resume data не совпадает" }
+        return payload
+    }
 }

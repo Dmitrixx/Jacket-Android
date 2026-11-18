@@ -37,6 +37,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 class TorrentDownloadService : Service() {
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var pollingStarted = false
+    private val commandMutex = Mutex()
     private val playbackActive = AtomicBoolean(false)
     private var streamServer: LocalStreamServer? = null
 
@@ -49,6 +50,7 @@ class TorrentDownloadService : Service() {
         val action = intent?.action ?: ACTION_RESTORE
         startForegroundFor(playbackActive.get() || action == ACTION_PLAY)
         serviceScope.launch {
+            commandMutex.withLock {
             try {
                 withContext(Dispatchers.IO) {
                     TorrentEngine.start(applicationContext)
@@ -76,6 +78,11 @@ class TorrentDownloadService : Service() {
                         }
                         ACTION_PAUSE -> TorrentEngine.pause(applicationContext, intent?.getStringExtra(EXTRA_ID).orEmpty())
                         ACTION_RESUME -> TorrentEngine.resume(applicationContext, intent?.getStringExtra(EXTRA_ID).orEmpty())
+                        ACTION_SELECT_FILE -> TorrentEngine.selectFile(
+                            applicationContext,
+                            intent?.getStringExtra(EXTRA_ID).orEmpty(),
+                            intent?.getIntExtra(EXTRA_FILE_INDEX, -1) ?: -1
+                        )
                         ACTION_REMOVE -> TorrentEngine.remove(
                             applicationContext,
                             intent?.getStringExtra(EXTRA_ID).orEmpty(),
@@ -104,6 +111,7 @@ class TorrentDownloadService : Service() {
                 getSystemService(NotificationManager::class.java)
                     .notify(NOTIFICATION_ID, notification("Ошибка: ${error.message ?: "не удалось выполнить операцию"}", null))
             }
+            }
         }
         return START_STICKY
     }
@@ -112,7 +120,10 @@ class TorrentDownloadService : Service() {
         require(id.matches(Regex("(?i)([a-f0-9]{40}|[a-f0-9]{64})"))) { "Некорректный infohash" }
         require(fileIndex >= 0) { "Не выбран файл раздачи" }
         val target = withContext(Dispatchers.IO) {
-            TorrentEngine.selectFile(applicationContext, id, fileIndex)
+            if (TorrentQueueStore(applicationContext).isPaused(id)) {
+                TorrentEngine.resume(applicationContext, id)
+            }
+            selectFileWhenReady(id, fileIndex)
             val server = streamServer ?: LocalStreamServer(
                 metadata = TorrentEngine::target,
                 awaitRange = { hash, index, start, length ->
@@ -144,6 +155,7 @@ class TorrentDownloadService : Service() {
         }
         val key = PlaybackProgressStore.torrentKey(id, fileIndex)
         val savedPosition = PlaybackProgressStore(applicationContext).position(key)
+        PlaybackSessionStore(applicationContext).begin(id, fileIndex, target.second.name, savedPosition)
         playbackActive.set(true)
         startForegroundFor(mediaPlayback = true, status = "Смотрим: ${target.second.name}")
         TorrentPlaybackBus.publish(
@@ -154,6 +166,26 @@ class TorrentDownloadService : Service() {
                 initialPositionMs = savedPosition,
                 subtitles = target.third
             )
+        )
+    }
+
+    private suspend fun selectFileWhenReady(id: String, fileIndex: Int) {
+        var lastError: Exception? = null
+        repeat(60) {
+            try {
+                TorrentEngine.selectFile(applicationContext, id, fileIndex)
+                return
+            } catch (error: IllegalStateException) {
+                val message = error.message.orEmpty().lowercase()
+                val retryable = "подключается" in message || "метаданные" in message ||
+                    ("не найден" in message && TorrentQueueStore(applicationContext).get(id) != null)
+                if (!retryable) throw error
+                lastError = error
+                delay(500)
+            }
+        }
+        throw java.net.SocketTimeoutException(
+            "Не удалось получить метаданные раздачи за 30 секунд: ${lastError?.message.orEmpty()}"
         )
     }
 
@@ -174,13 +206,15 @@ class TorrentDownloadService : Service() {
         serviceScope.launch {
             var lastResumeSave = 0L
             while (isActive) {
-                withContext(Dispatchers.IO) {
-                    TorrentEngine.restorePending(applicationContext)
-                    TorrentEngine.refresh()
-                    val now = System.currentTimeMillis()
-                    if (now - lastResumeSave >= RESUME_SAVE_INTERVAL_MS) {
-                        TorrentEngine.saveAllResumeData()
-                        lastResumeSave = now
+                commandMutex.withLock {
+                    withContext(Dispatchers.IO) {
+                        TorrentEngine.restorePending(applicationContext)
+                        TorrentEngine.refresh()
+                        val now = System.currentTimeMillis()
+                        if (now - lastResumeSave >= RESUME_SAVE_INTERVAL_MS) {
+                            TorrentEngine.saveAllResumeData()
+                            lastResumeSave = now
+                        }
                     }
                 }
                 updateNotification()
@@ -326,9 +360,14 @@ class TorrentDownloadService : Service() {
             return
         }
         serviceScope.launch {
-            withContext(Dispatchers.IO) {
-                TorrentEngine.saveAllResumeData()
-                TorrentEngine.stop()
+            commandMutex.withLock {
+                val saved = withContext(Dispatchers.IO) { TorrentEngine.stop() }
+                if (!saved) {
+                    getSystemService(NotificationManager::class.java).notify(
+                        NOTIFICATION_ID,
+                        notification("Не все данные загрузок успели сохраниться. При следующем запуске будет выполнена проверка.", null)
+                    )
+                }
             }
             stopForeground(STOP_FOREGROUND_REMOVE)
             stopSelf(startId)
@@ -407,6 +446,7 @@ class TorrentDownloadService : Service() {
         private const val ACTION_ADD_TORRENT_URL = "app.jacket.action.ADD_TORRENT_URL"
         private const val ACTION_PAUSE = "app.jacket.action.PAUSE"
         private const val ACTION_RESUME = "app.jacket.action.RESUME"
+        private const val ACTION_SELECT_FILE = "app.jacket.action.SELECT_FILE"
         private const val ACTION_REMOVE = "app.jacket.action.REMOVE"
         private const val ACTION_PLAY = "app.jacket.action.PLAY"
         private const val ACTION_STOP_PLAYBACK = "app.jacket.action.STOP_PLAYBACK"
@@ -439,6 +479,10 @@ class TorrentDownloadService : Service() {
         }
         fun pause(context: Context, id: String) = send(context, ACTION_PAUSE) { putExtra(EXTRA_ID, id) }
         fun resume(context: Context, id: String) = send(context, ACTION_RESUME) { putExtra(EXTRA_ID, id) }
+        fun selectFile(context: Context, id: String, fileIndex: Int) = send(context, ACTION_SELECT_FILE) {
+            putExtra(EXTRA_ID, id)
+            putExtra(EXTRA_FILE_INDEX, fileIndex)
+        }
         fun remove(context: Context, id: String, deleteFiles: Boolean = false) = send(context, ACTION_REMOVE) {
             putExtra(EXTRA_ID, id)
             putExtra(EXTRA_DELETE_FILES, deleteFiles)
