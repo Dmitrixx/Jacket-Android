@@ -4,6 +4,9 @@ import android.content.Context
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.util.AtomicFile
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -74,6 +77,7 @@ object TorrentEngine {
     @Volatile private var alertListener: AlertListener? = null
 
     private val errors = ConcurrentHashMap<String, String>()
+    private val pendingResumeSaves = ConcurrentHashMap<String, CompletableDeferred<Boolean>>()
     @Volatile private var localStreamPort: Int? = null
     private val _snapshots = MutableStateFlow<List<TorrentSnapshot>>(emptyList())
     val snapshots: StateFlow<List<TorrentSnapshot>> = _snapshots.asStateFlow()
@@ -637,7 +641,25 @@ object TorrentEngine {
         val id = runCatching {
             (alert as? org.libtorrent4j.alerts.TorrentAlert<*>)?.handle()?.infoHash()?.toHex()
         }.getOrNull() ?: "unknown"
-        errors[id] = message.ifBlank { "Ошибка торрент-движка" }
+        errors[id] = friendlyError(message.ifBlank { "Ошибка торрент-движка" })
+    }
+
+    private fun friendlyError(message: String): String {
+        val clean = message.replace(Regex("[\\r\\n\\t]+"), " ").take(240)
+        val lower = clean.lowercase()
+        return when {
+            "no space" in lower || "disk" in lower || "write" in lower || "permission" in lower ->
+                "Ошибка диска или записи: $clean"
+            "timeout" in lower || "timed out" in lower ->
+                "Истекло время ожидания соединения: $clean"
+            "hash" in lower || "corrupt" in lower || "invalid resume" in lower ->
+                "Проверка целостности не пройдена: $clean"
+            "connection" in lower || "socket" in lower || "network" in lower ->
+                "Потеряно сетевое соединение: $clean"
+            "no peers" in lower || "no seed" in lower ->
+                "Пока нет доступных пиров или сидов: $clean"
+            else -> clean
+        }
     }
 
     private fun findHandle(id: String): TorrentHandle? {
@@ -659,6 +681,7 @@ object TorrentEngine {
         File(context.getExternalFilesDir(null) ?: context.filesDir, "Downloads").apply { mkdirs() }
 
     private const val RATE_PREFS = "jacket_torrent_settings"
+    private const val RESUME_SAVE_SHUTDOWN_TIMEOUT_MS = 12_000L
     private const val KEY_DOWNLOAD_KBPS = "download_kbps"
     private const val KEY_UPLOAD_KBPS = "upload_kbps"
     private const val KEY_WIFI_ONLY = "wifi_only"
