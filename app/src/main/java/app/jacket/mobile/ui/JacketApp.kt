@@ -4,6 +4,7 @@ import android.content.Intent
 import android.net.Uri
 import android.widget.Toast
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -55,6 +56,10 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.NavigationRail
+import androidx.compose.material3.NavigationRailItem
+import androidx.compose.material3.Switch
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
@@ -73,6 +78,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -81,6 +88,8 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import app.jacket.mobile.data.CatalogItem
+import app.jacket.mobile.data.IndexerConfig
+import app.jacket.mobile.data.IndexerProtocol
 import app.jacket.mobile.data.MediaKind
 import app.jacket.mobile.data.MediaSection
 import app.jacket.mobile.data.SourceResult
@@ -104,6 +113,7 @@ fun JacketApp(viewModel: MainViewModel) {
     var playerTitle by rememberSaveable { mutableStateOf("") }
 
     val details by viewModel.selectedDetails.collectAsState()
+    val isTv = (LocalContext.current.resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_TYPE_MASK) == android.content.res.Configuration.UI_MODE_TYPE_TELEVISION
     val loading by viewModel.isLoading.collectAsState()
 
     LaunchedEffect(Unit) { viewModel.loadHome() }
@@ -174,47 +184,122 @@ fun JacketApp(viewModel: MainViewModel) {
             )
         },
         bottomBar = {
-            MainNavigationBar(
-                selectedTab = selectedTab,
-                onSelect = { selectedTab = it }
-            )
+            if (!isTv) {
+                MainNavigationBar(
+                    selectedTab = selectedTab,
+                    onSelect = { selectedTab = it }
+                )
+            }
         }
     ) { padding ->
-        when (selectedTab) {
-            TAB_HOME -> HomeScreen(
+        if (isTv) {
+            Row(Modifier.fillMaxSize().padding(padding)) {
+                MainNavigationRail(
+                    selectedTab = selectedTab,
+                    onSelect = { selectedTab = it }
+                )
+                MainTabContent(
+                    selectedTab = selectedTab,
+                    viewModel = viewModel,
+                    modifier = Modifier.weight(1f).fillMaxSize(),
+                    onShowMovies = { selectedTab = TAB_MOVIES },
+                    onDownloads = { showDownloads = true }
+                )
+            }
+        } else {
+            MainTabContent(
+                selectedTab = selectedTab,
                 viewModel = viewModel,
                 modifier = Modifier.padding(padding),
-                onOpen = viewModel::openItem,
-                onShowMovies = { selectedTab = TAB_MOVIES }
-            )
-            TAB_MOVIES -> CatalogGridScreen(
-                title = "Фильмы",
-                items = viewModel.items.collectAsState().value,
-                loading = loading,
-                message = viewModel.message.collectAsState().value,
-                modifier = Modifier.padding(padding),
-                onOpen = viewModel::openItem
-            )
-            TAB_SERIES -> CatalogGridScreen(
-                title = "Сериалы",
-                items = viewModel.items.collectAsState().value,
-                loading = loading,
-                message = viewModel.message.collectAsState().value,
-                modifier = Modifier.padding(padding),
-                onOpen = viewModel::openItem
-            )
-            TAB_SEARCH -> SearchScreen(
-                viewModel = viewModel,
-                modifier = Modifier.padding(padding),
-                onOpen = viewModel::openItem
-            )
-            else -> LibraryScreen(
-                viewModel = viewModel,
-                modifier = Modifier.padding(padding),
-                onOpen = viewModel::openItem,
+                onShowMovies = { selectedTab = TAB_MOVIES },
                 onDownloads = { showDownloads = true }
             )
         }
+    }
+}
+
+@Composable
+private fun MainNavigationRail(
+    selectedTab: Int,
+    onSelect: (Int) -> Unit
+) {
+    NavigationRail {
+        NavigationRailItem(
+            selected = selectedTab == TAB_HOME,
+            onClick = { onSelect(TAB_HOME) },
+            icon = { Icon(Icons.Default.Home, contentDescription = null) },
+            label = { Text("Главная") }
+        )
+        NavigationRailItem(
+            selected = selectedTab == TAB_MOVIES,
+            onClick = { onSelect(TAB_MOVIES) },
+            icon = { Icon(Icons.Default.Movie, contentDescription = null) },
+            label = { Text("Фильмы") }
+        )
+        NavigationRailItem(
+            selected = selectedTab == TAB_SERIES,
+            onClick = { onSelect(TAB_SERIES) },
+            icon = { Icon(Icons.Default.Tv, contentDescription = null) },
+            label = { Text("Сериалы") }
+        )
+        NavigationRailItem(
+            selected = selectedTab == TAB_SEARCH,
+            onClick = { onSelect(TAB_SEARCH) },
+            icon = { Icon(Icons.Default.Search, contentDescription = null) },
+            label = { Text("Поиск") }
+        )
+        NavigationRailItem(
+            selected = selectedTab == TAB_LIBRARY,
+            onClick = { onSelect(TAB_LIBRARY) },
+            icon = { Icon(Icons.Default.Favorite, contentDescription = null) },
+            label = { Text("Моё") }
+        )
+    }
+}
+
+@Composable
+private fun MainTabContent(
+    selectedTab: Int,
+    viewModel: MainViewModel,
+    modifier: Modifier,
+    onShowMovies: () -> Unit,
+    onDownloads: () -> Unit
+) {
+    val loading by viewModel.isLoading.collectAsState()
+    when (selectedTab) {
+        TAB_HOME -> HomeScreen(
+            viewModel = viewModel,
+            modifier = modifier,
+            onOpen = viewModel::openItem,
+            onShowMovies = onShowMovies
+        )
+        TAB_MOVIES -> CatalogGridScreen(
+            title = "Фильмы",
+            items = viewModel.items.collectAsState().value,
+            loading = loading,
+            message = viewModel.message.collectAsState().value,
+            modifier = modifier,
+            onOpen = viewModel::openItem
+        )
+        TAB_SERIES -> CatalogGridScreen(
+            title = "Сериалы",
+            items = viewModel.items.collectAsState().value,
+            loading = loading,
+            message = viewModel.message.collectAsState().value,
+            modifier = modifier,
+            onOpen = viewModel::openItem
+        )
+        TAB_SEARCH -> SearchScreen(
+            viewModel = viewModel,
+            modifier = modifier,
+            onOpen = viewModel::openItem
+        )
+        else -> LibraryScreen(
+            viewModel = viewModel,
+            modifier = modifier,
+            onOpen = viewModel::openItem,
+            onDownloads = onDownloads
+        )
     }
 }
 
@@ -325,19 +410,32 @@ private fun HomeScreen(
 
 @Composable
 private fun HeroCard(item: CatalogItem, onClick: () -> Unit) {
+    val context = LocalContext.current
+    val isTv = (context.resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_TYPE_MASK) == android.content.res.Configuration.UI_MODE_TYPE_TELEVISION
+    var focused by remember { mutableStateOf(false) }
     Card(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp).clickable(onClick = onClick),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = if (isTv) 28.dp else 16.dp)
+            .onFocusChanged { focused = it.isFocused }
+            .border(
+                width = if (isTv && focused) 3.dp else 0.dp,
+                color = if (isTv && focused) MaterialTheme.colorScheme.primary else Color.Transparent,
+                shape = MaterialTheme.shapes.large
+            )
+            .clickable(onClick = onClick),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
     ) {
+        val heroHeight = if (isTv) 320.dp else 190.dp
         Box {
             RemotePoster(
                 url = item.backdropUrl ?: item.posterUrl,
-                modifier = Modifier.fillMaxWidth().height(190.dp)
+                modifier = Modifier.fillMaxWidth().height(heroHeight)
             )
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(190.dp)
+                    .height(heroHeight)
                     .background(Brush.verticalGradient(listOf(androidx.compose.ui.graphics.Color.Transparent, androidx.compose.ui.graphics.Color(0xFF07101C))))
             )
             Column(
@@ -385,8 +483,19 @@ private fun MediaCard(
     onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val context = LocalContext.current
+    val isTv = (context.resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_TYPE_MASK) == android.content.res.Configuration.UI_MODE_TYPE_TELEVISION
+    var focused by remember { mutableStateOf(false) }
     Column(
-        modifier = modifier.width(142.dp).clickable(onClick = onClick),
+        modifier = modifier
+            .width(if (isTv) 184.dp else 142.dp)
+            .onFocusChanged { focused = it.isFocused }
+            .border(
+                width = if (isTv && focused) 3.dp else 0.dp,
+                color = if (isTv && focused) MaterialTheme.colorScheme.primary else Color.Transparent,
+                shape = MaterialTheme.shapes.medium
+            )
+            .clickable(onClick = onClick),
         verticalArrangement = Arrangement.spacedBy(6.dp)
     ) {
         Box {
@@ -854,12 +963,61 @@ private fun SettingsScreen(
 ) {
     val currentToken by viewModel.tmdbToken.collectAsState()
     val indexers by viewModel.customIndexers.collectAsState()
+    val statuses by viewModel.indexerStatuses.collectAsState()
+    val sourceResults by viewModel.sourceResults.collectAsState()
+    val searchingSources by viewModel.isSearchingSources.collectAsState()
     val context = LocalContext.current
     var token by remember(currentToken) { mutableStateOf(currentToken) }
-    var sourceName by rememberSaveable { mutableStateOf("") }
-    var sourceUrl by rememberSaveable { mutableStateOf("") }
+
+    var editingId by remember { mutableStateOf("") }
+    var sourceName by remember { mutableStateOf("") }
+    var sourceUrl by remember { mutableStateOf("") }
+    var protocol by remember { mutableStateOf(IndexerProtocol.TORZNAB) }
+    var apiKey by remember { mutableStateOf("") }
+    var username by remember { mutableStateOf("") }
+    var password by remember { mutableStateOf("") }
+    var cookie by remember { mutableStateOf("") }
+    var categories by remember { mutableStateOf("") }
+    var tags by remember { mutableStateOf("") }
+    var freeleechOnly by remember { mutableStateOf(false) }
+    var sortBy by remember { mutableStateOf("created") }
+    var sortOrder by remember { mutableStateOf("desc") }
+    var manualQuery by remember { mutableStateOf("") }
+
     val message by viewModel.message.collectAsState()
     val isError by viewModel.isError.collectAsState()
+
+    fun clearIndexerEditor() {
+        editingId = ""
+        sourceName = ""
+        sourceUrl = ""
+        protocol = IndexerProtocol.TORZNAB
+        apiKey = ""
+        username = ""
+        password = ""
+        cookie = ""
+        categories = ""
+        tags = ""
+        freeleechOnly = false
+        sortBy = "created"
+        sortOrder = "desc"
+    }
+
+    fun editIndexer(config: IndexerConfig) {
+        editingId = config.id
+        sourceName = config.name
+        sourceUrl = config.searchUrlTemplate
+        protocol = config.protocol
+        apiKey = config.apiKey
+        username = config.username
+        password = config.password
+        cookie = config.cookie
+        categories = config.categories
+        tags = config.tags
+        freeleechOnly = config.freeleechOnly
+        sortBy = config.sortBy
+        sortOrder = config.sortOrder
+    }
 
     Scaffold(
         topBar = {
@@ -881,12 +1039,10 @@ private fun SettingsScreen(
             item {
                 Text("Каталог фильмов", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
                 Text(
-                    "Без ключей работает открытый каталог Internet Archive. Дополнительно можно подключить TMDB, чтобы получить популярные фильмы, сериалы, рейтинги, постеры и описания.",
+                    "Без ключей работает открытый каталог Internet Archive. Дополнительно можно подключить TMDB для популярных фильмов, сериалов, рейтингов и постеров.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
-            }
-            item {
                 OutlinedTextField(
                     value = token,
                     onValueChange = { token = it },
@@ -896,92 +1052,266 @@ private fun SettingsScreen(
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
                     minLines = 2
                 )
-                Button(
-                    onClick = { viewModel.saveTmdbToken(token) },
-                    modifier = Modifier.fillMaxWidth()
-                ) { Text("Сохранить токен каталога") }
+                Button(onClick = { viewModel.saveTmdbToken(token) }, modifier = Modifier.fillMaxWidth()) {
+                    Text("Сохранить токен каталога")
+                }
                 Text(
-                    "Токен хранится в Android Keystore. Получить его можно в настройках API своего аккаунта themoviedb.org. TMDB предоставляет метаданные и изображения, но не видеопотоки. Это приложение не связано с TMDB.",
+                    "Токен TMDB хранится в Android Keystore. TMDB предоставляет метаданные и изображения, но не видеопотоки.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
+
             item {
-                Text("Встроенные индексаторы", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                Text("Встроенные источники", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
                 Card(modifier = Modifier.fillMaxWidth()) {
                     Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         Text("Internet Archive", fontWeight = FontWeight.SemiBold)
                         Text(
-                            "Прямой поиск открытых медиа и файлов. Сервер Jackett не требуется. Для встроенного воспроизведения проверяется наличие записи о лицензии.",
+                            "Каталог открытых медиа доступен напрямую, отдельный сервер Jackett не нужен.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                 }
             }
+
             item {
-                Text("Добавить прямой RSS/Atom-индексатор", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
                 Text(
-                    "Укажите HTTPS-ссылку на RSS/Atom-поиск конкретного источника. В URL обязательно должен быть маркер {query}, который приложение заменит поисковой фразой. Это прямое подключение к ленте, не к Jackett API.",
+                    if (editingId.isBlank()) "Добавить агрегатор / индексатор" else "Изменить индексатор",
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold
+                )
+                Text(
+                    "Поддерживаются прямые RSS/Atom и совместимые Torznab/Newznab API. URL должен быть HTTPS и содержать {query}; API-ключ можно указать ниже или в URL как {apikey}.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(
+                        onClick = { protocol = IndexerProtocol.TORZNAB },
+                        modifier = Modifier.weight(1f)
+                    ) { Text(if (protocol == IndexerProtocol.TORZNAB) "✓ Torznab" else "Torznab") }
+                    OutlinedButton(
+                        onClick = { protocol = IndexerProtocol.RSS },
+                        modifier = Modifier.weight(1f)
+                    ) { Text(if (protocol == IndexerProtocol.RSS) "✓ RSS / Atom" else "RSS / Atom") }
+                }
                 OutlinedTextField(
                     value = sourceName,
                     onValueChange = { sourceName = it },
                     modifier = Modifier.fillMaxWidth(),
-                    label = { Text("Название источника") },
+                    label = { Text("Название индексатора") },
                     singleLine = true
                 )
                 OutlinedTextField(
                     value = sourceUrl,
                     onValueChange = { sourceUrl = it },
                     modifier = Modifier.fillMaxWidth(),
-                    label = { Text("HTTPS URL с {query}") },
-                    placeholder = { Text("https://example.org/rss?q={query}") },
+                    label = { Text("Адрес сайта / URL поиска") },
+                    placeholder = { Text("https://tracker.example/api?t=search&q={query}") },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
                     minLines = 2
                 )
+                OutlinedTextField(
+                    value = apiKey,
+                    onValueChange = { apiKey = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("API key") },
+                    visualTransformation = PasswordVisualTransformation(),
+                    singleLine = true
+                )
+                OutlinedTextField(
+                    value = username,
+                    onValueChange = { username = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("Логин") },
+                    singleLine = true
+                )
+                OutlinedTextField(
+                    value = password,
+                    onValueChange = { password = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("Пароль") },
+                    visualTransformation = PasswordVisualTransformation(),
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password)
+                )
+                OutlinedTextField(
+                    value = cookie,
+                    onValueChange = { cookie = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("Cookie / session (при необходимости)") },
+                    visualTransformation = PasswordVisualTransformation(),
+                    minLines = 2
+                )
+                Text(
+                    "Для частных индексаторов можно использовать логин/пароль, API key или cookie активной сессии. Cookie можно вставить вручную после входа на сайт.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                OutlinedTextField(
+                    value = categories,
+                    onValueChange = { categories = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("Категории Torznab (ID через запятую)") },
+                    singleLine = true
+                )
+                OutlinedTextField(
+                    value = tags,
+                    onValueChange = { tags = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("Теги (через запятую)") },
+                    singleLine = true
+                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Checkbox(checked = freeleechOnly, onCheckedChange = { freeleechOnly = it })
+                    Text("Только Freeleech")
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        value = sortBy,
+                        onValueChange = { sortBy = it },
+                        modifier = Modifier.weight(1f),
+                        label = { Text("Сортировка") },
+                        placeholder = { Text("created") },
+                        singleLine = true
+                    )
+                    OutlinedTextField(
+                        value = sortOrder,
+                        onValueChange = { sortOrder = it },
+                        modifier = Modifier.weight(1f),
+                        label = { Text("Порядок") },
+                        placeholder = { Text("desc") },
+                        singleLine = true
+                    )
+                }
                 Button(
                     onClick = {
-                        viewModel.addIndexer(sourceName, sourceUrl)
-                        sourceName = ""
-                        sourceUrl = ""
+                        viewModel.saveIndexer(
+                            IndexerConfig(
+                                id = editingId,
+                                name = sourceName,
+                                searchUrlTemplate = sourceUrl,
+                                protocol = protocol,
+                                apiKey = apiKey,
+                                username = username,
+                                password = password,
+                                cookie = cookie,
+                                categories = categories,
+                                tags = tags,
+                                freeleechOnly = freeleechOnly,
+                                sortBy = sortBy,
+                                sortOrder = sortOrder
+                            )
+                        )
+                        clearIndexerEditor()
                     },
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Icon(Icons.Default.Add, contentDescription = null)
                     Spacer(Modifier.width(8.dp))
-                    Text("Добавить источник")
+                    Text(if (editingId.isBlank()) "Добавить индексатор" else "Сохранить изменения")
+                }
+                if (editingId.isNotBlank()) {
+                    OutlinedButton(onClick = { clearIndexerEditor() }, modifier = Modifier.fillMaxWidth()) {
+                        Text("Отменить редактирование")
+                    }
                 }
             }
-            if (indexers.isNotEmpty()) {
-                item {
-                    Text("Мои индексаторы (${indexers.size})", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+
+            item {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text("Настроенные индексаторы (${indexers.size})", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                    OutlinedButton(onClick = { viewModel.testAllIndexers() }) { Text("Тестировать все") }
                 }
-                items(indexers, key = { it.id }) { indexer ->
-                    Card(modifier = Modifier.fillMaxWidth()) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth().padding(12.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
+                Text(
+                    "Включайте/отключайте источники, проверяйте соединение и редактируйте регистрационные данные.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            items(indexers, key = { it.id }) { indexer ->
+                Card(modifier = Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
                             Column(Modifier.weight(1f)) {
                                 Text(indexer.name, fontWeight = FontWeight.SemiBold)
-                                Text(indexer.searchUrlTemplate, style = MaterialTheme.typography.bodySmall, maxLines = 2)
+                                Text(indexer.protocol.label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
                             }
-                            IconButton(onClick = { viewModel.removeIndexer(indexer.id) }) {
-                                Icon(Icons.Default.DeleteOutline, contentDescription = "Удалить источник")
+                            Switch(
+                                checked = indexer.enabled,
+                                onCheckedChange = { viewModel.setIndexerEnabled(indexer.id, it) }
+                            )
+                        }
+                        Text(indexer.searchUrlTemplate, style = MaterialTheme.typography.bodySmall, maxLines = 2)
+                        Text(
+                            statuses[indexer.id] ?: if (indexer.apiKey.isNotBlank() || indexer.username.isNotBlank() || indexer.cookie.isNotBlank()) "Авторизация настроена" else "Без дополнительных данных авторизации",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = if (statuses[indexer.id]?.startsWith("Ошибка") == true) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            OutlinedButton(onClick = { viewModel.testIndexer(indexer.id) }) { Text("Тест") }
+                            OutlinedButton(onClick = { editIndexer(indexer) }) { Text("Изменить") }
+                            OutlinedButton(onClick = { viewModel.removeIndexer(indexer.id) }) {
+                                Icon(Icons.Default.DeleteOutline, contentDescription = "Удалить")
+                                Text("Удалить")
                             }
                         }
                     }
                 }
             }
-            if (message != null) {
-                item { MessageCard(message.orEmpty(), isError) }
+
+            item {
+                Text("Ручной поиск по индексаторам", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                OutlinedTextField(
+                    value = manualQuery,
+                    onValueChange = { manualQuery = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("Название фильма, сериала или релиза") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                    keyboardActions = KeyboardActions(onSearch = { viewModel.searchIndexers(manualQuery) })
+                )
+                Button(
+                    onClick = { viewModel.searchIndexers(manualQuery) },
+                    enabled = !searchingSources && manualQuery.isNotBlank(),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    if (searchingSources) {
+                        CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                        Spacer(Modifier.width(8.dp))
+                    } else {
+                        Icon(Icons.Default.Search, contentDescription = null)
+                        Spacer(Modifier.width(8.dp))
+                    }
+                    Text(if (searchingSources) "Поиск…" else "Искать во всех включённых")
+                }
             }
+
+            if (message != null) item { MessageCard(message.orEmpty(), isError) }
+            if (sourceResults.isNotEmpty()) {
+                item {
+                    Text("Найденные релизы (${sourceResults.size})", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                }
+                items(sourceResults, key = { it.id }) { source ->
+                    SourceCard(
+                        source = source,
+                        onPlay = { },
+                        onMagnet = { magnet -> TorrentDownloadService.add(context, magnet, source.title) },
+                        onTorrent = { url -> openExternal(context, url) },
+                        onPage = { url -> openExternal(context, url) }
+                    )
+                }
+            }
+
             item {
                 Text(
-                    "Подключайте только источники, которыми вы вправе пользоваться, и соблюдайте их правила и лицензии. Jacket не включает списки пиратских трекеров и не обходит платный доступ.",
+                    "Секреты (API key, пароль и cookie) шифруются через Android Keystore. Используйте только источники, к которым у вас есть законный доступ. Некоторые сайты требуют собственный браузерный вход, CAPTCHA или интерактивную 2FA — такие схемы пока не автоматизируются; для них можно добавить вручную выданный cookie.",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )

@@ -13,7 +13,8 @@ Jacket is evolving from a Jackett companion into a self-contained Android media 
 - **Search** — search the built-in catalog and metadata provider.
 - **My library** — favorites and recently opened cards.
 - **Downloads** — integrated libtorrent4j queue, progress, speed, peers, pause and resume.
-- **Settings and sources** — optional TMDB metadata token and direct RSS/Atom indexers.
+- **Settings and sources** — optional TMDB token, configurable RSS/Atom and Torznab/Newznab aggregators, credentials, category filters, freeleech filter, sort order, connection tests and manual search.
+- **Android TV** — Leanback launcher entry, TV home-screen banner, D-pad navigation rail and larger focused poster cards; the same APK remains usable on phones and tablets.
 
 ## Built-in providers — no Jackett server
 
@@ -29,9 +30,19 @@ To display current popular films, series, ratings, posters and expanded descript
 
 This product uses the TMDB API but is not endorsed or certified by TMDB.
 
-### Direct RSS / Atom indexers
+### User-configured indexers
 
-Add your own HTTPS RSS/Atom search feeds in Settings. Each source URL must include `{query}`, which Jacket replaces with the URL-encoded search text.
+Add your own HTTPS RSS/Atom feeds or Torznab/Newznab-compatible endpoints in Settings. Each search URL must include `{query}`, which Jacket replaces with the URL-encoded search text. Torznab requests can include API-key authentication, categories, tags, freeleech filtering, sort field and order.
+
+Private indexers can use HTTP Basic username/password, an API key, or a manually supplied session cookie. Credentials are encrypted at rest with Android Keystore (AES/GCM). Indexers can be enabled/disabled, edited, individually tested or tested together; the settings page also provides manual cross-indexer search.
+
+Example Torznab URL:
+
+```text
+https://your-authorized-indexer.example/api?t=search&q={query}
+```
+
+The protocol adapter handles standard Torznab/Newznab XML attributes and RSS/Atom entries. A site requiring a proprietary login flow, CAPTCHA, anti-bot challenge or interactive 2FA is not automatically supported; a user-provided session cookie may work where the source permits it.
 
 Example format:
 
@@ -54,6 +65,7 @@ The built-in adapter layer is intentionally extensible: new provider adapters ca
 ## Requirements
 
 - Android 9 (API 28) or newer.
+- Android TV / Google TV is supported by the same APK; use the remote's D-pad, OK and Back buttons.
 - Build: JDK 17, Android SDK Platform 36, Build Tools 36.0.0, Gradle 9.5.0.
 - A TMDB API Read Access Token is optional; Internet Archive browsing works without it.
 - Internet access is required for online catalogs, RSS feeds, poster images and remote media streams.
@@ -72,7 +84,8 @@ GitHub Actions runs unit tests and builds a debug APK on pushes and pull request
 
 ## Security and content rights
 
-- TMDB access token is encrypted with AES/GCM using a key held by Android Keystore.
+- TMDB token, indexer API keys, usernames/passwords and session cookies are encrypted with AES/GCM using a key held by Android Keystore.
+- TV builds declare Leanback support as optional and touchscreen as not required, with a dedicated TV launcher banner.
 - Catalog and RSS requests use bounded response sizes and timeouts.
 - Custom indexers require HTTPS and cannot embed URL user-info credentials.
 - The app does not ship lists of piracy trackers, bypass paywalls, or claim that an arbitrary source is licensed.

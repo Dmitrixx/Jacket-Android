@@ -27,12 +27,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val indexers = IndexerRegistry(catalog)
     private var catalogJob: Job? = null
     private var sourcesJob: Job? = null
+    private var indexerTestJob: Job? = null
 
     private val _tmdbToken = MutableStateFlow(settings.tmdbToken())
     val tmdbToken: StateFlow<String> = _tmdbToken.asStateFlow()
 
     private val _customIndexers = MutableStateFlow(settings.indexers())
     val customIndexers: StateFlow<List<IndexerConfig>> = _customIndexers.asStateFlow()
+
+    private val _indexerStatuses = MutableStateFlow<Map<String, String>>(emptyMap())
+    val indexerStatuses: StateFlow<Map<String, String>> = _indexerStatuses.asStateFlow()
 
     private val _homeSections = MutableStateFlow<List<MediaSection>>(emptyList())
     val homeSections: StateFlow<List<MediaSection>> = _homeSections.asStateFlow()
@@ -117,7 +121,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Exception) {
-                _selectedDetails.value = app.jacket.mobile.data.MediaDetails(
+                _selectedDetails.value = MediaDetails(
                     item = item,
                     description = item.overview,
                     pageUrl = item.catalogUrl
@@ -136,6 +140,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun findSources(item: CatalogItem) {
+        runSourceSearch(item.title, includeArchive = true)
+    }
+
+    /** Manual search from the indexer dashboard; queries all enabled user indexers in parallel order. */
+    fun searchIndexers(query: String) {
+        if (query.isBlank()) {
+            showError("Введите название для ручного поиска")
+            return
+        }
+        runSourceSearch(query.trim(), includeArchive = false)
+    }
+
+    private fun runSourceSearch(query: String, includeArchive: Boolean) {
         sourcesJob?.cancel()
         sourcesJob = viewModelScope.launch {
             _isSearchingSources.value = true
@@ -143,13 +160,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             clearMessage()
             try {
                 val found = withContext(Dispatchers.IO) {
-                    indexers.search(item.title, _customIndexers.value)
+                    indexers.search(query, _customIndexers.value, includeArchive)
                 }
                 _sourceResults.value = found
                 _message.value = if (found.isEmpty()) {
-                    "Источники не найдены. Можно добавить собственные RSS/Atom-индексаторы в настройках."
+                    "Ничего не найдено. Проверьте URL, авторизацию и включённые индексаторы."
                 } else {
-                    "Найдено источников: ${found.size}"
+                    "Найдено результатов: ${found.size}"
                 }
             } catch (cancelled: CancellationException) {
                 throw cancelled
@@ -190,22 +207,74 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         loadHome(force = true)
     }
 
-    fun addIndexer(name: String, urlTemplate: String) {
+    fun saveIndexer(config: IndexerConfig) {
         try {
-            settings.addIndexer(name, urlTemplate)
+            settings.saveIndexer(config)
             _customIndexers.value = settings.indexers()
-            _message.value = "RSS/Atom-источник добавлен"
+            _indexerStatuses.value = _indexerStatuses.value - config.id
+            _message.value = "Индексатор «${config.name}» сохранён"
             _isError.value = false
         } catch (error: Exception) {
-            showError(error.message ?: "Не удалось добавить источник")
+            showError(error.message ?: "Не удалось сохранить индексатор")
         }
+    }
+
+    /** Kept for compatibility with the simple RSS add flow. */
+    fun addIndexer(name: String, urlTemplate: String) {
+        saveIndexer(IndexerConfig(id = "", name = name, searchUrlTemplate = urlTemplate))
+    }
+
+    fun setIndexerEnabled(id: String, enabled: Boolean) {
+        settings.setIndexerEnabled(id, enabled)
+        _customIndexers.value = settings.indexers()
     }
 
     fun removeIndexer(id: String) {
         settings.removeIndexer(id)
         _customIndexers.value = settings.indexers()
-        _message.value = "Источник удалён"
+        _indexerStatuses.value = _indexerStatuses.value - id
+        _message.value = "Индексатор удалён"
         _isError.value = false
+    }
+
+    fun testIndexer(id: String) {
+        val config = _customIndexers.value.firstOrNull { it.id == id } ?: return
+        indexerTestJob?.cancel()
+        indexerTestJob = viewModelScope.launch {
+            _indexerStatuses.value = _indexerStatuses.value + (id to "Проверка…")
+            val result = runCatching { withContext(Dispatchers.IO) { indexers.test(config) } }
+            _indexerStatuses.value = _indexerStatuses.value + (
+                id to result.fold(
+                    onSuccess = { "Доступен • результатов теста: $it" },
+                    onFailure = { "Ошибка: ${it.message ?: "не удалось подключиться"}" }
+                )
+            )
+        }
+    }
+
+    fun testAllIndexers() {
+        indexerTestJob?.cancel()
+        indexerTestJob = viewModelScope.launch {
+            val configs = _customIndexers.value
+            if (configs.isEmpty()) {
+                _message.value = "Сначала добавьте хотя бы один индексатор"
+                _isError.value = false
+                return@launch
+            }
+            configs.forEach { config ->
+                _indexerStatuses.value = _indexerStatuses.value + (config.id to "Проверка…")
+                val result = runCatching { withContext(Dispatchers.IO) { indexers.test(config) } }
+                _indexerStatuses.value = _indexerStatuses.value + (
+                    config.id to result.fold(
+                        onSuccess = { "Доступен • результатов теста: $it" },
+                        onFailure = { "Ошибка: ${it.message ?: "не удалось подключиться"}" }
+                    )
+                )
+            }
+            val ok = configs.count { _indexerStatuses.value[it.id]?.startsWith("Доступен") == true }
+            _message.value = "Проверка завершена: $ok из ${configs.size} доступны"
+            _isError.value = ok == 0
+        }
     }
 
     fun refreshFavoritesAndHistory() {

@@ -1,12 +1,16 @@
 package app.jacket.mobile.data
 
-import org.json.JSONArray
 import org.json.JSONObject
 
 enum class MediaKind(val label: String) {
     MOVIE("Фильм"),
     SERIES("Сериал"),
     VIDEO("Видео")
+}
+
+enum class IndexerProtocol(val label: String) {
+    RSS("RSS / Atom"),
+    TORZNAB("Torznab / Newznab")
 }
 
 data class CatalogItem(
@@ -45,11 +49,22 @@ data class MediaDetails(
     val fileSizeBytes: Long? = null
 )
 
+/** User-owned indexer. Secrets are encrypted before writing them to preferences. */
 data class IndexerConfig(
     val id: String,
     val name: String,
-    /** HTTPS RSS/Atom search URL. Replace {query} with the URL-encoded search phrase. */
-    val searchUrlTemplate: String
+    val searchUrlTemplate: String,
+    val protocol: IndexerProtocol = IndexerProtocol.RSS,
+    val apiKey: String = "",
+    val username: String = "",
+    val password: String = "",
+    val cookie: String = "",
+    val categories: String = "",
+    val tags: String = "",
+    val freeleechOnly: Boolean = false,
+    val sortBy: String = "created",
+    val sortOrder: String = "desc",
+    val enabled: Boolean = true
 )
 
 data class SourceResult(

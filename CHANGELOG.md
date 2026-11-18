@@ -7,7 +7,9 @@
 - Added optional TMDB movie/series catalog, ratings, artwork and descriptions.
 - Added poster cards, home shelves, Movies / Series / Search / Library navigation.
 - Added item detail pages, favorites and recently opened history.
-- Added direct HTTPS RSS/Atom indexer registry; custom feeds are queried on-device.
+- Added direct HTTPS RSS/Atom plus Torznab/Newznab indexer registry with user-configurable API key, Basic credentials, cookie, categories, tags, Freeleech filter, sorting, manual search and test-all.
+- Encrypted indexer API keys, passwords and session cookies at rest using Android Keystore AES/GCM.
+- Added Android TV/Google TV launcher support, TV banner, remote-control navigation rail and focus indicators on poster cards.
 - Added a Media3 / ExoPlayer playback screen for supported licensed HTTPS streams.
 - Added source discovery from the detail page, while retaining the integrated libtorrent magnet queue.
 - Encrypted the optional TMDB Read Access Token with Android Keystore AES/GCM.
