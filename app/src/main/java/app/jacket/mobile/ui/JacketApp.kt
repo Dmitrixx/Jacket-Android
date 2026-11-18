@@ -30,6 +30,7 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items as gridItems
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
@@ -72,6 +73,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -95,6 +97,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import app.jacket.mobile.data.CatalogItem
 import app.jacket.mobile.data.IndexerConfig
 import app.jacket.mobile.data.IndexerProtocol
@@ -228,23 +231,49 @@ fun JacketApp(viewModel: MainViewModel) {
         topBar = {
             TopAppBar(
                 title = {
-                    Column {
-                        Text("JACKET", fontWeight = FontWeight.Black)
-                        Text(
-                            "КИНО • КАТАЛОГ • ИСТОЧНИКИ",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(11.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier.size(42.dp)
+                                .clip(RoundedCornerShape(14.dp))
+                                .background(
+                                    Brush.linearGradient(
+                                        listOf(
+                                            MaterialTheme.colorScheme.primary,
+                                            Color(0xFFE99A3C),
+                                            Color(0xFF9D6AF0)
+                                        )
+                                    )
+                                ),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text("J", style = MaterialTheme.typography.headlineMedium,
+                                fontWeight = FontWeight.Black, color = Color(0xFF17120D))
+                        }
+                        Column(verticalArrangement = Arrangement.spacedBy(1.dp)) {
+                            Text("JACKET", style = MaterialTheme.typography.titleLarge,
+                                fontWeight = FontWeight.Black, letterSpacing = 1.4.sp)
+                            Text("КИНО  •  СЕРИАЛЫ  •  ТОРРЕНТЫ",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant, letterSpacing = 0.6.sp)
+                        }
                     }
                 },
                 actions = {
                     IconButton(onClick = { showDownloads = true }) {
-                        Icon(Icons.Default.Download, contentDescription = "Загрузки")
+                        Icon(Icons.Default.Download, contentDescription = "Загрузки", tint = MaterialTheme.colorScheme.primary)
                     }
                     IconButton(onClick = { showSettings = true }) {
-                        Icon(Icons.Default.Settings, contentDescription = "Настройки")
+                        Icon(Icons.Default.Settings, contentDescription = "Настройки", tint = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
-                }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.background,
+                    titleContentColor = MaterialTheme.colorScheme.onBackground,
+                    actionIconContentColor = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             )
         },
         bottomBar = {
@@ -287,37 +316,39 @@ private fun MainNavigationRail(
     selectedTab: Int,
     onSelect: (Int) -> Unit
 ) {
-    NavigationRail {
-        NavigationRailItem(
-            selected = selectedTab == TAB_HOME,
-            onClick = { onSelect(TAB_HOME) },
-            icon = { Icon(Icons.Default.Home, contentDescription = null) },
-            label = { Text("Главная") }
-        )
-        NavigationRailItem(
-            selected = selectedTab == TAB_MOVIES,
-            onClick = { onSelect(TAB_MOVIES) },
-            icon = { Icon(Icons.Default.Movie, contentDescription = null) },
-            label = { Text("Фильмы") }
-        )
-        NavigationRailItem(
-            selected = selectedTab == TAB_SERIES,
-            onClick = { onSelect(TAB_SERIES) },
-            icon = { Icon(Icons.Default.Tv, contentDescription = null) },
-            label = { Text("Сериалы") }
-        )
-        NavigationRailItem(
-            selected = selectedTab == TAB_SEARCH,
-            onClick = { onSelect(TAB_SEARCH) },
-            icon = { Icon(Icons.Default.Search, contentDescription = null) },
-            label = { Text("Поиск") }
-        )
-        NavigationRailItem(
-            selected = selectedTab == TAB_LIBRARY,
-            onClick = { onSelect(TAB_LIBRARY) },
-            icon = { Icon(Icons.Default.Favorite, contentDescription = null) },
-            label = { Text("Моё") }
-        )
+    Surface(color = MaterialTheme.colorScheme.surface, tonalElevation = 2.dp) {
+        NavigationRail(containerColor = Color.Transparent, tonalElevation = 0.dp) {
+            NavigationRailItem(
+                selected = selectedTab == TAB_HOME,
+                onClick = { onSelect(TAB_HOME) },
+                icon = { Icon(Icons.Default.Home, contentDescription = null) },
+                label = { Text("Главная") }
+            )
+            NavigationRailItem(
+                selected = selectedTab == TAB_MOVIES,
+                onClick = { onSelect(TAB_MOVIES) },
+                icon = { Icon(Icons.Default.Movie, contentDescription = null) },
+                label = { Text("Фильмы") }
+            )
+            NavigationRailItem(
+                selected = selectedTab == TAB_SERIES,
+                onClick = { onSelect(TAB_SERIES) },
+                icon = { Icon(Icons.Default.Tv, contentDescription = null) },
+                label = { Text("Сериалы") }
+            )
+            NavigationRailItem(
+                selected = selectedTab == TAB_SEARCH,
+                onClick = { onSelect(TAB_SEARCH) },
+                icon = { Icon(Icons.Default.Search, contentDescription = null) },
+                label = { Text("Поиск") }
+            )
+            NavigationRailItem(
+                selected = selectedTab == TAB_LIBRARY,
+                onClick = { onSelect(TAB_LIBRARY) },
+                icon = { Icon(Icons.Default.Favorite, contentDescription = null) },
+                label = { Text("Моё") }
+            )
+        }
     }
 }
 
@@ -372,7 +403,14 @@ private fun MainNavigationBar(
     selectedTab: Int,
     onSelect: (Int) -> Unit
 ) {
-    NavigationBar {
+    Surface(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 7.dp),
+        shape = RoundedCornerShape(24.dp),
+        color = MaterialTheme.colorScheme.surface,
+        tonalElevation = 5.dp,
+        shadowElevation = 8.dp
+    ) {
+        NavigationBar(containerColor = Color.Transparent, tonalElevation = 0.dp) {
         NavigationBarItem(
             selected = selectedTab == TAB_HOME,
             onClick = { onSelect(TAB_HOME) },
@@ -403,6 +441,7 @@ private fun MainNavigationBar(
             icon = { Icon(Icons.Default.Favorite, contentDescription = null) },
             label = { Text("Моё") }
         )
+        }
     }
 }
 
@@ -914,24 +953,56 @@ private fun DetailScreen(
                 modifier = Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                RemotePoster(
-                    url = item.backdropUrl ?: item.posterUrl,
-                    modifier = Modifier.fillMaxWidth().height(if (isTv) 340.dp else 210.dp)
-                )
-                Column(Modifier.padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(item.title, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
-                    Text(
-                        listOfNotNull(item.year.takeIf { it != "Год неизвестен" }, item.kind.label, item.rating?.let { "★ %.1f".format(it) }, details!!.runtime)
-                            .joinToString("  •  "),
-                        style = MaterialTheme.typography.labelLarge,
-                        color = MaterialTheme.colorScheme.primary
+                Box(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp)
+                        .height(if (isTv) 390.dp else 300.dp)
+                        .clip(RoundedCornerShape(28.dp))
+                ) {
+                    RemotePoster(url = item.backdropUrl ?: item.posterUrl, modifier = Modifier.fillMaxSize())
+                    Box(
+                        modifier = Modifier.fillMaxSize().background(
+                            Brush.verticalGradient(
+                                0f to Color(0x22070A10),
+                                0.34f to Color(0x44070A10),
+                                1f to Color(0xF5070A10)
+                            )
+                        )
                     )
-                    if (details!!.creator != null) Text("Автор: ${details!!.creator}", style = MaterialTheme.typography.bodySmall)
-                    Text(
-                        details!!.description.ifBlank { "Описание отсутствует." },
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                    Column(
+                        modifier = Modifier.align(Alignment.BottomStart).fillMaxWidth()
+                            .padding(if (isTv) 28.dp else 20.dp),
+                        verticalArrangement = Arrangement.spacedBy(9.dp)
+                    ) {
+                        MetadataPill(
+                            text = if (item.kind == MediaKind.SERIES) "ОРИГИНАЛЬНАЯ КАРТОЧКА • СЕРИАЛ" else "КАРТОЧКА ФИЛЬМА",
+                            accent = true
+                        )
+                        Text(
+                            item.title,
+                            style = if (isTv) MaterialTheme.typography.displaySmall else MaterialTheme.typography.headlineLarge,
+                            fontWeight = FontWeight.Black, color = Color.White, maxLines = 2
+                        )
+                        Row(horizontalArrangement = Arrangement.spacedBy(7.dp), verticalAlignment = Alignment.CenterVertically) {
+                            listOfNotNull(
+                                item.year.takeIf { it != "Год неизвестен" },
+                                item.kind.label,
+                                item.rating?.let { "★ %.1f".format(it) },
+                                details!!.runtime
+                            ).forEach { value -> MetadataPill(value) }
+                        }
+                        Text(
+                            details!!.description.ifBlank { "Описание отсутствует." },
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = Color(0xFFE2E7EF),
+                            maxLines = if (isTv) 3 else 2
+                        )
+                    }
+                }
+                Column(Modifier.padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    if (details!!.creator != null) {
+                        Text("Автор: ${details!!.creator}", style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.secondary)
+                    }
                     if (!details!!.licenseUrl.isNullOrBlank()) {
                         Text(
                             "Лицензия указана источником: ${details!!.licenseUrl}",
@@ -1184,47 +1255,71 @@ private fun SourceCard(
     onPage: (String) -> Unit
 ) {
     val release = ReleaseHeuristics.classify(source.title)
-    Card(modifier = Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text(source.title, fontWeight = FontWeight.SemiBold)
-            if (release.quality != null || release.videoCodec != null || release.hdr || release.dolbyVision || release.audioTags.isNotEmpty() || release.sourceTags.isNotEmpty()) {
-                Text(
-                    listOfNotNull(
-                        release.quality,
-                        release.videoCodec,
-                        if (release.hdr) "HDR" else null,
-                        if (release.dolbyVision) "DV" else null
-                    ).plus(release.audioTags).plus(release.sourceTags).distinct().joinToString(" • "),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.primary
-                )
+    val badges = listOfNotNull(
+        release.quality,
+        release.videoCodec,
+        if (release.hdr) "HDR" else null,
+        if (release.dolbyVision) "Dolby Vision" else null
+    ).plus(release.audioTags).plus(release.sourceTags).distinct()
+    val facts = listOfNotNull(
+        source.providerName,
+        source.category,
+        source.sizeBytes?.let(::formatBytes),
+        source.seeders?.let { "↑ $it сидов" },
+        source.leechers?.let { "↓ $it пиров" }
+    )
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.large,
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+    ) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                Surface(color = MaterialTheme.colorScheme.primary.copy(alpha = 0.14f), shape = RoundedCornerShape(8.dp)) {
+                    Text("РАЗДАЧА", modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
+                        style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary,
+                        fontWeight = FontWeight.Bold)
+                }
+                Text(source.providerName ?: "Источник", style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
             }
-            Text(
-                listOfNotNull(source.providerName, source.category, source.sizeBytes?.let(::formatBytes), source.seeders?.let { "Сиды: $it" }, source.leechers?.let { "Пиры: $it" })
-                    .joinToString(" • "),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(source.title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, maxLines = 3)
+            if (badges.isNotEmpty()) {
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    items(badges) { badge -> MetadataPill(badge, accent = true) }
+                }
+            }
+            if (facts.isNotEmpty()) {
+                Text(facts.joinToString("  •  "), style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically) {
                 when {
-                    source.streamUrl != null -> OutlinedButton(onClick = { onPlay(source.streamUrl) }) {
+                    source.streamUrl != null -> Button(onClick = { onPlay(source.streamUrl) }) {
                         Icon(Icons.Default.PlayArrow, contentDescription = null)
+                        Spacer(Modifier.width(6.dp))
                         Text("Смотреть")
                     }
-                    source.magnetUri != null -> OutlinedButton(onClick = { onMagnet(source.magnetUri) }) {
+                    source.magnetUri != null -> Button(onClick = { onMagnet(source.magnetUri) }) {
                         Icon(Icons.Default.Download, contentDescription = null)
-                        Text("Скачать")
+                        Spacer(Modifier.width(6.dp))
+                        Text("Добавить")
                     }
-                    source.downloadUrl != null -> OutlinedButton(onClick = { onTorrent(source.downloadUrl) }) {
+                    source.downloadUrl != null -> Button(onClick = { onTorrent(source.downloadUrl) }) {
                         Icon(Icons.Default.Download, contentDescription = null)
-                        Text("Torrent")
+                        Spacer(Modifier.width(6.dp))
+                        Text("Загрузить")
                     }
                     source.pageUrl != null -> OutlinedButton(onClick = { onPage(source.pageUrl) }) {
                         Icon(Icons.Default.OpenInNew, contentDescription = null)
+                        Spacer(Modifier.width(6.dp))
                         Text("Открыть")
                     }
                 }
-                if (source.pageUrl != null && source.streamUrl != null) {
+                Spacer(Modifier.weight(1f))
+                if (source.pageUrl != null) {
                     IconButton(onClick = { onPage(source.pageUrl) }) {
                         Icon(Icons.Default.OpenInNew, contentDescription = "Страница источника")
                     }
@@ -1893,6 +1988,23 @@ private fun SettingsScreen(
                 )
             }
         }
+    }
+}
+
+@Composable
+private fun MetadataPill(text: String, accent: Boolean = false) {
+    Surface(
+        color = if (accent) MaterialTheme.colorScheme.primary.copy(alpha = 0.16f) else Color(0xC91A2432),
+        contentColor = if (accent) MaterialTheme.colorScheme.primary else Color.White,
+        shape = RoundedCornerShape(50.dp)
+    ) {
+        Text(
+            text,
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+            style = MaterialTheme.typography.labelSmall,
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 1
+        )
     }
 }
 

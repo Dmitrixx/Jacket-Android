@@ -1,9 +1,15 @@
 package app.jacket.mobile.ui.theme
 
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Shapes
+import androidx.compose.material3.Typography
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 
 private val JacketColors = darkColorScheme(
     primary = Color(0xFFFFC45C),
@@ -28,7 +34,24 @@ private val JacketColors = darkColorScheme(
     onError = Color(0xFF3E0808)
 )
 
+private val JacketShapes = Shapes(
+    extraSmall = RoundedCornerShape(8.dp),
+    small = RoundedCornerShape(12.dp),
+    medium = RoundedCornerShape(18.dp),
+    large = RoundedCornerShape(24.dp),
+    extraLarge = RoundedCornerShape(30.dp)
+)
+
+private val BaseTypography = Typography()
+private val JacketTypography = BaseTypography.copy(
+    displayLarge = BaseTypography.displayLarge.copy(fontWeight = FontWeight.Black, letterSpacing = (-1.4).sp),
+    displayMedium = BaseTypography.displayMedium.copy(fontWeight = FontWeight.ExtraBold, letterSpacing = (-0.9).sp),
+    displaySmall = BaseTypography.displaySmall.copy(fontWeight = FontWeight.ExtraBold, letterSpacing = (-0.6).sp),
+    headlineLarge = BaseTypography.headlineLarge.copy(fontWeight = FontWeight.Bold, letterSpacing = (-0.4).sp),
+    titleLarge = BaseTypography.titleLarge.copy(fontWeight = FontWeight.Bold, letterSpacing = (-0.2).sp)
+)
+
 @Composable
 fun JacketTheme(content: @Composable () -> Unit) {
-    MaterialTheme(colorScheme = JacketColors, content = content)
+    MaterialTheme(colorScheme = JacketColors, typography = JacketTypography, shapes = JacketShapes, content = content)
 }
