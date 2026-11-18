@@ -434,7 +434,7 @@ private fun HomeScreen(
                     sessions = playbackSessions,
                     isTv = isTv,
                     onResume = { session -> TorrentDownloadService.play(context, session.infoHash, session.fileIndex) },
-                    onRemove = { session -> playbackStore.remove(session.infoHash, session.fileIndex) }
+                    onRemove = { session -> PlaybackProgressStore(context).clear(PlaybackProgressStore.torrentKey(session.infoHash, session.fileIndex)) }
                 )
             }
         }
@@ -821,7 +821,7 @@ private fun LibraryScreen(
                 ContinueWatchingShelf(
                     sessions = playbackSessions, isTv = isTv,
                     onResume = { session -> TorrentDownloadService.play(context, session.infoHash, session.fileIndex) },
-                    onRemove = { session -> playbackStore.remove(session.infoHash, session.fileIndex) }
+                    onRemove = { session -> PlaybackProgressStore(context).clear(PlaybackProgressStore.torrentKey(session.infoHash, session.fileIndex)) }
                 )
             }
         }

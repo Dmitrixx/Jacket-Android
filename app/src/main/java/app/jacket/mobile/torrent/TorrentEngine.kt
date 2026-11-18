@@ -689,7 +689,7 @@ object TorrentEngine {
 }
 
 /** Versioned CRC envelope. Legacy raw libtorrent fast-resume files remain supported. */
-private object ResumeDataEnvelope {
+internal object ResumeDataEnvelope {
     private val MAGIC = "JACKETR1".toByteArray(Charsets.US_ASCII)
     private const val HEADER_BYTES = 16
     private const val MAX_PAYLOAD_BYTES = 64 * 1024 * 1024
