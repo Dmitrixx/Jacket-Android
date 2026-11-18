@@ -75,6 +75,15 @@ data class WebSearchProvider(
     val enabled: Boolean = true
 )
 
+/** Private HDRezka account data. Password and session cookies are encrypted in local storage. */
+data class HdRezkaSettings(
+    val mirror: String = "",
+    val login: String = "",
+    val password: String = "",
+    val cookie: String = "",
+    val connected: Boolean = false
+)
+
 data class SourceResult(
     val id: String,
     val title: String,

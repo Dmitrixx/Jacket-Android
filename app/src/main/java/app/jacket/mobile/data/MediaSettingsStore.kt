@@ -26,6 +26,61 @@ class MediaSettingsStore(context: Context) {
         preferences.edit { putString(KEY_TMDB_TOKEN, encrypt(token.trim())) }
     }
 
+    fun filmixToken(): String = decrypt(preferences.getString(KEY_FILMIX_TOKEN, null))
+
+    @Synchronized
+    fun saveFilmixToken(token: String) {
+        preferences.edit { putString(KEY_FILMIX_TOKEN, encrypt(token.trim())) }
+    }
+
+    @Synchronized
+    fun clearFilmixToken() {
+        preferences.edit { remove(KEY_FILMIX_TOKEN) }
+    }
+
+    /** Stable per-install identifier required by Filmix's device-code endpoint. */
+    @Synchronized
+    fun filmixDeviceId(): String {
+        preferences.getString(KEY_FILMIX_DEVICE_ID, null)
+            ?.takeIf { it.matches(Regex("[a-fA-F0-9]{16}")) }
+            ?.let { return it }
+        val bytes = ByteArray(8).also(java.security.SecureRandom()::nextBytes)
+        val id = bytes.joinToString("") { "%02x".format(it) }
+        preferences.edit { putString(KEY_FILMIX_DEVICE_ID, id) }
+        return id
+    }
+
+    fun hdRezkaSettings(): HdRezkaSettings = HdRezkaSettings(
+        mirror = preferences.getString(KEY_HDREZKA_MIRROR, "") ?: "",
+        login = decrypt(preferences.getString(KEY_HDREZKA_LOGIN, null)),
+        password = decrypt(preferences.getString(KEY_HDREZKA_PASSWORD, null)),
+        cookie = decrypt(preferences.getString(KEY_HDREZKA_COOKIE, null)),
+        connected = preferences.getBoolean(KEY_HDREZKA_CONNECTED, false)
+    )
+
+    @Synchronized
+    fun saveHdRezkaSettings(settings: HdRezkaSettings) {
+        val mirror = settings.mirror.trim().take(300).let {
+            if (it.isBlank()) "" else HdRezkaLoginClient.validateMirror(it)
+        }
+        val login = settings.login.replace(Regex("[\\r\\n]"), "").trim().take(256)
+        val password = settings.password.take(512)
+        val cookie = settings.cookie.replace(Regex("[\\r\\n]"), "").trim().take(8_192)
+        preferences.edit {
+            putString(KEY_HDREZKA_MIRROR, mirror)
+            putString(KEY_HDREZKA_LOGIN, encrypt(login))
+            putString(KEY_HDREZKA_PASSWORD, encrypt(password))
+            putString(KEY_HDREZKA_COOKIE, encrypt(cookie))
+            putBoolean(KEY_HDREZKA_CONNECTED, settings.connected && cookie.isNotBlank())
+        }
+    }
+
+    @Synchronized
+    fun disconnectHdRezka() {
+        val current = hdRezkaSettings()
+        saveHdRezkaSettings(current.copy(cookie = "", connected = false))
+    }
+
     fun indexers(): List<IndexerConfig> = runCatching {
         val array = JSONArray(preferences.getString(KEY_INDEXERS, "[]"))
         buildList {
@@ -147,7 +202,28 @@ class MediaSettingsStore(context: Context) {
         saveIndexers(indexers().filterNot { it.id == id })
     }
 
-    fun webSearchProviders(): List<WebSearchProvider> = runCatching {
+    @Synchronized
+    fun webSearchProviders(): List<WebSearchProvider> {
+        if (!preferences.getBoolean(KEY_TRACKER_PRESETS_SEEDED, false)) {
+            val merged = (readWebSearchProviders() + DEFAULT_TRACKER_SHORTCUTS)
+                .distinctBy { it.id }
+                .take(MAX_WEB_SEARCH_PROVIDERS)
+            saveWebSearchProviders(merged)
+            preferences.edit { putBoolean(KEY_TRACKER_PRESETS_SEEDED, true) }
+        }
+        return readWebSearchProviders()
+    }
+
+    @Synchronized
+    fun restoreDefaultTrackerShortcuts(): List<WebSearchProvider> {
+        val merged = (webSearchProviders() + DEFAULT_TRACKER_SHORTCUTS)
+            .distinctBy { it.id }
+            .take(MAX_WEB_SEARCH_PROVIDERS)
+        saveWebSearchProviders(merged)
+        return readWebSearchProviders()
+    }
+
+    private fun readWebSearchProviders(): List<WebSearchProvider> = runCatching {
         val array = JSONArray(preferences.getString(KEY_WEB_SEARCH_PROVIDERS, "[]"))
         buildList {
             for (i in 0 until array.length()) {
@@ -303,10 +379,56 @@ class MediaSettingsStore(context: Context) {
     }.getOrDefault(false)
 
     private companion object {
+        val DEFAULT_TRACKER_SHORTCUTS = listOf(
+            WebSearchProvider(
+                id = "tracker-rutracker",
+                name = "RuTracker",
+                searchUrlTemplate = "https://rutracker.org/forum/tracker.php?nm={query}"
+            ),
+            WebSearchProvider(
+                id = "tracker-nnmclub",
+                name = "NNM-Club",
+                searchUrlTemplate = "https://nnmclub.to/forum/tracker.php?nm={query}"
+            ),
+            WebSearchProvider(
+                id = "tracker-rutor",
+                name = "Rutor",
+                searchUrlTemplate = "https://rutor.info/search/0/0/100/2/{query}"
+            ),
+            WebSearchProvider(
+                id = "tracker-kinozal",
+                name = "Kinozal",
+                searchUrlTemplate = "https://kinozal.tv/browse.php?s={query}"
+            ),
+            WebSearchProvider(
+                id = "tracker-1337x",
+                name = "1337x",
+                searchUrlTemplate = "https://1337x.to/search/{query}/1/"
+            ),
+            WebSearchProvider(
+                id = "tracker-tpb",
+                name = "The Pirate Bay",
+                searchUrlTemplate = "https://thepiratebay.org/search.php?q={query}"
+            ),
+            WebSearchProvider(
+                id = "tracker-archive",
+                name = "Internet Archive",
+                searchUrlTemplate = "https://archive.org/search?query={query}%20AND%20mediatype%3Amovies"
+            )
+        )
+
         const val PREFERENCES = "jacket_media_settings"
         const val KEY_TMDB_TOKEN = "tmdb_token_enc"
+        const val KEY_FILMIX_TOKEN = "filmix_device_token_enc"
+        const val KEY_FILMIX_DEVICE_ID = "filmix_device_id"
+        const val KEY_HDREZKA_MIRROR = "hdrezka_mirror"
+        const val KEY_HDREZKA_LOGIN = "hdrezka_login_enc"
+        const val KEY_HDREZKA_PASSWORD = "hdrezka_password_enc"
+        const val KEY_HDREZKA_COOKIE = "hdrezka_cookie_enc"
+        const val KEY_HDREZKA_CONNECTED = "hdrezka_connected"
         const val KEY_INDEXERS = "rss_indexers"
         const val KEY_WEB_SEARCH_PROVIDERS = "web_search_providers"
+        const val KEY_TRACKER_PRESETS_SEEDED = "tracker_presets_seeded"
         const val KEY_FAVORITES = "catalog_favorites"
         const val KEY_HISTORY = "catalog_history"
         const val MAX_INDEXERS = 100
