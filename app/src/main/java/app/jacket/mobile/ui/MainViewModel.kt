@@ -207,18 +207,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         loadHome(force = true)
     }
 
-    fun saveIndexer(config: IndexerConfig) {
-        try {
-            settings.saveIndexer(config)
+    fun saveIndexer(config: IndexerConfig): Boolean {
+        return try {
+            val saved = settings.saveIndexer(config)
             _customIndexers.value = settings.indexers()
-            _indexerStatuses.value = _indexerStatuses.value - config.id
-            _message.value = "Индексатор «${config.name}» сохранён"
+            _indexerStatuses.value = _indexerStatuses.value - saved.id
+            _message.value = "Индексатор «${saved.name}» сохранён"
             _isError.value = false
+            true
         } catch (error: Exception) {
             showError(error.message ?: "Не удалось сохранить индексатор")
+            false
         }
     }
-
     /** Kept for compatibility with the simple RSS add flow. */
     fun addIndexer(name: String, urlTemplate: String) {
         saveIndexer(IndexerConfig(id = "", name = name, searchUrlTemplate = urlTemplate))

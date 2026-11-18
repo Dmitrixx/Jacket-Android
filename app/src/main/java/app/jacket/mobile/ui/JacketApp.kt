@@ -1,6 +1,7 @@
 package app.jacket.mobile.ui
 
 import android.content.Intent
+import androidx.activity.compose.BackHandler
 import android.net.Uri
 import android.widget.Toast
 import androidx.compose.foundation.background
@@ -115,6 +116,16 @@ fun JacketApp(viewModel: MainViewModel) {
     val details by viewModel.selectedDetails.collectAsState()
     val isTv = (LocalContext.current.resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_TYPE_MASK) == android.content.res.Configuration.UI_MODE_TYPE_TELEVISION
     val loading by viewModel.isLoading.collectAsState()
+
+    // Android TV remotes dispatch Back through the system dispatcher; unwind the current screen first.
+    BackHandler(enabled = playerUrl != null || showSettings || showDownloads || details != null) {
+        when {
+            playerUrl != null -> playerUrl = null
+            showSettings -> showSettings = false
+            showDownloads -> showDownloads = false
+            details != null -> viewModel.closeDetails()
+        }
+    }
 
     LaunchedEffect(Unit) { viewModel.loadHome() }
 
@@ -537,6 +548,7 @@ private fun CatalogGridScreen(
     modifier: Modifier,
     onOpen: (CatalogItem) -> Unit
 ) {
+    val isTv = (LocalContext.current.resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_TYPE_MASK) == android.content.res.Configuration.UI_MODE_TYPE_TELEVISION
     Column(modifier.fillMaxSize()) {
         Text(
             title,
@@ -550,7 +562,7 @@ private fun CatalogGridScreen(
             MessageCard(message ?: "Каталог пуст", false)
         } else {
             LazyVerticalGrid(
-                columns = GridCells.Fixed(2),
+                columns = if (isTv) GridCells.Adaptive(minSize = 190.dp) else GridCells.Fixed(2),
                 modifier = Modifier.fillMaxSize(),
                 contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 24.dp),
                 horizontalArrangement = Arrangement.spacedBy(14.dp),
@@ -570,6 +582,7 @@ private fun SearchScreen(
     modifier: Modifier,
     onOpen: (CatalogItem) -> Unit
 ) {
+    val isTv = (LocalContext.current.resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_TYPE_MASK) == android.content.res.Configuration.UI_MODE_TYPE_TELEVISION
     var query by rememberSaveable { mutableStateOf("") }
     val items by viewModel.items.collectAsState()
     val loading by viewModel.isLoading.collectAsState()
@@ -608,7 +621,7 @@ private fun SearchScreen(
             LoadingState()
         } else if (items.isNotEmpty()) {
             LazyVerticalGrid(
-                columns = GridCells.Fixed(2),
+                columns = if (isTv) GridCells.Adaptive(minSize = 190.dp) else GridCells.Fixed(2),
                 modifier = Modifier.fillMaxSize(),
                 contentPadding = PaddingValues(16.dp),
                 horizontalArrangement = Arrangement.spacedBy(14.dp),
@@ -620,7 +633,7 @@ private fun SearchScreen(
             }
         } else {
             Text(
-                "Поиск выполняется по каталогу. Для расширения поиска добавьте прямые RSS/Atom-индексаторы в настройках.",
+                "Поиск выполняется по каталогу. Для расширения поиска добавьте RSS/Atom или Torznab-индексаторы в настройках.",
                 modifier = Modifier.padding(16.dp),
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 style = MaterialTheme.typography.bodyMedium
@@ -694,6 +707,7 @@ private fun DetailScreen(
     val message by viewModel.message.collectAsState()
     val isError by viewModel.isError.collectAsState()
     val context = LocalContext.current
+    val isTv = (context.resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_TYPE_MASK) == android.content.res.Configuration.UI_MODE_TYPE_TELEVISION
 
     Scaffold(
         topBar = {
@@ -729,7 +743,7 @@ private fun DetailScreen(
             ) {
                 RemotePoster(
                     url = item.backdropUrl ?: item.posterUrl,
-                    modifier = Modifier.fillMaxWidth().height(210.dp)
+                    modifier = Modifier.fillMaxWidth().height(if (isTv) 340.dp else 210.dp)
                 )
                 Column(Modifier.padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(item.title, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
@@ -1188,7 +1202,7 @@ private fun SettingsScreen(
                 }
                 Button(
                     onClick = {
-                        viewModel.saveIndexer(
+                        val saved = viewModel.saveIndexer(
                             IndexerConfig(
                                 id = editingId,
                                 name = sourceName,
@@ -1205,7 +1219,7 @@ private fun SettingsScreen(
                                 sortOrder = sortOrder
                             )
                         )
-                        clearIndexerEditor()
+                        if (saved) clearIndexerEditor()
                     },
                     modifier = Modifier.fillMaxWidth()
                 ) {
