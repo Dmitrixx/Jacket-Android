@@ -947,6 +947,7 @@ private fun DetailScreen(
     val webSearchProviders by viewModel.webSearchProviders.collectAsState()
     var showWebsiteSearch by rememberSaveable { mutableStateOf(false) }
     var showSourcesSheet by rememberSaveable { mutableStateOf(false) }
+    var selectedEpisodeForSources by remember { mutableStateOf<app.jacket.mobile.data.MediaEpisode?>(null) }
     var minSeeders by rememberSaveable { mutableStateOf("0") }
     var qualityFilter by rememberSaveable { mutableStateOf("Все") }
     var hdrOnly by rememberSaveable { mutableStateOf(false) }
@@ -1137,6 +1138,7 @@ private fun DetailScreen(
                                                     }
                                                     OutlinedButton(
                                                         onClick = {
+                                                            selectedEpisodeForSources = episode
                                                             showSourcesSheet = true
                                                             viewModel.findSources(item, episode)
                                                         },
@@ -1190,6 +1192,7 @@ private fun DetailScreen(
 
                     Button(
                         onClick = {
+                            selectedEpisodeForSources = null
                             showSourcesSheet = true
                             viewModel.findSources(item)
                         },
@@ -1348,7 +1351,9 @@ private fun DetailScreen(
                         )
                     }
                     IconButton(
-                        onClick = { details?.item?.let { viewModel.findSources(it) } },
+                        onClick = {
+                            details?.item?.let { viewModel.findSources(it, selectedEpisodeForSources) }
+                        },
                         enabled = !searchingSources
                     ) {
                         Icon(Icons.Default.Refresh, contentDescription = "Обновить источники")
