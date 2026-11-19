@@ -110,6 +110,7 @@ import app.jacket.mobile.data.MediaKind
 import app.jacket.mobile.data.MediaSection
 import app.jacket.mobile.data.SourceResult
 import app.jacket.mobile.data.WebSearchProvider
+import app.jacket.mobile.data.TrackerSearchClient
 import app.jacket.mobile.data.WebSearchUrlBuilder
 import app.jacket.mobile.data.formatBytes
 import app.jacket.mobile.torrent.TorrentDownloadService
