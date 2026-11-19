@@ -550,7 +550,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 throw cancelled
             } catch (error: Exception) {
                 _hdRezkaSettings.value = settings.hdRezkaSettings()
-                _hdRezkaStatus.value = error.message ?: "Не удалось войти в HDRezka"
+                _hdRezkaStatus.value = HdRezkaLoginClient.userFriendlyError(error)
             } finally {
                 _isHdRezkaBusy.value = false
             }
@@ -573,7 +573,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Exception) {
-                _hdRezkaStatus.value = error.message ?: "Не удалось проверить зеркало HDRezka"
+                _hdRezkaStatus.value = HdRezkaLoginClient.userFriendlyError(error)
             } finally {
                 _isHdRezkaBusy.value = false
             }
