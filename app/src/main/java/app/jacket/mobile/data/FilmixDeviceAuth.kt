@@ -23,7 +23,7 @@ data class FilmixPendingDevice(
  */
 object FilmixDeviceAuth {
     const val ACTIVATION_URL = "https://filmix.gg/consoles"
-    private const val API_BASE = "https://filmixapp.cyou/api/v2"
+    private const val API_BASE = "https://api.filmix.tv/api/v2"
     private const val MAX_RESPONSE_BYTES = 256 * 1024
 
     fun requestCode(
