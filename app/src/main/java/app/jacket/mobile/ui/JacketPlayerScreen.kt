@@ -62,6 +62,8 @@ import androidx.media3.common.Player
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.MimeTypes
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.datasource.DefaultHttpDataSource
+import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.PlayerView
 import androidx.media3.ui.TrackSelectionDialogBuilder
 import app.jacket.mobile.torrent.PlaybackProgressStore
@@ -96,7 +98,16 @@ fun JacketPlayerScreen(
                 .setSelectionFlags(C.SELECTION_FLAG_DEFAULT)
                 .build()
         }
-        ExoPlayer.Builder(context).build().apply {
+        val streamUri = Uri.parse(streamUrl)
+        val isLoopbackStream = streamUri.host == "127.0.0.1" || streamUri.host == "localhost"
+        val dataSourceFactory = DefaultHttpDataSource.Factory()
+            .setConnectTimeoutMs(12_000)
+            .setReadTimeoutMs(if (isLoopbackStream) 120_000 else 30_000)
+        val mediaSourceFactory = DefaultMediaSourceFactory(context)
+            .setDataSourceFactory(dataSourceFactory)
+        ExoPlayer.Builder(context)
+            .setMediaSourceFactory(mediaSourceFactory)
+            .build().apply {
             setMediaItem(
                 MediaItem.Builder()
                     .setUri(streamUrl)

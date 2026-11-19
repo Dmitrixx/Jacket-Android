@@ -274,9 +274,7 @@ class TorrentDownloadService : Service() {
         } else "apikey"
         if (sourceConfig != null && sourceConfig.apiKey.isNotBlank()) {
             val uri = Uri.parse(currentUrl)
-            currentUrl = if (uri.getQueryParameter(keyParameter) == null &&
-                sourceConfig.protocol != IndexerProtocol.JACKETT
-            ) {
+            currentUrl = if (uri.getQueryParameter(keyParameter) == null) {
                 uri.buildUpon().appendQueryParameter(keyParameter, sourceConfig.apiKey).build().toString()
             } else currentUrl
         }
@@ -305,8 +303,7 @@ class TorrentDownloadService : Service() {
                     effectivePort(uri) == effectivePort(originalUri)
                 val requestUrl = if (
                     sameOrigin && sourceConfig?.apiKey?.isNotBlank() == true &&
-                    uri.getQueryParameter(keyParameter) == null &&
-                    sourceConfig.protocol != IndexerProtocol.JACKETT
+                    uri.getQueryParameter(keyParameter) == null
                 ) {
                     uri.buildUpon().appendQueryParameter(keyParameter, sourceConfig.apiKey).build().toString()
                 } else activeUrl
