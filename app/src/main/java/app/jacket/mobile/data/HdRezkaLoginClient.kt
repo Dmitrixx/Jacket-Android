@@ -57,6 +57,18 @@ object HdRezkaLoginClient {
         val bootstrap = requestFollowingGetRedirects("$initialMirror/", cookies)
         val activeBase = validateMirror(originOf(bootstrap.finalUrl))
 
+        // Harmless site-default cookies also used by the regular site client.
+        listOf(
+            "allowed_comments" to "1",
+            "_ym_isad" to "1",
+            "_ym_visorc" to "b",
+            "dle_newpm" to "0"
+        ).forEach { (name, value) ->
+            cookies.cookieStore.add(URI("$activeBase/"), java.net.HttpCookie(name, value).apply {
+                path = "/"
+            })
+        }
+
         val form = listOf(
             "login_name" to username,
             "login_password" to password,
@@ -65,22 +77,30 @@ object HdRezkaLoginClient {
         ).joinToString("&") { "${encode(it.first)}=${encode(it.second)}" }
 
         val response = request(
-            url = "$activeBase/ajax/login/",
+            url = "$activeBase/ajax/login/?t=\${System.currentTimeMillis()}",
             method = "POST",
             body = form,
             cookies = cookies,
             referer = "$activeBase/"
         )
         if (response.status == 403 || response.body.contains("cf-chl", true) ||
-            response.body.contains("Just a moment", true)
+            response.body.contains("Just a moment", true) ||
+            response.body.contains("challenge-platform", true)
         ) {
             throw IOException(
-                "HDRezka показала защитную проверку. Jacket не обходит CAPTCHA или Cloudflare; " +
-                    "войдите через обычный браузер и вставьте свою Cookie-сессию."
+                "HDRezka требует браузерную проверку (CAPTCHA/Cloudflare). Войдите на этом зеркале " +
+                    "в обычном браузере и вставьте Cookie-сессию. Автоматический обход не выполняется."
             )
         }
         if (response.status !in 200..299) {
             throw IOException("HDRezka вернула HTTP ${response.status}")
+        }
+        val loginSuccess = Regex("[\\\"']success[\\\"']\\\\s*:\\\\s*(true|false)", RegexOption.IGNORE_CASE)
+            .find(response.body)?.groupValues?.getOrNull(1)?.equals("true", true)
+        if (loginSuccess == false) {
+            val serverMessage = Regex("[\\\"']message[\\\"']\\\\s*:\\\\s*[\\\"']([^\\\"']{1,160})[\\\"']")
+                .find(response.body)?.groupValues?.getOrNull(1)
+            throw IOException(serverMessage ?: "HDRezka отклонила логин или пароль.")
         }
 
         val cookieHeader = cookies.get(URI("$activeBase/"), emptyMap())
@@ -144,7 +164,8 @@ object HdRezkaLoginClient {
             readTimeout = 15_000
             instanceFollowRedirects = false
             setRequestProperty("Accept", "application/json, text/plain, */*")
-            setRequestProperty("User-Agent", "Jacket-Android/2.4")
+            setRequestProperty("Cache-Control", "no-cache")
+            setRequestProperty("User-Agent", "Jacket-Android/2.6")
             setRequestProperty("Referer", referer)
             setRequestProperty("X-Requested-With", "XMLHttpRequest")
             setRequestProperty("Origin", originOf(url))
