@@ -41,11 +41,17 @@ internal object IndexerErrorSanitizer {
             val candidate = match.value.trimEnd('.', ',', ')', ']', ';')
             val suffix = match.value.substring(candidate.length)
             val authority = runCatching {
-                val uri = URI(candidate)
+                // Parse only scheme + authority. The path may already contain
+                // [redacted] markers, which are not legal URI path characters.
+                val parts = Regex("(?i)^(https?)://([^/?#]+)").find(candidate)
+                    ?: return@runCatching "[URL]"
+                val scheme = parts.groupValues[1].lowercase()
+                val rawAuthority = parts.groupValues[2].substringAfterLast('@')
+                val uri = URI("$scheme://$rawAuthority")
                 val host = uri.host ?: return@runCatching "[URL]"
                 val port = if (uri.port >= 0) ":${uri.port}" else ""
-                val queryMarker = if (uri.rawQuery != null) "/?[redacted]" else ""
-                "${uri.scheme}://$host$port$queryMarker"
+                val queryMarker = if (candidate.contains('?')) "/?[redacted]" else ""
+                "$scheme://$host$port$queryMarker"
             }.getOrDefault("[URL]")
             authority + suffix
         }
