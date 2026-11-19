@@ -1,5 +1,7 @@
 package app.jacket.mobile.ui
 
+@file:OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+
 import android.content.Intent
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -308,5 +310,3 @@ internal fun DownloadsScreen(onBack: () -> Unit) {
         }
     }
 }
-
-@OptIn(ExperimentalMaterial3Api::class)
