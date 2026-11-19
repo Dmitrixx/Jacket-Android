@@ -415,7 +415,7 @@ internal fun LazyListScope.SettingsSourcesSections(
                     minLines = 2
                 )
                 Text(
-                    "Для частных индексаторов можно использовать логин/пароль, API key или editor.cookie активной сессии. Cookie можно вставить вручную после входа на сайт.",
+                    "Для частных индексаторов можно использовать логин/пароль, API key или cookie активной сессии. Cookie можно вставить вручную после входа на сайт.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
