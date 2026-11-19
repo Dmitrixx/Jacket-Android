@@ -577,7 +577,7 @@ internal fun DetailScreen(
 }
 
 @Composable
-private fun SourceCard(
+internal fun SourceCard(
     source: SourceResult,
     onPlay: (String) -> Unit,
     onMagnet: (String) -> Unit,
