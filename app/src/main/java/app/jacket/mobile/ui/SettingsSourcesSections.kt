@@ -176,22 +176,21 @@ internal class SettingsSourcesEditorState {
     }
 }
 
-@Composable
-internal fun LazyListScope.SettingsSourcesSections(
+internal fun LazyListScope.settingsSourcesSections(
     selectedSettingsSection: String,
     viewModel: MainViewModel,
     context: Context,
     editor: SettingsSourcesEditorState,
+    webSearchProviders: List<WebSearchProvider>,
+    indexers: List<IndexerConfig>,
+    statuses: Map<String, String>,
+    sourceResults: List<SourceResult>,
+    searchingSources: Boolean,
+    message: String?,
+    isError: Boolean,
     onImportIndexers: () -> Unit,
     onExportIndexers: () -> Unit
 ) {
-    val webSearchProviders by viewModel.webSearchProviders.collectAsState()
-    val indexers by viewModel.customIndexers.collectAsState()
-    val statuses by viewModel.indexerStatuses.collectAsState()
-    val sourceResults by viewModel.sourceResults.collectAsState()
-    val searchingSources by viewModel.isSearchingSources.collectAsState()
-    val message by viewModel.message.collectAsState()
-    val isError by viewModel.isError.collectAsState()
 
             if (selectedSettingsSection == "sites") {
                 item {
