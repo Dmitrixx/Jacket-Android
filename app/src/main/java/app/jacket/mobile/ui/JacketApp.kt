@@ -770,6 +770,8 @@ private fun SearchScreen(
     val webProviders by viewModel.webSearchProviders.collectAsState()
     val items by viewModel.items.collectAsState()
     val loading by viewModel.isLoading.collectAsState()
+    val trackerResults by viewModel.sourceResults.collectAsState()
+    val searchingTrackers by viewModel.isSearchingSources.collectAsState()
     val message by viewModel.message.collectAsState()
     val isError by viewModel.isError.collectAsState()
 
@@ -819,9 +821,19 @@ private fun SearchScreen(
                 ) {
                     items(activeWebProviders, key = { "search-${it.id}" }) { provider ->
                         OutlinedButton(
-                            onClick = { openWebsiteSearch(context, provider, query.trim()) }
+                            onClick = {
+                                if (TrackerSearchClient.supports(provider.id) || provider.id == "tracker-archive") {
+                                    viewModel.searchTracker(provider, query.trim())
+                                } else {
+                                    openWebsiteSearch(context, provider, query.trim())
+                                }
+                            }
                         ) {
-                            Icon(Icons.Default.OpenInNew, contentDescription = null)
+                            Icon(
+                                if (TrackerSearchClient.supports(provider.id) || provider.id == "tracker-archive")
+                                    Icons.Default.Search else Icons.Default.OpenInNew,
+                                contentDescription = null
+                            )
                             Spacer(Modifier.width(6.dp))
                             Text(provider.name, maxLines = 1)
                         }
@@ -832,10 +844,36 @@ private fun SearchScreen(
         if (message != null) {
             MessageCard(message.orEmpty(), isError, Modifier.padding(horizontal = 16.dp, vertical = 8.dp))
         }
-        if (loading && items.isEmpty()) {
-            LoadingState()
-        } else if (items.isNotEmpty()) {
-            LazyVerticalGrid(
+        if (searchingTrackers) {
+            Row(
+                Modifier.fillMaxWidth().padding(16.dp),
+                horizontalArrangement = Arrangement.Center,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+                Spacer(Modifier.width(10.dp))
+                Text("Разбираем результаты трекера…")
+            }
+        }
+        when {
+            trackerResults.isNotEmpty() -> LazyColumn(
+                modifier = Modifier.weight(1f),
+                contentPadding = PaddingValues(16.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                item { Text("Найденные раздачи • ${trackerResults.size}", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold) }
+                items(trackerResults, key = { it.id }) { source ->
+                    SourceCard(
+                        source = source,
+                        onPlay = { openExternal(context, it) },
+                        onMagnet = { magnet -> TorrentDownloadService.addAndPlay(context, magnet, source.title) },
+                        onTorrent = { url -> TorrentDownloadService.addTorrentUrlAndPlay(context, url, source.title, source.indexerId) },
+                        onPage = { url -> openExternal(context, url) }
+                    )
+                }
+            }
+            loading && items.isEmpty() -> LoadingState()
+            items.isNotEmpty() -> LazyVerticalGrid(
                 columns = if (isTv) GridCells.Adaptive(minSize = 190.dp) else GridCells.Fixed(2),
                 modifier = Modifier.fillMaxSize(),
                 contentPadding = PaddingValues(16.dp),
@@ -846,8 +884,7 @@ private fun SearchScreen(
                     MediaCard(item, onClick = { onOpen(item) }, modifier = Modifier.fillMaxWidth())
                 }
             }
-        } else {
-            Text(
+            else -> Text(
                 "Поиск выполняется по каталогу. Для расширения поиска добавьте RSS/Atom или Torznab-индексаторы в настройках.",
                 modifier = Modifier.padding(16.dp),
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
