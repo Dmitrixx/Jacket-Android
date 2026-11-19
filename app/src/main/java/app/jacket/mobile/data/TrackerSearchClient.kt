@@ -144,6 +144,11 @@ object TrackerSearchClient {
             val href = safeResolve(baseUrl, anchor.attr("href")) ?: return@forEach
             if (href.startsWith("magnet:", true)) return@forEach
             val row = resultContainer(anchor)
+            val rowMagnet = row.selectFirst("a[href^=magnet:]")?.attr("href")
+                ?.takeIf { it.startsWith("magnet:", true) }
+            // A result row may expose both its detail link and magnet. The
+            // magnet pass already captured that row; don't display it twice.
+            if (rowMagnet != null && result.containsKey(rowMagnet)) return@forEach
             val directTorrent = findTorrentLink(row, baseUrl)
             val key = directTorrent ?: href
             result.putIfAbsent(key, Candidate(title, href, null, directTorrent, row.text()))
