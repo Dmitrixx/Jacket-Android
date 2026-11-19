@@ -95,10 +95,10 @@ object HdRezkaLoginClient {
         if (response.status !in 200..299) {
             throw IOException("HDRezka вернула HTTP ${response.status}")
         }
-        val loginSuccess = Regex("[\\\"']success[\\\"']\\\\s*:\\\\s*(true|false)", RegexOption.IGNORE_CASE)
-            .find(response.body)?.groupValues?.getOrNull(1)?.equals("true", true)
+        val loginSuccess = Regex("success\\s*:\\s*(true|false)", RegexOption.IGNORE_CASE)
         if (loginSuccess == false) {
-            val serverMessage = Regex("[\\\"']message[\\\"']\\\\s*:\\\\s*[\\\"']([^\\\"']{1,160})[\\\"']")
+            throw IOException("HDRezka отклонила вход. Проверьте логин и пароль.")
+        }
                 .find(response.body)?.groupValues?.getOrNull(1)
             throw IOException(serverMessage ?: "HDRezka отклонила логин или пароль.")
         }
