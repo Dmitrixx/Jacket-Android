@@ -14,8 +14,13 @@ class HdRezkaLoginClientTest {
         HdRezkaLoginClient.validateMirror("http://hdrezka.example")
     }
 
+    @Test
+    fun acceptsUserSuppliedRotatingMirrorHost() {
+        assertEquals("https://rezkify.com", HdRezkaLoginClient.validateMirror("https://rezkify.com/"))
+    }
+
     @Test(expected = IllegalArgumentException::class)
-    fun rejectsUnrelatedHost() {
-        HdRezkaLoginClient.validateMirror("https://example.com")
+    fun rejectsPrivateNetworkMirror() {
+        HdRezkaLoginClient.validateMirror("https://192.168.1.5")
     }
 }
