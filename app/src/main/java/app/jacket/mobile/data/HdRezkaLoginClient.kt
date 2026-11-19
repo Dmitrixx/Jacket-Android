@@ -95,8 +95,9 @@ object HdRezkaLoginClient {
         if (response.status !in 200..299) {
             throw IOException("HDRezka вернула HTTP ${response.status}")
         }
-        val loginSuccess = Regex("success\\s*:\\s*(true|false)", RegexOption.IGNORE_CASE)
-        if (loginSuccess == false) {
+        val loginRejected = Regex("\\\"success\\\"\\s*:\\s*false", RegexOption.IGNORE_CASE)
+            .containsMatchIn(response.body)
+        if (loginRejected) {
             throw IOException("HDRezka отклонила вход. Проверьте логин и пароль.")
         }
         val cookieHeader = cookies.get(URI("$activeBase/"), emptyMap())
