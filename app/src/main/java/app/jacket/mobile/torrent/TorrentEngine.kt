@@ -218,7 +218,7 @@ object TorrentEngine {
         return (0 until storage.numFiles()).asSequence()
             .filterNot { runCatching { storage.padFileAt(it) }.getOrDefault(true) }
             .mapNotNull { index ->
-                val path = storage.filePath(index).replace('\\\\', '/')
+                val path = storage.filePath(index).replace(File.separatorChar, '/')
                 val extension = path.substringAfterLast('.', "").lowercase()
                 if (extension !in PLAYABLE_VIDEO_EXTENSIONS) return@mapNotNull null
                 val size = storage.fileSize(index).coerceAtLeast(0L)
