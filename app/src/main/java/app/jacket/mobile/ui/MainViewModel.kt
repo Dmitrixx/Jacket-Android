@@ -456,7 +456,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Exception) {
-                _filmixStatus.value = error.message ?: "Не удалось подключить Filmix"
+                _filmixStatus.value = FilmixDeviceAuth.userFriendlyError(error)
                 _filmixCode.value = null
             } finally {
                 _isFilmixPairing.value = false
