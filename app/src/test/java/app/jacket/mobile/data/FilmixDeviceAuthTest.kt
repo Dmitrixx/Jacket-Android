@@ -21,6 +21,14 @@ class FilmixDeviceAuthTest {
         assertTrue(url.contains("user_dev_apk=2.4.0"))
     }
 
+    @Test
+    fun tlsCertificateFailureIsShownAsActionableMessage() {
+        val error = javax.net.ssl.SSLPeerUnverifiedException(
+            "Hostname filmixapp.cyou not verified: certificate subject api.filmix.tv"
+        )
+        assertTrue(FilmixDeviceAuth.userFriendlyError(error).contains("HTTPS-сертификата"))
+    }
+
     @Test(expected = IllegalArgumentException::class)
     fun rejectsMalformedDeviceId() {
         FilmixDeviceAuth.buildTokenRequestUrl("bad-id", "Jacket", "Android", "12", "2.4.0")
