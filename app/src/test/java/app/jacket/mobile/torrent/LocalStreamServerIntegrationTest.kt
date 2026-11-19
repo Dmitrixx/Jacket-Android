@@ -16,6 +16,8 @@ class LocalStreamServerIntegrationTest {
         file.writeBytes(payload)
 
         val hash = "abcdef0123456789abcdef0123456789abcdef01"
+        val cacheDirectory = Files.createTempDirectory("jacket-stream-ring").toFile()
+        var awaitedRanges = 0
         val server = LocalStreamServer(
             metadata = { id, index ->
                 assertEquals(hash, id)
@@ -25,10 +27,12 @@ class LocalStreamServerIntegrationTest {
             awaitRange = { id, index, start, length ->
                 assertEquals(hash, id)
                 assertEquals(0, index)
-                assertEquals(2L, start)
-                assertEquals(4L, length)
+                assertEquals(0L, start)
+                assertEquals(payload.size.toLong(), length)
+                awaitedRanges++
                 file
-            }
+            },
+            cacheDirectory = cacheDirectory
         )
 
         try {
@@ -47,6 +51,19 @@ class LocalStreamServerIntegrationTest {
                 assertArrayEquals(payload.copyOfRange(2, 6), range.inputStream.use { it.readBytes() })
             } finally {
                 range.disconnect()
+            }
+
+            val cachedRange = (streamUrl.openConnection() as HttpURLConnection).apply {
+                connectTimeout = 3_000
+                readTimeout = 3_000
+                setRequestProperty("Range", "bytes=2-5")
+            }
+            try {
+                assertEquals(206, cachedRange.responseCode)
+                assertArrayEquals(payload.copyOfRange(2, 6), cachedRange.inputStream.use { it.readBytes() })
+                assertEquals("A repeated seek should hit the disk cache", 1, awaitedRanges)
+            } finally {
+                cachedRange.disconnect()
             }
 
             val head = (streamUrl.openConnection() as HttpURLConnection).apply {
@@ -81,6 +98,7 @@ class LocalStreamServerIntegrationTest {
         } finally {
             server.close()
             file.delete()
+            cacheDirectory.deleteRecursively()
         }
     }
 }
