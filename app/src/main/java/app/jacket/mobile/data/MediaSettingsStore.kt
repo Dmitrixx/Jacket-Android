@@ -116,7 +116,7 @@ class MediaSettingsStore(context: Context) {
     fun saveIndexer(config: IndexerConfig): IndexerConfig {
         require(config.name.isNotBlank()) { "Укажите название индексатора" }
         require(isValidTemplate(config.searchUrlTemplate)) {
-            "Нужен HTTPS URL поиска с маркером {query}. Для Torznab обычно используют /api?t=search&q={query}"
+            "Нужен HTTPS URL либо HTTP-адрес локального сервера с маркером {query}. Для Torznab: /api?t=search&q={query}"
         }
         val normalized = config.copy(
             id = config.id.ifBlank { UUID.randomUUID().toString() },
@@ -374,8 +374,7 @@ class MediaSettingsStore(context: Context) {
 
     private fun isValidTemplate(value: String): Boolean = runCatching {
         if (!value.contains("{query}")) return false
-        val uri = Uri.parse(value.replace("{query}", "probe").replace("{apikey}", "test"))
-        uri.scheme == "https" && !uri.host.isNullOrBlank() && uri.userInfo == null
+        LocalNetwork.isAllowedUrl(value.replace("{query}", "probe").replace("{apikey}", "test"))
     }.getOrDefault(false)
 
     private companion object {

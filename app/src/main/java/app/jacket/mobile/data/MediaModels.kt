@@ -10,7 +10,8 @@ enum class MediaKind(val label: String) {
 
 enum class IndexerProtocol(val label: String) {
     RSS("RSS / Atom"),
-    TORZNAB("Torznab / Newznab")
+    TORZNAB("Torznab / Newznab"),
+    JACKETT("Jackett")
 }
 
 data class CatalogItem(
@@ -97,7 +98,8 @@ data class SourceResult(
     val licenseUrl: String? = null,
     val pageUrl: String? = null,
     val category: String? = null,
-    val indexerId: String? = null
+    val indexerId: String? = null,
+    val tracker: String? = null
 )
 
 fun CatalogItem.toJson(): JSONObject = JSONObject()

@@ -85,13 +85,20 @@ class IndexerRegistry(
     }
 
     /** A valid empty response still means that the authenticated indexer is reachable. */
-    fun test(config: IndexerConfig): Int = searchFeed(config, "jacket-connectivity-test").size
+    fun test(config: IndexerConfig): Int {
+        val probeConfig = if (config.protocol == IndexerProtocol.JACKETT) {
+            val parsed = JackettUrl.parseTemplate(config.searchUrlTemplate)
+                ?: throw IOException("Некорректный URL Jackett")
+            config.copy(searchUrlTemplate = JackettUrl.capabilitiesTemplate(parsed.baseUrl, parsed.indexer))
+        } else config
+        return searchFeed(probeConfig, "jacket-connectivity-test").size
+    }
 
     fun testAll(configs: List<IndexerConfig>): List<IndexerFailure> {
         val executor = Executors.newFixedThreadPool(MAX_PARALLEL_REQUESTS)
         try {
             val futures = configs.filter { it.enabled }.take(MAX_INDEXERS).map { config ->
-                config to executor.submit(Callable { runCatching { searchFeed(config, "jacket-connectivity-test") } })
+                config to executor.submit(Callable { runCatching { test(config) } })
             }
             return futures.mapNotNull { (config, future) ->
                 val result = runCatching { future.get() }.getOrElse {
@@ -121,8 +128,8 @@ class IndexerRegistry(
     private fun searchFeed(config: IndexerConfig, query: String): List<SourceResult> {
         val requestUrl = buildRequestUrl(config, query)
         val uri = runCatching { java.net.URI(requestUrl) }.getOrElse { throw IOException("Некорректный URL индексатора", it) }
-        if (!uri.scheme.equals("https", true) || uri.host.isNullOrBlank() || uri.rawUserInfo != null) {
-            throw IOException("Источник «${config.name}» должен использовать HTTPS без логина в URL")
+        if (!LocalNetwork.isAllowedUrl(requestUrl)) {
+            throw IOException("Источник «${config.name}» должен использовать HTTPS или локальный HTTP без логина в URL")
         }
 
         val connection = (URL(requestUrl).openConnection() as HttpURLConnection).apply {
@@ -169,8 +176,8 @@ class IndexerRegistry(
             .replace("{apikey}", urlEncode(config.apiKey))
         val uri = runCatching { java.net.URI(substituted) }
             .getOrElse { throw IOException("Некорректный URL индексатора", it) }
-        if (!uri.scheme.equals("https", true) || uri.host.isNullOrBlank() || uri.rawUserInfo != null) {
-            throw IOException("Индексатор должен использовать HTTPS без логина в URL")
+        if (!LocalNetwork.isAllowedUrl(substituted)) {
+            throw IOException("Индексатор должен использовать HTTPS или локальный HTTP без логина в URL")
         }
 
         val queryParts = uri.rawQuery.orEmpty().split('&').filter(String::isNotBlank).toMutableList()
@@ -187,7 +194,7 @@ class IndexerRegistry(
         }
 
         appendIfMissing("apikey", config.apiKey.takeIf { it.isNotBlank() && "{apikey}" !in template })
-        if (config.protocol == IndexerProtocol.TORZNAB) {
+        if (config.protocol == IndexerProtocol.TORZNAB || config.protocol == IndexerProtocol.JACKETT) {
             appendIfMissing("t", "search")
             appendIfMissing("cat", config.categories)
             appendIfMissing("tag", config.tags)
@@ -214,29 +221,36 @@ class IndexerRegistry(
 
     private fun parseFeed(xml: ByteArray, config: IndexerConfig, parser: XmlPullParser): List<SourceResult> {
         parser.setFeature(XmlPullParser.FEATURE_PROCESS_NAMESPACES, false)
+        runCatching { parser.setFeature(XmlPullParser.FEATURE_PROCESS_DOCDECL, false) }
         parser.setInput(xml.inputStream(), "UTF-8")
 
         val result = mutableListOf<SourceResult>()
         var inEntry = false
         var title = ""
         var pageUrl: String? = null
+        var detailsUrl: String? = null
         var magnet: String? = null
         var torrentUrl: String? = null
         var streamUrl: String? = null
+        var tracker: String? = null
         var size: Long? = null
         var seeders: Int? = null
         var leechers: Int? = null
+        var peers: Int? = null
         var category: String? = null
 
         fun reset() {
             title = ""
             pageUrl = null
+            detailsUrl = null
             magnet = null
             torrentUrl = null
             streamUrl = null
+            tracker = null
             size = null
             seeders = null
             leechers = null
+            peers = null
             category = null
         }
 
@@ -246,11 +260,28 @@ class IndexerRegistry(
                 XmlPullParser.START_TAG -> {
                     val name = parser.name.substringAfter(':').lowercase()
                     when (name) {
+                        "error" -> if (!inEntry) {
+                            val code = parser.getAttributeValue(null, "code").orEmpty()
+                            val description = parser.getAttributeValue(null, "description").orEmpty()
+                            throw IOException(
+                                config.name + ": " + description.ifBlank { "ошибка индексатора" } +
+                                    if (code.isBlank()) "" else " (код " + code + ")"
+                            )
+                        }
                         "item", "entry" -> {
                             inEntry = true
                             reset()
                         }
                         "title" -> if (inEntry) title = parser.nextText().trim()
+                        "jackettindexer", "prowlarrindexer" -> if (inEntry) {
+                            tracker = parser.nextText().trim().takeIf(String::isNotBlank)
+                        }
+                        "comments" -> if (inEntry) {
+                            detailsUrl = parser.nextText().trim().takeIf(String::isNotBlank)
+                        }
+                        "size" -> if (inEntry) {
+                            size = parser.nextText().trim().toLongOrNull()?.takeIf { it >= 0L }
+                        }
                         "link" -> if (inEntry) {
                             val href = parser.getAttributeValue(null, "href")
                             val rel = parser.getAttributeValue(null, "rel")
@@ -298,7 +329,8 @@ class IndexerRegistry(
                             when (attr) {
                                 "magneturl" -> if (!value.isNullOrBlank()) magnet = value
                                 "seeders" -> seeders = value?.toIntOrNull()?.takeIf { it >= 0 }
-                                "peers", "leechers" -> leechers = value?.toIntOrNull()?.takeIf { it >= 0 }
+                                "peers" -> peers = value?.toIntOrNull()?.takeIf { it >= 0 }
+                                "leechers" -> leechers = value?.toIntOrNull()?.takeIf { it >= 0 }
                                 "size", "length" -> {
                                     val parsed = value?.toLongOrNull()?.takeIf { it >= 0L }
                                     if (parsed != null) size = parsed
@@ -313,9 +345,9 @@ class IndexerRegistry(
                     val name = parser.name.substringAfter(':').lowercase()
                     if (inEntry && name in setOf("item", "entry")) {
                         val safeMagnet = magnet?.takeIf { it.startsWith("magnet:", true) }
-                        val safeTorrent = torrentUrl?.takeIf(::isHttps)
-                        val safeStream = streamUrl?.takeIf(::isHttps)
-                        val safePage = pageUrl?.takeIf(::isHttps)
+                        val safeTorrent = torrentUrl?.takeIf(LocalNetwork::isAllowedUrl)
+                        val safeStream = streamUrl?.takeIf(LocalNetwork::isAllowedUrl)
+                        val safePage = (detailsUrl ?: pageUrl)?.takeIf(LocalNetwork::isAllowedUrl)
                         if (title.isNotBlank() &&
                             (safeMagnet != null || safeTorrent != null || safeStream != null || safePage != null)
                         ) {
@@ -328,10 +360,11 @@ class IndexerRegistry(
                                 streamUrl = safeStream,
                                 sizeBytes = size,
                                 seeders = seeders,
-                                leechers = leechers,
+                                leechers = leechers ?: peers?.let { (it - (seeders ?: 0)).coerceAtLeast(0) },
                                 pageUrl = safePage,
                                 category = category,
-                                indexerId = config.id
+                                indexerId = config.id,
+                                tracker = tracker
                             )
                         }
                         inEntry = false
@@ -344,7 +377,7 @@ class IndexerRegistry(
     }
 
     private fun isPlayableVideoUrl(value: String, contentType: String): Boolean {
-        if (!isHttps(value)) return false
+        if (!LocalNetwork.isAllowedUrl(value)) return false
         val mime = contentType.substringBefore(';').trim().lowercase()
         if (mime.startsWith("video/") || mime in PLAYLIST_MIME_TYPES) return true
         val path = runCatching { java.net.URI(value).rawPath.orEmpty().lowercase() }.getOrDefault("")
