@@ -73,7 +73,8 @@ data class WebSearchProvider(
     val id: String,
     val name: String,
     val searchUrlTemplate: String,
-    val enabled: Boolean = true
+    val enabled: Boolean = true,
+    val cookie: String = ""
 )
 
 /** Private HDRezka account data. Password and session cookies are encrypted in local storage. */
