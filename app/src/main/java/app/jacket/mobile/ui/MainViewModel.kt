@@ -557,6 +557,29 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun checkHdRezkaMirror(mirror: String) {
+        hdRezkaLoginJob?.cancel()
+        hdRezkaLoginJob = viewModelScope.launch {
+            _isHdRezkaBusy.value = true
+            _hdRezkaStatus.value = "Проверяем доступность зеркала HDRezka…"
+            try {
+                val active = withContext(Dispatchers.IO) {
+                    HdRezkaLoginClient.probeMirror(mirror)
+                }
+                val current = settings.hdRezkaSettings()
+                settings.saveHdRezkaSettings(current.copy(mirror = active))
+                _hdRezkaSettings.value = settings.hdRezkaSettings()
+                _hdRezkaStatus.value = "Зеркало доступно: $active"
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                _hdRezkaStatus.value = error.message ?: "Не удалось проверить зеркало HDRezka"
+            } finally {
+                _isHdRezkaBusy.value = false
+            }
+        }
+    }
+
     fun disconnectHdRezka() {
         settings.disconnectHdRezka()
         _hdRezkaSettings.value = settings.hdRezkaSettings()
