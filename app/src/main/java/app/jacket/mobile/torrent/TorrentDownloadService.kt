@@ -344,7 +344,7 @@ class TorrentDownloadService : Service() {
                     connectTimeout = 10_000
                     readTimeout = 25_000
                     instanceFollowRedirects = false
-                    setRequestProperty("User-Agent", "JacketAndroid/2.1")
+                    setRequestProperty("User-Agent", "JacketAndroid/2.6")
                     if (sameOrigin) {
                         if (sourceConfig != null) {
                             if (sourceConfig.username.isNotBlank() || sourceConfig.password.isNotBlank()) {
