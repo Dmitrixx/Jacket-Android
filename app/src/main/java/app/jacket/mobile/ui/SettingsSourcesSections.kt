@@ -1,6 +1,7 @@
 package app.jacket.mobile.ui
 
 import android.content.Intent
+import android.content.Context
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.compose.BackHandler
@@ -24,6 +25,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -120,15 +122,6 @@ import app.jacket.mobile.torrent.PlaybackSession
 import app.jacket.mobile.torrent.PlaybackSessionStore
 import app.jacket.mobile.torrent.TorrentQueueStore
 import java.io.File
-
-private const val TAB_HOME = 0
-private const val TAB_MOVIES = 1
-private const val TAB_SERIES = 2
-private const val TAB_SEARCH = 3
-private const val TAB_LIBRARY = 4
-
-import android.content.Context
-import androidx.compose.foundation.lazy.LazyListScope
 
 internal class SettingsSourcesEditorState {
     var webEditingId by mutableStateOf("")
@@ -469,16 +462,16 @@ internal fun LazyListScope.SettingsSourcesSections(
                                 id = editor.editingId,
                                 name = editor.sourceName,
                                 searchUrlTemplate = editor.sourceUrl,
-                                editor.protocol = editor.protocol,
-                                editor.apiKey = editor.apiKey,
-                                editor.username = editor.username,
-                                editor.password = editor.password,
-                                editor.cookie = editor.cookie,
-                                editor.categories = editor.categories,
-                                editor.tags = editor.tags,
-                                editor.freeleechOnly = editor.freeleechOnly,
-                                editor.sortBy = editor.sortBy,
-                                editor.sortOrder = editor.sortOrder
+                                protocol = editor.protocol,
+                                apiKey = editor.apiKey,
+                                username = editor.username,
+                                password = editor.password,
+                                cookie = editor.cookie,
+                                categories = editor.categories,
+                                tags = editor.tags,
+                                freeleechOnly = editor.freeleechOnly,
+                                sortBy = editor.sortBy,
+                                sortOrder = editor.sortOrder
                             )
                         )
                         if (saved) editor.clearIndexerEditor()
