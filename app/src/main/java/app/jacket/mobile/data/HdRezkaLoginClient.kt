@@ -132,6 +132,22 @@ object HdRezkaLoginClient {
         return HdRezkaLoginResult(activeBase, cookieHeader)
     }
 
+    /** Converts network failures into next steps without leaking response headers or cookies. */
+    fun userFriendlyError(error: Throwable): String {
+        val chain = generateSequence(error) { it.cause }.take(8).toList()
+        return when {
+            chain.any { it is javax.net.ssl.SSLException } ->
+                "Ошибка HTTPS-сертификата HDRezka. Попробуйте другое актуальное зеркало."
+            chain.any { it is java.net.UnknownHostException } ->
+                "Не удалось найти домен HDRezka. Проверьте зеркало и DNS/доступ к сайту."
+            chain.any { it is java.net.SocketTimeoutException } ->
+                "HDRezka не ответила вовремя. Зеркало перегружено или недоступно из вашей сети."
+            chain.any { it is java.net.ConnectException } ->
+                "Не удалось подключиться к HDRezka. Проверьте доступность зеркала или сеть."
+            else -> error.message?.take(240)?.ifBlank { "Не удалось подключиться к HDRezka." }
+                ?: "Не удалось подключиться к HDRezka."
+        }
+    }
     private data class HttpResult(
         val status: Int,
         val finalUrl: String,
