@@ -2314,8 +2314,17 @@ private fun SettingsScreen(
                                     modifier = Modifier.weight(1f)
                                 ) { Text("Открыть зеркало") }
                             }
+                            OutlinedButton(
+                                onClick = { viewModel.checkHdRezkaMirror(hdMirror) },
+                                modifier = Modifier.fillMaxWidth(),
+                                enabled = !isHdRezkaBusy && hdMirror.isNotBlank()
+                            ) {
+                                Icon(Icons.Default.NetworkCheck, contentDescription = null)
+                                Spacer(Modifier.width(8.dp))
+                                Text("Проверить зеркало")
+                            }
                             Text(
-                                "Если сайт требует CAPTCHA или Cloudflare, автоматический вход остановится. Jacket не обходит защиту; в таком случае используй Cookie из своего браузера.",
+                                "Зеркала могут меняться и быть недоступны в отдельных сетях. Проверка показывает, удаётся ли открыть зеркало и определить активный адрес. CAPTCHA и Cloudflare Jacket не обходит.",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
