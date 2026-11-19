@@ -4,6 +4,7 @@ import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Test
 import java.net.HttpURLConnection
+import java.net.Socket
 import java.net.URL
 import java.nio.file.Files
 
@@ -81,6 +82,27 @@ class LocalStreamServerIntegrationTest {
         } finally {
             server.close()
             file.delete()
+        }
+    }
+
+    @Test
+    fun rejectsOversizedRequestLineBeforeReadingUnboundedInput() {
+        val server = LocalStreamServer(
+            metadata = { _, _ -> error("Metadata must not be requested for an oversized request") },
+            awaitRange = { _, _, _, _ -> error("No byte range should be requested") }
+        )
+        try {
+            server.start()
+            Socket("127.0.0.1", server.port).use { socket ->
+                socket.soTimeout = 3_000
+                val request = "GET /" + "x".repeat(5 * 1024) +
+                    " HTTP/1.1\r\nHost: 127.0.0.1:${server.port}\r\n\r\n"
+                socket.getOutputStream().write(request.toByteArray(Charsets.US_ASCII))
+                val status = socket.getInputStream().bufferedReader().readLine()
+                assertEquals("HTTP/1.1 431 Request Header Fields Too Large", status)
+            }
+        } finally {
+            server.close()
         }
     }
 }

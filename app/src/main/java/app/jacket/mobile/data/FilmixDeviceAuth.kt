@@ -23,7 +23,7 @@ data class FilmixPendingDevice(
  */
 object FilmixDeviceAuth {
     const val ACTIVATION_URL = "https://filmix.gg/consoles"
-    private const val API_BASE = "https://filmixapp.cyou/api/v2"
+    private const val API_BASE = "https://api.filmix.tv/api/v2"
     private const val MAX_RESPONSE_BYTES = 256 * 1024
 
     fun requestCode(
@@ -115,6 +115,21 @@ object FilmixDeviceAuth {
         } finally {
             connection.disconnect()
         }
+    }
+
+    /** Hide raw certificate diagnostics while keeping HTTPS validation strict. */
+    fun userFriendlyError(error: Throwable): String {
+        val chain = generateSequence(error) { it.cause }.take(8).toList()
+        if (chain.any { it is javax.net.ssl.SSLHandshakeException || it is javax.net.ssl.SSLPeerUnverifiedException } ||
+            chain.any {
+                it.message.orEmpty().contains("not verified", ignoreCase = true) ||
+                    it.message.orEmpty().contains("certificate", ignoreCase = true)
+            }
+        ) {
+            return "Filmix API: ошибка проверки HTTPS-сертификата. Проверьте адрес API или попробуйте позже."
+        }
+        return error.message?.replace(Regex("[\\r\\n\\t]+"), " ")?.take(240)
+            ?.ifBlank { "Не удалось подключить Filmix" } ?: "Не удалось подключить Filmix"
     }
 
     private fun encode(value: String): String =

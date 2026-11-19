@@ -18,6 +18,7 @@ import app.jacket.mobile.R
 import app.jacket.mobile.MainActivity
 import app.jacket.mobile.data.MediaSettingsStore
 import app.jacket.mobile.data.IndexerProtocol
+import app.jacket.mobile.data.IndexerErrorSanitizer
 import app.jacket.mobile.data.LocalNetwork
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -363,7 +364,16 @@ class TorrentDownloadService : Service() {
             }
         } catch (error: Exception) {
             target.delete()
-            throw error
+            val safeMessage = IndexerErrorSanitizer.sanitize(
+                error,
+                listOfNotNull(
+                    sourceConfig?.apiKey,
+                    sourceConfig?.cookie,
+                    sourceConfig?.username,
+                    sourceConfig?.password
+                )
+            )
+            throw IOException(safeMessage)
         }
     }
 
