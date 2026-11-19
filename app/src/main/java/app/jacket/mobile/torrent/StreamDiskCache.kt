@@ -6,11 +6,16 @@ import java.io.IOException
 import java.io.RandomAccessFile
 import java.util.LinkedHashMap
 
-/** Stable identity for one aligned byte segment of one torrent file. */
+/** Stable identity for one cached byte interval of one torrent file. */
 internal data class StreamCacheKey(
     val infoHash: String,
     val fileIndex: Int,
-    val segmentIndex: Long
+    val startOffset: Long
+)
+
+internal data class CachedStreamRange(
+    val startOffset: Long,
+    val bytes: ByteArray
 )
 
 /**
@@ -48,18 +53,36 @@ internal class StreamDiskCache(
         storage = RandomAccessFile(cacheFile, "rw")
     }
 
-    /** Returns a detached segment copy, or null when the requested segment is not cached. */
+    /**
+     * Returns the cached bytes beginning at the requested offset. The returned
+     * interval may be shorter than maxLength when it reaches the end of a slot.
+     */
     @Synchronized
     @Throws(IOException::class)
-    fun get(key: StreamCacheKey, expectedLength: Int): ByteArray? {
+    fun get(key: StreamCacheKey, maxLength: Int): CachedStreamRange? {
         checkOpen()
-        if (expectedLength !in 1..segmentBytes) return null
-        val slot = entries[key] ?: return null
-        if (slot.length != expectedLength) return null
-        val result = ByteArray(slot.length)
-        storage.seek(slot.index.toLong() * segmentBytes)
-        storage.readFully(result)
-        return result
+        if (maxLength !in 1..segmentBytes || key.startOffset < 0L) return null
+
+        // Most-recently-used entries are examined first. A seek into an already
+        // cached interval can reuse its suffix, even if the new Range starts at
+        // a different byte offset.
+        val candidates = entries.entries.toList().asReversed()
+        for (candidate in candidates) {
+            val storedKey = candidate.key
+            if (storedKey.infoHash != key.infoHash || storedKey.fileIndex != key.fileIndex) continue
+            if (key.startOffset < storedKey.startOffset) continue
+            val delta = key.startOffset - storedKey.startOffset
+            if (delta >= candidate.value.length.toLong()) continue
+
+            val length = minOf(maxLength, candidate.value.length - delta.toInt())
+            if (length <= 0) continue
+            val result = ByteArray(length)
+            storage.seek(candidate.value.index.toLong() * segmentBytes + delta)
+            storage.readFully(result)
+            entries[storedKey] // Refresh LRU position.
+            return CachedStreamRange(key.startOffset, result)
+        }
+        return null
     }
 
     /** Stores one segment and evicts the least-recently-used slot when the ring is full. */
