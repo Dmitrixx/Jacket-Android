@@ -2795,7 +2795,7 @@ private fun SettingsScreen(
                         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
                     ) {
                         Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Text("JACKET 2.4", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Black)
+                            Text("JACKET 2.6", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Black)
                             Text("Единое приложение для Android, планшетов и Android TV.",
                                 color = MaterialTheme.colorScheme.onSurfaceVariant)
                             Text("Есть Filmix-привязка по коду и настройки HDRezka. RSS / Atom и Torznab обрабатываются внутри приложения; трекер-пресеты открываются в браузере.")
