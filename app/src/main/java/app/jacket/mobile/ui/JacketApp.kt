@@ -1392,7 +1392,6 @@ private fun SourceCard(
         if (release.dolbyVision) "Dolby Vision" else null
     ).plus(release.audioTags).plus(release.sourceTags).distinct()
     val facts = listOfNotNull(
-        source.providerName,
         source.category,
         source.sizeBytes?.let(::formatBytes),
         source.seeders?.let { "↑ $it сидов" },
@@ -1411,8 +1410,19 @@ private fun SourceCard(
                         style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary,
                         fontWeight = FontWeight.Bold)
                 }
-                Text(source.providerName ?: "Источник", style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+                Text(
+                    source.tracker?.takeIf { it.isNotBlank() } ?: source.providerName,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1
+                )
+                if (!source.tracker.isNullOrBlank()) {
+                    Text(
+                        "через ${source.providerName}",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
             }
             Text(source.title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, maxLines = 3)
             if (badges.isNotEmpty()) {
@@ -1894,7 +1904,7 @@ private fun SettingsScreen(
                 item {
                     SettingsMenuRow(
                         title = "Торрент-источники",
-                        subtitle = "RSS / Atom, Torznab, API-ключи и тест подключения",
+                        subtitle = "Jackett (опционально), RSS / Atom, Torznab и API-ключи",
                         badge = indexers.count { it.enabled }.toString(),
                         onClick = { selectedSettingsSection = "indexers" },
                         icon = { Icon(Icons.Default.Download, contentDescription = null) }
@@ -2407,13 +2417,24 @@ private fun SettingsScreen(
             }
 
             item {
+                val savedJackett = indexers.firstOrNull { it.protocol == IndexerProtocol.JACKETT }
+                JackettSetupCard(
+                    saved = savedJackett,
+                    status = savedJackett?.let { statuses[it.id] },
+                    onSave = viewModel::saveJackett,
+                    onTest = { savedJackett?.let { viewModel.testIndexer(it.id) } },
+                    onRemove = { savedJackett?.let { viewModel.removeIndexer(it.id) } }
+                )
+            }
+
+            item {
                 Text(
                     if (editingId.isBlank()) "Добавить агрегатор / индексатор" else "Изменить индексатор",
                     style = MaterialTheme.typography.titleLarge,
                     fontWeight = FontWeight.Bold
                 )
                 Text(
-                    "RSS/Atom и Torznab/Newznab. RSS/Atom может публиковать прямые HTTPS-видео, HLS (.m3u8) и DASH (.mpd) через enclosure или media:content. URL поиска должен содержать {query}; API-ключ — ниже или как {apikey}.",
+                    "Jackett подключается опционально к вашему серверу. Для прямых источников подходят RSS/Atom и Torznab/Newznab; HTTP разрешён только для локального адреса. RSS/Atom может публиковать прямые HTTPS-видео, HLS и DASH. URL поиска содержит {query}.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -2551,7 +2572,7 @@ private fun SettingsScreen(
             }
 
             item {
-                Text("Настроенные индексаторы (${indexers.size})", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                Text("Настроенные индексаторы (${indexers.count { it.protocol != IndexerProtocol.JACKETT }})", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedButton(onClick = { viewModel.testAllIndexers() }, modifier = Modifier.weight(1f)) {
                         Text("Тестировать все")
@@ -2569,7 +2590,7 @@ private fun SettingsScreen(
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
-            items(indexers, key = { it.id }) { indexer ->
+            items(indexers.filter { it.protocol != IndexerProtocol.JACKETT }, key = { it.id }) { indexer ->
                 Card(modifier = Modifier.fillMaxWidth()) {
                     Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Row(verticalAlignment = Alignment.CenterVertically) {

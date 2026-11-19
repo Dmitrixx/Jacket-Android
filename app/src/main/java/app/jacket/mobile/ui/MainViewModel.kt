@@ -12,6 +12,7 @@ import app.jacket.mobile.data.HdRezkaSettings
 import app.jacket.mobile.data.IndexerConfig
 import app.jacket.mobile.data.IndexerFailure
 import app.jacket.mobile.data.IndexerRegistry
+import app.jacket.mobile.data.JackettUrl
 import app.jacket.mobile.data.MediaCatalogClient
 import app.jacket.mobile.data.MediaDetails
 import app.jacket.mobile.data.MediaSection
@@ -355,6 +356,34 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         } catch (error: Exception) {
             showError(error.message ?: "Не удалось сохранить индексатор")
             false
+        }
+    }
+
+    /** Optional connection to the user's own Jackett server. Nothing is bundled in the APK. */
+    fun saveJackett(address: String, apiKey: String, indexerFilter: String) {
+        val base = JackettUrl.normalizeBase(address)
+        if (base == null) {
+            showError("Некорректный адрес Jackett. HTTP разрешён только для локального адреса.")
+            return
+        }
+        if (apiKey.isBlank()) {
+            showError("Введите API-ключ из панели Jackett")
+            return
+        }
+        val existing = _customIndexers.value.firstOrNull {
+            it.protocol == app.jacket.mobile.data.IndexerProtocol.JACKETT
+        }
+        val config = IndexerConfig(
+            id = existing?.id.orEmpty(),
+            name = "Jackett",
+            searchUrlTemplate = JackettUrl.searchTemplate(base, indexerFilter),
+            protocol = app.jacket.mobile.data.IndexerProtocol.JACKETT,
+            apiKey = apiKey.trim()
+        )
+        if (saveIndexer(config)) {
+            _customIndexers.value.firstOrNull {
+                it.protocol == app.jacket.mobile.data.IndexerProtocol.JACKETT
+            }?.let { testIndexer(it.id) }
         }
     }
     fun saveWebSearchProvider(provider: WebSearchProvider): Boolean {

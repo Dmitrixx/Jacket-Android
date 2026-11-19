@@ -17,6 +17,8 @@ import androidx.core.content.ContextCompat
 import app.jacket.mobile.R
 import app.jacket.mobile.MainActivity
 import app.jacket.mobile.data.MediaSettingsStore
+import app.jacket.mobile.data.IndexerProtocol
+import app.jacket.mobile.data.LocalNetwork
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -264,13 +266,18 @@ class TorrentDownloadService : Service() {
         }
         var currentUrl = urlValue
         val originalUri = Uri.parse(urlValue)
-        require(originalUri.scheme == "https" && !originalUri.host.isNullOrBlank() && originalUri.userInfo == null) {
-            "Torrent-файл можно получать только по HTTPS"
+        require(LocalNetwork.isAllowedUrl(urlValue)) {
+            "Для torrent-файла нужен HTTPS или HTTP-адрес локального сервера"
         }
+        val keyParameter = if (sourceConfig?.protocol == IndexerProtocol.JACKETT) {
+            "jackett_apikey"
+        } else "apikey"
         if (sourceConfig != null && sourceConfig.apiKey.isNotBlank()) {
             val uri = Uri.parse(currentUrl)
-            currentUrl = if (uri.getQueryParameter("apikey") == null) {
-                uri.buildUpon().appendQueryParameter("apikey", sourceConfig.apiKey).build().toString()
+            currentUrl = if (uri.getQueryParameter(keyParameter) == null &&
+                sourceConfig.protocol != IndexerProtocol.JACKETT
+            ) {
+                uri.buildUpon().appendQueryParameter(keyParameter, sourceConfig.apiKey).build().toString()
             } else currentUrl
         }
 
@@ -282,16 +289,26 @@ class TorrentDownloadService : Service() {
         try {
             while (true) {
                 val uri = Uri.parse(activeUrl)
-                require(uri.scheme == "https" && !uri.host.isNullOrBlank() && uri.userInfo == null) {
-                    "Перенаправление torrent-файла должно оставаться HTTPS"
+                val allowedRedirect = when (uri.scheme?.lowercase()) {
+                    "https" -> LocalNetwork.isAllowedUrl(activeUrl)
+                    "http" -> originalUri.scheme.equals("http", true) &&
+                        uri.host.equals(originalUri.host, ignoreCase = true) &&
+                        effectivePort(uri) == effectivePort(originalUri) &&
+                        LocalNetwork.isAllowedUrl(activeUrl)
+                    else -> false
                 }
-                val sameOrigin = uri.host.equals(originalUri.host, ignoreCase = true) &&
+                require(allowedRedirect && uri.userInfo == null && !uri.host.isNullOrBlank()) {
+                    "Перенаправление torrent-файла ведёт на небезопасный адрес"
+                }
+                val sameOrigin = uri.scheme.equals(originalUri.scheme, true) &&
+                    uri.host.equals(originalUri.host, ignoreCase = true) &&
                     effectivePort(uri) == effectivePort(originalUri)
                 val requestUrl = if (
                     sameOrigin && sourceConfig?.apiKey?.isNotBlank() == true &&
-                    uri.getQueryParameter("apikey") == null
+                    uri.getQueryParameter(keyParameter) == null &&
+                    sourceConfig.protocol != IndexerProtocol.JACKETT
                 ) {
-                    uri.buildUpon().appendQueryParameter("apikey", sourceConfig.apiKey).build().toString()
+                    uri.buildUpon().appendQueryParameter(keyParameter, sourceConfig.apiKey).build().toString()
                 } else activeUrl
                 val connection = (URL(requestUrl).openConnection() as HttpURLConnection).apply {
                     connectTimeout = 10_000
@@ -308,7 +325,9 @@ class TorrentDownloadService : Service() {
                             setRequestProperty("Authorization", "Basic $encoded")
                         }
                         if (sourceConfig.cookie.isNotBlank()) setRequestProperty("Cookie", sourceConfig.cookie.take(4096))
-                        if (sourceConfig.apiKey.isNotBlank()) setRequestProperty("X-Api-Key", sourceConfig.apiKey.take(512))
+                        if (sourceConfig.apiKey.isNotBlank() && sourceConfig.protocol != IndexerProtocol.JACKETT) {
+                            setRequestProperty("X-Api-Key", sourceConfig.apiKey.take(512))
+                        }
                     }
                 }
                 try {
@@ -352,7 +371,7 @@ class TorrentDownloadService : Service() {
     }
 
     private fun effectivePort(uri: Uri): Int =
-        if (uri.port >= 0) uri.port else if (uri.scheme.equals("https", true)) 443 else -1
+        if (uri.port >= 0) uri.port else if (uri.scheme.equals("https", true)) 443 else 80
 
     @android.annotation.TargetApi(35)
     override fun onTimeout(startId: Int, fgsType: Int) {
