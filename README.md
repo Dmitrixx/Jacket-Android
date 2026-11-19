@@ -1,4 +1,4 @@
-# Jacket — Android media center 2.5.0
+# Jacket — Android media center 2.6.0
 
 Jacket is a single Android application for phones, tablets and Android TV / Google TV. It combines a poster-based media catalog, a user-configurable indexer cabinet, an integrated BitTorrent engine and a loopback HTTP media server.
 
@@ -81,7 +81,12 @@ The local endpoint:
 
 - Binds only to `127.0.0.1`, using port 8090–8099.
 - Supports `GET`, `HEAD`, byte `Range`, `206 Partial Content`, `Content-Range`, `Accept-Ranges` and MIME types based on the filename.
-- Waits a bounded interval for each requested torrent piece instead of requiring the entire file to finish first.
+- Parses the requested byte range and maps it to torrent piece indices using the file's absolute offset and the torrent piece length.
+- Gives the first missing piece the nearest deadline, then schedules a forward window with increasing deadlines (up to 8 MiB / 32 pieces). A seek replaces the old window and starts prioritizing from the new Range position.
+- Waits for the requested pieces to be hash-checked and written to disk before serving those bytes; it does not wait for the entire file.
+- Uses a bounded 32 MiB LRU disk ring for recently served byte ranges. Individual segments are at most 256 KiB, overlapping seeks can reuse cached suffixes, and the oldest cache entries are evicted as the ring fills.
+- Keeps the number of in-flight stream buffers bounded (one segment per active HTTP worker); it never allocates the full video in RAM.
+- The temporary playback cache contains copies only. Evicting cached bytes never deletes libtorrent's verified torrent data, so the torrent's on-disk integrity and fast-resume state remain intact.
 - Rejects non-loopback Host headers, malformed hashes, invalid file indices and traversal-like routes.
 - Is not exposed to the home network or LAN.
 
