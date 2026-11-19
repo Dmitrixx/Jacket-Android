@@ -24,7 +24,6 @@ jobs:
       - name: Install Android SDK packages
         run: sdkmanager "platforms;android-36" "build-tools;36.0.0" "platform-tools"
       - uses: gradle/actions/setup-gradle@v6
-        with:
       - name: Test and build release APK
         run: ./gradlew --no-daemon --stacktrace testDebugUnitTest assembleRelease
       - name: Publish GitHub release
