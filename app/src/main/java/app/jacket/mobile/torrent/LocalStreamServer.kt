@@ -21,8 +21,10 @@ import java.util.concurrent.atomic.AtomicBoolean
  */
 class LocalStreamServer(
     private val metadata: (String, Int) -> TorrentStreamTarget,
-    private val awaitRange: (String, Int, Long, Long) -> File
+    private val awaitRange: (String, Int, Long, Long) -> File,
+    cacheDirectory: File = File(System.getProperty("java.io.tmpdir") ?: ".", "jacket-stream-cache")
 ) : Closeable {
+    private val streamCache = StreamDiskCache(cacheDirectory)
     @Volatile private var serverSocket: ServerSocket? = null
     @Volatile private var acceptThread: Thread? = null
     @Volatile private var workers: ExecutorService? = null
@@ -140,20 +142,42 @@ class LocalStreamServer(
                 if (method == "HEAD") return
 
                 var offset = start
-                val buffer = ByteArray(STREAM_CHUNK_BYTES)
                 while (offset <= end) {
-                    val count = minOf(buffer.size.toLong(), end - offset + 1L).toInt()
-                    val file = awaitRange(id, fileIndex, offset, count.toLong())
-                    java.io.RandomAccessFile(file, "r").use { input ->
-                        input.seek(offset)
-                        var remaining = count
-                        while (remaining > 0) {
-                            val read = input.read(buffer, 0, minOf(buffer.size, remaining))
-                            if (read < 0) throw java.io.IOException("Файл оборвался во время чтения")
-                            out.write(buffer, 0, read)
-                            remaining -= read
+                    // Cache keys are aligned to fixed-size file segments. A seek
+                    // can reuse any recently viewed segment without touching JNI.
+                    val segmentIndex = offset / STREAM_CHUNK_BYTES
+                    val segmentStart = segmentIndex * STREAM_CHUNK_BYTES
+                    val segmentLength = minOf(
+                        STREAM_CHUNK_BYTES.toLong(),
+                        target.sizeBytes - segmentStart
+                    ).toInt()
+                    if (segmentLength <= 0) throw java.io.IOException("Некорректная граница сегмента")
+
+                    val key = StreamCacheKey(id, fileIndex, segmentIndex)
+                    val cached = runCatching {
+                        streamCache.get(key, segmentLength)
+                    }.getOrNull()
+
+                    val segment = cached ?: run {
+                        val file = awaitRange(id, fileIndex, segmentStart, segmentLength.toLong())
+                        val bytes = ByteArray(segmentLength)
+                        java.io.RandomAccessFile(file, "r").use { input ->
+                            input.seek(segmentStart)
+                            input.readFully(bytes)
                         }
+                        // The source file remains authoritative. A full/failed
+                        // cache must never prevent playback from continuing.
+                        runCatching { streamCache.put(key, bytes) }
+                        bytes
                     }
+
+                    val withinSegment = (offset - segmentStart).toInt()
+                    val count = minOf(
+                        segment.size - withinSegment,
+                        (end - offset + 1L).coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
+                    )
+                    if (count <= 0) throw java.io.IOException("Пустой сегмент видеопотока")
+                    out.write(segment, withinSegment, count)
                     out.flush()
                     offset += count
                 }
@@ -219,6 +243,7 @@ class LocalStreamServer(
         serverSocket = null
         try { workers?.shutdownNow() } catch (_: Exception) { }
         workers = null
+        runCatching { streamCache.close() }
         port = 0
         acceptThread = null
     }
@@ -235,6 +260,6 @@ class LocalStreamServer(
         private const val MAX_CLIENTS = 4
         private const val MAX_HEADER_BYTES = 16 * 1024
         private const val CLIENT_IDLE_TIMEOUT_MS = 35_000
-        private const val STREAM_CHUNK_BYTES = 256 * 1024
+        private const val STREAM_CHUNK_BYTES = StreamDiskCache.DEFAULT_SEGMENT_BYTES.toLong()
     }
 }
