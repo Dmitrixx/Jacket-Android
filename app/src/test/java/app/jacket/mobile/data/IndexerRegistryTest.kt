@@ -24,7 +24,7 @@ class IndexerRegistryTest {
                   <guid>https://indexer.example/details/1</guid>
                   <enclosure url="https://indexer.example/download/1.torrent" type="application/x-bittorrent" />
                   <torznab:attr name="seeders" value="37" />
-                  <torznab:attr name="peers" value="5" />
+                  <torznab:attr name="peers" value="42" />
                   <torznab:attr name="size" value="9876543" />
                   <torznab:attr name="category" value="2000" />
                 </item>
