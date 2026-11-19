@@ -129,7 +129,7 @@ private const val TAB_LIBRARY = 4
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun SettingsScreen(
+internal fun SettingsScreen(
     viewModel: MainViewModel,
     onBack: () -> Unit
 ) {
@@ -184,6 +184,12 @@ private fun SettingsScreen(
     }
 
     val sourceEditor = remember { SettingsSourcesEditorState() }
+    var hdMirror by remember(hdRezkaSettings.mirror) {
+        mutableStateOf(hdRezkaSettings.mirror.ifBlank { "https://standby-rezka.tv" })
+    }
+    var hdLogin by remember(hdRezkaSettings.login) { mutableStateOf(hdRezkaSettings.login) }
+    var hdPassword by remember(hdRezkaSettings.password) { mutableStateOf(hdRezkaSettings.password) }
+    var hdCookie by remember(hdRezkaSettings.cookie) { mutableStateOf(hdRezkaSettings.cookie) }
 
     BackHandler(enabled = selectedSettingsSection != "home") {
         selectedSettingsSection = "home"
