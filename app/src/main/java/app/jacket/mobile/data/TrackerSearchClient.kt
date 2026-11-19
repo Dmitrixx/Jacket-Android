@@ -182,7 +182,7 @@ object TrackerSearchClient {
 
     private fun fetchHtml(urlValue: String, cookie: String, originalHost: String): HtmlPage {
         var current = urlValue
-        repeat(MAX_REDIRECTS + 1) { redirect ->
+        for (redirect in 0..MAX_REDIRECTS) {
             if (!LocalNetwork.isAllowedUrl(current)) throw IOException("Трекер вернул небезопасный URL")
             val uri = URI(current)
             val connection = (URL(current).openConnection() as HttpURLConnection).apply {
