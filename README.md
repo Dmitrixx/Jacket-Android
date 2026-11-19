@@ -1,4 +1,4 @@
-# Jacket — Android media center 2.5.0
+# Jacket — Android media center 2.6.0
 
 Jacket is a single Android application for phones, tablets and Android TV / Google TV. It combines a poster-based media catalog, a user-configurable indexer cabinet, an integrated BitTorrent engine and a loopback HTTP media server.
 
@@ -20,14 +20,16 @@ The project is under active development. CI verifies JVM unit tests and APK asse
 ## Filmix and HDRezka accounts
 
 - **Filmix** uses a device-code flow: Jacket requests a short-lived code, the user confirms it on the Filmix device page, and the app polls for activation. The permanent device token is encrypted using Android Keystore. No Filmix password is requested.
-- **HDRezka** has HTTPS mirror, email/login, password and manual Cookie-session fields. The app attempts the normal site sign-in and saves returned cookies encrypted using Android Keystore. If a mirror presents CAPTCHA, Cloudflare or an interactive browser challenge, Jacket stops and does not attempt to bypass it; a session cookie can be entered manually after signing in through the user's regular browser.
+- **HDRezka** has HTTPS mirror, email/login, password and manual Cookie-session fields. The app attempts the normal site sign-in and saves returned cookies encrypted using Android Keystore. Mirrors can rotate, so users can enter a public HTTPS mirror and run a separate reachability check to discover the active host. If a mirror presents CAPTCHA, Cloudflare or an interactive browser challenge, Jacket stops and does not attempt to bypass it; a session cookie can be entered manually after signing in through the user's regular browser.
 - Credentials and cookies stay on the device and are not included in diagnostics or tracker exports.
 
 These account screens manage authentication state. They do not claim universal playback support for arbitrary protected HTML player pages; direct media playback continues to require a source-published direct URL or a supported feed.
 
 ## Built-in tracker shortcuts
 
-The first run seeds search shortcuts for RuTracker, NNM-Club, Rutor, Kinozal, 1337x, The Pirate Bay and Internet Archive. The user can enable, disable, edit or delete them and restore the preset list later. These shortcuts open the selected website in the external browser. They are not site-specific HTML scrapers or native torrent adapters. For in-app structured results, add a Torznab/Newznab or RSS endpoint under Torrent Sources.
+The first run seeds search shortcuts for RuTracker, NNM-Club, Rutor, Kinozal, 1337x, The Pirate Bay and Internet Archive. Jacket includes in-app HTML result parsers for RuTracker, NNM-Club, Rutor, Kinozal, 1337x and The Pirate Bay. Selecting one of these trackers searches and parses its result page inside the app; matching magnets and .torrent links are shown in the same release list as Torznab results. Internet Archive uses its structured metadata API. Other user-added website shortcuts remain ordinary links and open in the browser.
+
+Tracker pages can change their markup or require an account, CAPTCHA or anti-bot challenge. For user-owned tracker accounts, an optional Cookie can be stored per tracker encrypted with Android Keystore. Cookie headers are restricted to the original tracker host and omitted from exports. Jacket does not solve CAPTCHA or bypass anti-bot controls.
 
 ## Indexer cabinet and optional Jackett connector
 
