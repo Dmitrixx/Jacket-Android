@@ -27,8 +27,8 @@ class LocalStreamServerIntegrationTest {
             awaitRange = { id, index, start, length ->
                 assertEquals(hash, id)
                 assertEquals(0, index)
-                assertEquals(0L, start)
-                assertEquals(payload.size.toLong(), length)
+                assertEquals(2L, start)
+                assertEquals(4L, length)
                 awaitedRanges++
                 file
             },
