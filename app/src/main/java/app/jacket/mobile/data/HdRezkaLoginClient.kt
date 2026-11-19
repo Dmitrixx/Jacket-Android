@@ -36,16 +36,33 @@ object HdRezkaLoginClient {
             "Укажите HTTPS-домен зеркала без логина и пароля в URL"
         }
         val host = uri.host.lowercase().removePrefix("www.")
-        val isRezkaMirror = host.startsWith("hdrezka.") || host.startsWith("hdrezka-") ||
-            host.startsWith("rezka.") || host.startsWith("rezka-") ||
-            host.startsWith("standby-rezka.")
-        require(isRezkaMirror) {
-            "Адрес должен относиться к зеркалу HDRezka"
+        // Mirrors change frequently and some active domains do not contain
+        // "rezka" in their hostname. The user explicitly supplies this HTTPS
+        // endpoint, so accept a public DNS hostname while rejecting local/IP
+        // targets to avoid sending account credentials to private services.
+        require(host.contains('.') && !LocalNetwork.isLocalHost(host) &&
+            !host.matches(Regex("[0-9.]+")) && !host.contains(':')
+        ) {
+            "Укажите публичный HTTPS-домен зеркала HDRezka"
         }
         require(uri.rawQuery.isNullOrBlank() && uri.rawFragment.isNullOrBlank() &&
             (uri.rawPath.isNullOrBlank() || uri.rawPath == "/")
         ) { "Укажите только домен зеркала, без пути и параметров" }
         return clean.trimEnd('/')
+    }
+
+    /** Resolves the service's current active mirror without sending account credentials. */
+    fun probeMirror(mirror: String): String {
+        val initialMirror = validateMirror(mirror)
+        val cookies = CookieManager(null, CookiePolicy.ACCEPT_ALL)
+        val response = requestFollowingGetRedirects("$initialMirror/", cookies)
+        if (response.body.contains("cf-chl", true) ||
+            response.body.contains("Just a moment", true) ||
+            response.body.contains("challenge-platform", true)
+        ) {
+            throw IOException("Зеркало доступно, но требует браузерную проверку CAPTCHA/Cloudflare.")
+        }
+        return validateMirror(originOf(response.finalUrl))
     }
 
     fun login(mirror: String, username: String, password: String): HdRezkaLoginResult {
