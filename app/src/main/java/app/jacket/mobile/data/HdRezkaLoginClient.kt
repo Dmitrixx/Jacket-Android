@@ -99,10 +99,6 @@ object HdRezkaLoginClient {
         if (loginSuccess == false) {
             throw IOException("HDRezka отклонила вход. Проверьте логин и пароль.")
         }
-                .find(response.body)?.groupValues?.getOrNull(1)
-            throw IOException(serverMessage ?: "HDRezka отклонила логин или пароль.")
-        }
-
         val cookieHeader = cookies.get(URI("$activeBase/"), emptyMap())
             .entries.firstOrNull { it.key.equals("Cookie", true) }
             ?.value.orEmpty().joinToString("; ")
