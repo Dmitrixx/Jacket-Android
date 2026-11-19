@@ -1280,8 +1280,8 @@ private fun DetailScreen(
                                 SourceCard(
                                     source = source,
                                     onPlay = { url -> onPlay(source.title, url) },
-                                    onMagnet = { magnet -> TorrentDownloadService.add(context, magnet, source.title) },
-                                    onTorrent = { url -> TorrentDownloadService.addTorrentUrl(context, url, source.title, source.indexerId) },
+                                    onMagnet = { magnet -> TorrentDownloadService.addAndPlay(context, magnet, source.title) },
+                                    onTorrent = { url -> TorrentDownloadService.addTorrentUrlAndPlay(context, url, source.title, source.indexerId) },
                                     onPage = { url -> openExternal(context, url) }
                                 )
                             }
@@ -1301,7 +1301,7 @@ private fun DetailScreen(
             ) {
                 Text("Источник", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
                 Text(
-                    "Выберите сайт. Поиск откроется в браузере с названием «${details?.item?.title.orEmpty()}».",
+                    "Выберите трекер. Поддерживаемые трекеры Jacket разберёт прямо здесь; остальные сайты откроются отдельно.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -1330,7 +1330,13 @@ private fun DetailScreen(
                                         media.year.takeIf { it != "Год неизвестен" }
                                     ).joinToString(" ")
                                 }.orEmpty()
-                                if (query.isNotBlank()) openWebsiteSearch(context, provider, query)
+                                if (query.isNotBlank()) {
+                                    if (TrackerSearchClient.supports(provider.id) || provider.id == "tracker-archive") {
+                                        viewModel.searchTracker(provider, query)
+                                    } else {
+                                        openWebsiteSearch(context, provider, query)
+                                    }
+                                }
                             },
                             color = MaterialTheme.colorScheme.surfaceVariant,
                             shape = MaterialTheme.shapes.large
@@ -1360,12 +1366,16 @@ private fun DetailScreen(
                                         maxLines = 1
                                     )
                                 }
-                                Icon(Icons.Default.OpenInNew, contentDescription = "Открыть")
+                                Icon(
+                                    if (TrackerSearchClient.supports(provider.id) || provider.id == "tracker-archive")
+                                        Icons.Default.Search else Icons.Default.OpenInNew,
+                                    contentDescription = "Выбрать источник"
+                                )
                             }
                         }
                     }
                     Text(
-                        "Сайт открывается во внешнем браузере. Jacket не обходит авторизацию и не извлекает поток со страницы.",
+                        "Встроенный поиск возвращает magnet/.torrent в общий список. Для RuTracker, NNM-Club и Kinozal может понадобиться Cookie вашей сессии. CAPTCHA и браузерные проверки не обходятся.",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -1445,12 +1455,12 @@ private fun SourceCard(
                     source.magnetUri != null -> Button(onClick = { onMagnet(source.magnetUri) }) {
                         Icon(Icons.Default.Download, contentDescription = null)
                         Spacer(Modifier.width(6.dp))
-                        Text("Добавить")
+                        Text("Смотреть")
                     }
                     source.downloadUrl != null -> Button(onClick = { onTorrent(source.downloadUrl) }) {
                         Icon(Icons.Default.Download, contentDescription = null)
                         Spacer(Modifier.width(6.dp))
-                        Text("Загрузить")
+                        Text("Смотреть")
                     }
                     source.pageUrl != null -> OutlinedButton(onClick = { onPage(source.pageUrl) }) {
                         Icon(Icons.Default.OpenInNew, contentDescription = null)
@@ -1716,6 +1726,7 @@ private fun SettingsScreen(
     var webEditingId by rememberSaveable { mutableStateOf("") }
     var webName by rememberSaveable { mutableStateOf("") }
     var webUrlTemplate by rememberSaveable { mutableStateOf("") }
+    var webCookie by rememberSaveable { mutableStateOf("") }
 
     var hdMirror by remember(hdRezkaSettings.mirror) {
         mutableStateOf(hdRezkaSettings.mirror.ifBlank { "https://standby-rezka.tv" })
@@ -2313,19 +2324,35 @@ private fun SettingsScreen(
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
                             minLines = 2
                         )
+                        OutlinedTextField(
+                            value = webCookie,
+                            onValueChange = { webCookie = it.replace(Regex("[\\r\\n]"), "").take(8192) },
+                            modifier = Modifier.fillMaxWidth(),
+                            label = { Text("Cookie трекера (необязательно)") },
+                            placeholder = { Text("Cookie вашей сессии на трекере") },
+                            visualTransformation = PasswordVisualTransformation(),
+                            minLines = 2
+                        )
+                        Text(
+                            "Cookie хранится в зашифрованном виде на устройстве. Не отправляйте её другим людям.",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
                         Button(
                             onClick = {
                                 val saved = viewModel.saveWebSearchProvider(
                                     WebSearchProvider(
                                         id = webEditingId,
                                         name = webName,
-                                        searchUrlTemplate = webUrlTemplate
+                                        searchUrlTemplate = webUrlTemplate,
+                                        cookie = webCookie
                                     )
                                 )
                                 if (saved) {
                                     webEditingId = ""
                                     webName = ""
                                     webUrlTemplate = ""
+                                    webCookie = ""
                                     Toast.makeText(context, "Сайт поиска сохранён", Toast.LENGTH_SHORT).show()
                                 } else {
                                     Toast.makeText(context, "Проверьте название и HTTPS-шаблон с {query}", Toast.LENGTH_LONG).show()
@@ -2343,6 +2370,7 @@ private fun SettingsScreen(
                                     webEditingId = ""
                                     webName = ""
                                     webUrlTemplate = ""
+                                    webCookie = ""
                                 },
                                 modifier = Modifier.fillMaxWidth()
                             ) { Text("Отменить редактирование") }
@@ -2378,7 +2406,13 @@ private fun SettingsScreen(
                                 color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 3)
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                 OutlinedButton(
-                                    onClick = { openWebsiteSearch(context, provider, "Jacket test") },
+                                    onClick = {
+                                        if (TrackerSearchClient.supports(provider.id) || provider.id == "tracker-archive") {
+                                            viewModel.searchTracker(provider, "Jacket test")
+                                        } else {
+                                            openWebsiteSearch(context, provider, "Jacket test")
+                                        }
+                                    },
                                     enabled = provider.enabled
                                 ) { Text("Проверить") }
                                 OutlinedButton(
@@ -2386,6 +2420,7 @@ private fun SettingsScreen(
                                         webEditingId = provider.id
                                         webName = provider.name
                                         webUrlTemplate = provider.searchUrlTemplate
+                                        webCookie = provider.cookie
                                     }
                                 ) { Text("Изменить") }
                                 OutlinedButton(onClick = { viewModel.removeWebSearchProvider(provider.id) }) {
