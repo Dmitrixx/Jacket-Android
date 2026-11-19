@@ -33,7 +33,7 @@ object TrackerSearchClient {
         "tracker-tpb"
     )
 
-    private data class Candidate(
+    internal data class Candidate(
         val title: String,
         val pageUrl: String?,
         val magnet: String?,
@@ -101,7 +101,7 @@ object TrackerSearchClient {
             .sortedWith(compareByDescending<SourceResult> { it.seeders ?: -1 }.thenBy { it.title.lowercase(Locale.ROOT) })
     }
 
-    private fun parseListing(html: String, baseUrl: String, providerId: String): List<Candidate> {
+    internal fun parseListing(html: String, baseUrl: String, providerId: String): List<Candidate> {
         require(supports(providerId))
         val document = Jsoup.parse(html, baseUrl)
         val result = LinkedHashMap<String, Candidate>()
