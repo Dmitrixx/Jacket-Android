@@ -2319,7 +2319,7 @@ private fun SettingsScreen(
                                 modifier = Modifier.fillMaxWidth(),
                                 enabled = !isHdRezkaBusy && hdMirror.isNotBlank()
                             ) {
-                                Icon(Icons.Default.NetworkCheck, contentDescription = null)
+                                Icon(Icons.Default.Refresh, contentDescription = null)
                                 Spacer(Modifier.width(8.dp))
                                 Text("Проверить зеркало")
                             }
