@@ -143,43 +143,37 @@ class LocalStreamServer(
 
                 var offset = start
                 while (offset <= end) {
-                    // Cache keys are aligned to fixed-size file segments. A seek
-                    // can reuse any recently viewed segment without touching JNI.
-                    val segmentIndex = offset / STREAM_CHUNK_BYTES
-                    val segmentStart = segmentIndex * STREAM_CHUNK_BYTES
-                    val segmentLength = minOf(
-                        STREAM_CHUNK_BYTES.toLong(),
-                        target.sizeBytes - segmentStart
+                    // Keep the first cache miss anchored at the exact byte
+                    // requested by ExoPlayer. This lets the engine prioritize
+                    // the right torrent piece on a seek, not the start of a
+                    // preceding cache-alignment block.
+                    val count = minOf(
+                        STREAM_CHUNK_BYTES,
+                        end - offset + 1L
                     ).toInt()
-                    if (segmentLength <= 0) throw java.io.IOException("Некорректная граница сегмента")
+                    if (count <= 0) throw java.io.IOException("Пустой диапазон видеопотока")
 
-                    val key = StreamCacheKey(id, fileIndex, segmentIndex)
+                    val key = StreamCacheKey(id, fileIndex, offset)
                     val cached = runCatching {
-                        streamCache.get(key, segmentLength)
+                        streamCache.get(key, count)
                     }.getOrNull()
 
-                    val segment = cached ?: run {
-                        val file = awaitRange(id, fileIndex, segmentStart, segmentLength.toLong())
-                        val bytes = ByteArray(segmentLength)
-                        java.io.RandomAccessFile(file, "r").use { input ->
-                            input.seek(segmentStart)
-                            input.readFully(bytes)
+                    val bytes = cached?.bytes ?: run {
+                        val file = awaitRange(id, fileIndex, offset, count.toLong())
+                        ByteArray(count).also { buffer ->
+                            java.io.RandomAccessFile(file, "r").use { input ->
+                                input.seek(offset)
+                                input.readFully(buffer)
+                            }
+                            // The verified torrent file remains authoritative.
+                            // A full/failed cache must never prevent playback.
+                            runCatching { streamCache.put(key, buffer) }
                         }
-                        // The source file remains authoritative. A full/failed
-                        // cache must never prevent playback from continuing.
-                        runCatching { streamCache.put(key, bytes) }
-                        bytes
                     }
 
-                    val withinSegment = (offset - segmentStart).toInt()
-                    val count = minOf(
-                        segment.size - withinSegment,
-                        (end - offset + 1L).coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
-                    )
-                    if (count <= 0) throw java.io.IOException("Пустой сегмент видеопотока")
-                    out.write(segment, withinSegment, count)
+                    out.write(bytes)
                     out.flush()
-                    offset += count
+                    offset += bytes.size
                 }
             } catch (_: Exception) {
                 // The player will reconnect on a failed range; do not expose internal file paths.
