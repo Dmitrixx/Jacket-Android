@@ -140,6 +140,8 @@ internal fun SettingsScreen(
     val statuses by viewModel.indexerStatuses.collectAsState()
     val sourceResults by viewModel.sourceResults.collectAsState()
     val searchingSources by viewModel.isSearchingSources.collectAsState()
+    val message by viewModel.message.collectAsState()
+    val isError by viewModel.isError.collectAsState()
     val filmixToken by viewModel.filmixToken.collectAsState()
     val filmixCode by viewModel.filmixCode.collectAsState()
     val filmixStatus by viewModel.filmixStatus.collectAsState()
@@ -692,11 +694,18 @@ internal fun SettingsScreen(
                 }
             }
 
-            SettingsSourcesSections(
+            settingsSourcesSections(
                 selectedSettingsSection = selectedSettingsSection,
                 viewModel = viewModel,
                 context = context,
                 editor = sourceEditor,
+                webSearchProviders = webSearchProviders,
+                indexers = indexers,
+                statuses = statuses,
+                sourceResults = sourceResults,
+                searchingSources = searchingSources,
+                message = message,
+                isError = isError,
                 onImportIndexers = { importIndexers.launch(arrayOf("application/json", "text/json")) },
                 onExportIndexers = { exportIndexers.launch("jacket-indexers.json") }
             )
