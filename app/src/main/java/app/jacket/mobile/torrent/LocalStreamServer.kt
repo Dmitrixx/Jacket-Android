@@ -1,9 +1,11 @@
 package app.jacket.mobile.torrent
 
-import java.io.BufferedReader
+import java.io.BufferedInputStream
+import java.io.ByteArrayOutputStream
 import java.io.Closeable
 import java.io.File
-import java.io.InputStreamReader
+import java.io.IOException
+import java.io.InputStream
 import java.io.OutputStream
 import java.net.InetAddress
 import java.net.ServerSocket
@@ -11,9 +13,11 @@ import java.net.Socket
 import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
 import java.security.SecureRandom
+import java.util.concurrent.ArrayBlockingQueue
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ExecutorService
-import java.util.concurrent.Executors
-import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.ThreadPoolExecutor
+import java.util.concurrent.TimeUnit
 
 /**
  * Loopback-only HTTP byte-range server for in-progress torrents. It never binds a LAN interface.
@@ -29,6 +33,7 @@ class LocalStreamServer(
     @Volatile var port: Int = 0
         private set
     private val accessToken = newAccessToken()
+    private val clients = ConcurrentHashMap.newKeySet<Socket>()
 
     val isRunning: Boolean get() = serverSocket?.isClosed == false
 
@@ -53,7 +58,13 @@ class LocalStreamServer(
             "Не удалось запустить локальный видеосервер на портах $FIRST_PORT–$LAST_PORT",
             lastError
         )
-        workers = Executors.newFixedThreadPool(MAX_CLIENTS) { runnable ->
+        workers = ThreadPoolExecutor(
+            MAX_CLIENTS,
+            MAX_CLIENTS,
+            0L,
+            TimeUnit.MILLISECONDS,
+            ArrayBlockingQueue(MAX_QUEUED_CLIENTS)
+        ) { runnable ->
             Thread(runnable, "JacketStreamClient").apply { isDaemon = true }
         }
         acceptThread = Thread({ acceptLoop() }, "JacketStreamAccept").apply {
@@ -75,7 +86,22 @@ class LocalStreamServer(
             try {
                 val socket = serverSocket?.accept() ?: break
                 socket.soTimeout = CLIENT_IDLE_TIMEOUT_MS
-                workers?.execute { handle(socket) } ?: socket.close()
+                clients.add(socket)
+                try {
+                    workers?.execute {
+                        try {
+                            handle(socket)
+                        } finally {
+                            clients.remove(socket)
+                        }
+                    } ?: run {
+                        clients.remove(socket)
+                        socket.close()
+                    }
+                } catch (_: java.util.concurrent.RejectedExecutionException) {
+                    clients.remove(socket)
+                    socket.close()
+                }
             } catch (_: java.net.SocketTimeoutException) {
                 // Periodically re-check isRunning.
             } catch (_: Exception) {
@@ -87,24 +113,46 @@ class LocalStreamServer(
     private fun handle(socket: Socket) {
         socket.use { client ->
             try {
-                val reader = BufferedReader(InputStreamReader(client.getInputStream(), StandardCharsets.US_ASCII))
-                val requestLine = reader.readLine() ?: return
+                val input = BufferedInputStream(client.getInputStream())
+                val requestLine = try {
+                    readBoundedLine(input, MAX_REQUEST_LINE_BYTES)
+                } catch (_: RequestTooLargeException) {
+                    return sendError(client.getOutputStream(), 431, "Request Header Fields Too Large")
+                } ?: return
                 val request = requestLine.split(' ')
-                if (request.size < 2) return sendError(client.getOutputStream(), 400, "Bad Request")
+                if (request.size != 3 || request[1].isBlank() ||
+                    request[2] !in setOf("HTTP/1.0", "HTTP/1.1")
+                ) {
+                    return sendError(client.getOutputStream(), 400, "Bad Request")
+                }
                 val method = request[0].uppercase()
                 if (method != "GET" && method != "HEAD") {
                     return sendError(client.getOutputStream(), 405, "Method Not Allowed", "Allow: GET, HEAD\r\n")
                 }
 
                 val headers = LinkedHashMap<String, String>()
-                var totalHeaderBytes = requestLine.length
+                var totalHeaderBytes = requestLine.length + 2
                 while (true) {
-                    val line = reader.readLine() ?: break
-                    totalHeaderBytes += line.length
-                    if (totalHeaderBytes > MAX_HEADER_BYTES) return sendError(client.getOutputStream(), 431, "Request Header Fields Too Large")
+                    val line = try {
+                        readBoundedLine(input, MAX_HEADER_LINE_BYTES)
+                    } catch (_: RequestTooLargeException) {
+                        return sendError(client.getOutputStream(), 431, "Request Header Fields Too Large")
+                    } ?: return sendError(client.getOutputStream(), 400, "Bad Request")
+                    totalHeaderBytes += line.length + 2
+                    if (totalHeaderBytes > MAX_HEADER_BYTES) {
+                        return sendError(client.getOutputStream(), 431, "Request Header Fields Too Large")
+                    }
                     if (line.isEmpty()) break
                     val separator = line.indexOf(':')
-                    if (separator > 0) headers[line.substring(0, separator).trim().lowercase()] = line.substring(separator + 1).trim()
+                    if (separator <= 0) return sendError(client.getOutputStream(), 400, "Bad Request")
+                    val name = line.substring(0, separator).trim()
+                    val value = line.substring(separator + 1).trim()
+                    if (name.isEmpty() || !name.all { it.isLetterOrDigit() || it == '-' } ||
+                        value.any { it.code < 0x20 && it != '\t' }
+                    ) {
+                        return sendError(client.getOutputStream(), 400, "Bad Request")
+                    }
+                    headers[name.lowercase()] = value
                 }
 
                 if (!validHost(headers["host"])) return sendError(client.getOutputStream(), 403, "Forbidden")
@@ -116,8 +164,12 @@ class LocalStreamServer(
                 val target = try {
                     metadata(id, fileIndex)
                 } catch (error: Exception) {
-                    val status = if (error.message?.contains("не найден", true) == true) 404 else 503
-                    return sendError(client.getOutputStream(), status, error.message ?: "Stream unavailable")
+                    val notFound = error.message?.contains("не найден", true) == true
+                    return sendError(
+                        client.getOutputStream(),
+                        if (notFound) 404 else 503,
+                        if (notFound) "Not Found" else "Stream unavailable"
+                    )
                 }
                 if (target.sizeBytes <= 0L) return sendError(client.getOutputStream(), 416, "Range Not Satisfiable")
 
@@ -162,6 +214,31 @@ class LocalStreamServer(
             }
         }
     }
+
+    /**
+     * Reads one HTTP line without allowing BufferedReader.readLine() to allocate an
+     * attacker-controlled amount of memory before the header-size check runs.
+     */
+    private fun readBoundedLine(input: InputStream, maxBytes: Int): String? {
+        val bytes = ByteArrayOutputStream(minOf(maxBytes, 256))
+        var received = false
+        while (true) {
+            val next = input.read()
+            if (next < 0) {
+                if (!received) return null
+                break
+            }
+            received = true
+            if (next == '\n'.code) break
+            if (bytes.size() >= maxBytes) throw RequestTooLargeException()
+            bytes.write(next)
+        }
+        val raw = bytes.toByteArray()
+        val length = if (raw.lastOrNull() == '\r'.code.toByte()) raw.size - 1 else raw.size
+        return String(raw, 0, length, StandardCharsets.US_ASCII)
+    }
+
+    private class RequestTooLargeException : IOException()
 
     private fun validHost(value: String?): Boolean = LocalStreamHostPolicy.accepts(value, port)
 
@@ -217,6 +294,8 @@ class LocalStreamServer(
     override fun close() {
         try { serverSocket?.close() } catch (_: Exception) { }
         serverSocket = null
+        clients.forEach { client -> runCatching { client.close() } }
+        clients.clear()
         try { workers?.shutdownNow() } catch (_: Exception) { }
         workers = null
         port = 0
@@ -233,6 +312,9 @@ class LocalStreamServer(
         private const val FIRST_PORT = 8090
         private const val LAST_PORT = 8099
         private const val MAX_CLIENTS = 4
+        private const val MAX_QUEUED_CLIENTS = 8
+        private const val MAX_REQUEST_LINE_BYTES = 4 * 1024
+        private const val MAX_HEADER_LINE_BYTES = 8 * 1024
         private const val MAX_HEADER_BYTES = 16 * 1024
         private const val CLIENT_IDLE_TIMEOUT_MS = 35_000
         private const val STREAM_CHUNK_BYTES = 256 * 1024
