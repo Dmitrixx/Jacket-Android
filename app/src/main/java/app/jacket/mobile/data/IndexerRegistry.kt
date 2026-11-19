@@ -8,6 +8,7 @@ import java.net.HttpURLConnection
 import java.net.URL
 import java.util.concurrent.Callable
 import java.util.concurrent.Executors
+import java.util.concurrent.Future
 import java.util.concurrent.TimeUnit
 
 /**
@@ -17,6 +18,13 @@ import java.util.concurrent.TimeUnit
 class IndexerRegistry(
     private val catalog: MediaCatalogClient = MediaCatalogClient()
 ) {
+    private data class SearchTask(
+        val indexerId: String,
+        val indexerName: String,
+        val config: IndexerConfig?,
+        val future: Future<Result<List<SourceResult>>>
+    )
+
     fun search(
         query: String,
         customIndexers: List<IndexerConfig>,
@@ -38,16 +46,26 @@ class IndexerRegistry(
             val tasks = buildList {
                 if (includeArchive) {
                     add(
-                        "archive" to "Internet Archive" to executor.submit(Callable {
-                            runCatching { catalog.archiveSources(query) }
-                        })
+                        SearchTask(
+                            indexerId = "archive",
+                            indexerName = "Internet Archive",
+                            config = null,
+                            future = executor.submit(Callable {
+                                runCatching { catalog.archiveSources(query) }
+                            })
+                        )
                     )
                 }
                 active.forEach { config ->
                     add(
-                        config.id to config.name to executor.submit(Callable {
-                            runCatching { searchFeed(config, query) }
-                        })
+                        SearchTask(
+                            indexerId = config.id,
+                            indexerName = config.name,
+                            config = config,
+                            future = executor.submit(Callable {
+                                runCatching { searchFeed(config, query) }
+                            })
+                        )
                     )
                 }
             }
@@ -55,19 +73,21 @@ class IndexerRegistry(
             val results = ArrayList<SourceResult>()
             val failures = ArrayList<IndexerFailure>()
             tasks.forEach { task ->
-                val (keyAndName, future) = task
-                val (id, name) = keyAndName
                 try {
-                    val result = future.get()
+                    val result = task.future.get()
                     result.onSuccess(results::addAll).onFailure { error ->
                         failures += IndexerFailure(
-                            indexerId = id,
-                            indexerName = name,
-                            message = safeError(error)
+                            indexerId = task.indexerId,
+                            indexerName = task.indexerName,
+                            message = safeError(error, task.config)
                         )
                     }
                 } catch (error: Exception) {
-                    failures += IndexerFailure(id, name, safeError(error))
+                    failures += IndexerFailure(
+                        task.indexerId,
+                        task.indexerName,
+                        safeError(error, task.config)
+                    )
                 }
             }
 
@@ -81,7 +101,11 @@ class IndexerRegistry(
     fun searchOne(config: IndexerConfig, query: String): List<SourceResult> {
         require(config.enabled) { "Индексатор отключён" }
         require(query.isNotBlank()) { "Введите поисковый запрос" }
-        return searchFeed(config, query.trim())
+        return try {
+            searchFeed(config, query.trim())
+        } catch (error: Exception) {
+            throw IOException(safeError(error, config))
+        }
     }
 
     /** A valid empty response still means that the authenticated indexer is reachable. */
@@ -91,7 +115,11 @@ class IndexerRegistry(
                 ?: throw IOException("Некорректный URL Jackett")
             config.copy(searchUrlTemplate = JackettUrl.capabilitiesTemplate(parsed.baseUrl, parsed.indexer))
         } else config
-        return searchFeed(probeConfig, "jacket-connectivity-test").size
+        return try {
+            searchFeed(probeConfig, "jacket-connectivity-test").size
+        } catch (error: Exception) {
+            throw IOException(safeError(error, config))
+        }
     }
 
     fun testAll(configs: List<IndexerConfig>): List<IndexerFailure> {
@@ -104,7 +132,7 @@ class IndexerRegistry(
                 val result = runCatching { future.get() }.getOrElse {
                     Result.failure(it)
                 }
-                result.exceptionOrNull()?.let { IndexerFailure(config.id, config.name, safeError(it)) }
+                result.exceptionOrNull()?.let { IndexerFailure(config.id, config.name, safeError(it, config)) }
             }
         } finally {
             executor.shutdownNow()
@@ -389,10 +417,11 @@ class IndexerRegistry(
         uri.scheme.equals("https", true) && !uri.host.isNullOrBlank() && uri.rawUserInfo == null
     }.getOrDefault(false)
 
-    private fun safeError(error: Throwable): String =
-        (error.cause?.message ?: error.message ?: error.javaClass.simpleName)
-            .replace(Regex("[\\r\\n\\t]+"), " ")
-            .take(MAX_ERROR_LENGTH)
+    private fun safeError(error: Throwable, config: IndexerConfig? = null): String =
+        IndexerErrorSanitizer.sanitize(
+            error,
+            listOfNotNull(config?.apiKey, config?.cookie, config?.username, config?.password)
+        )
 
     private companion object {
         const val MAX_INDEXERS = 100
@@ -400,7 +429,6 @@ class IndexerRegistry(
         const val MAX_TOTAL_RESULTS = 200
         const val MAX_FEED_RESULTS = 100
         const val MAX_FEED_BYTES = 4 * 1024 * 1024
-        const val MAX_ERROR_LENGTH = 180
         val PLAYLIST_MIME_TYPES = setOf(
             "application/vnd.apple.mpegurl",
             "application/x-mpegurl",
