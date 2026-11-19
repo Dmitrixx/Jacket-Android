@@ -76,8 +76,11 @@ object TorrentEngine {
     @Volatile private var appContext: Context? = null
     @Volatile private var alertListener: AlertListener? = null
 
+    private data class ActiveStreamWindow(val fileIndex: Int, val firstPiece: Int)
+
     private val errors = ConcurrentHashMap<String, String>()
     private val pendingResumeSaves = ConcurrentHashMap<String, CompletableDeferred<Boolean>>()
+    private val activeStreamWindows = ConcurrentHashMap<String, ActiveStreamWindow>()
     @Volatile private var localStreamPort: Int? = null
     private val _snapshots = MutableStateFlow<List<TorrentSnapshot>>(emptyList())
     val snapshots: StateFlow<List<TorrentSnapshot>> = _snapshots.asStateFlow()
@@ -228,26 +231,67 @@ object TorrentEngine {
         val info = handle.torrentFile() ?: throw IllegalStateException("Метаданные раздачи ещё не получены")
         val files = info.files()
         require(fileIndex in 0 until files.numFiles())
+
+        // Keep the selected file eligible, but let HTTP Range requests drive
+        // the active piece window. Global sequential mode starts at piece zero
+        // and is a poor fit for seeking/streaming.
+        handle.clearPieceDeadlines()
+        runCatching { activeStreamWindows.remove(handle.infoHash().toHex()) }
+        handle.unsetFlags(TorrentFlags.SEQUENTIAL_DOWNLOAD)
+
         val priorities = Priority.array(Priority.IGNORE, files.numFiles())
         priorities[fileIndex] = Priority.TOP_PRIORITY
         handle.prioritizeFiles(priorities)
-        handle.setFlags(TorrentFlags.SEQUENTIAL_DOWNLOAD, TorrentFlags.SEQUENTIAL_DOWNLOAD)
+    }
 
-        val first = files.pieceIndexAtFile(fileIndex)
-        val last = files.lastPieceIndexAtFile(fileIndex)
-        if (first >= 0 && last >= first) {
-            // Keep startup and MP4 tail metadata responsive while the selected file streams.
-            handle.setSequentialRange(first, last)
-            val lastPriorityPiece = last
-            for (piece in first until minOf(lastPriorityPiece + 1, first + 2)) {
-                handle.piecePriority(piece, Priority.TOP_PRIORITY)
+    /**
+     * Re-prioritizes a bounded forward window around the byte range requested
+     * by ExoPlayer. The first not-yet-downloaded piece gets the nearest
+     * deadline; following pieces are assigned increasing deadlines.
+     */
+    @Synchronized
+    private fun prioritizeStreamRange(
+        id: String,
+        handle: TorrentHandle,
+        storage: org.libtorrent4j.FileStorage,
+        fileIndex: Int,
+        start: Long,
+        length: Long
+    ) {
+        val fileSize = storage.fileSize(fileIndex)
+        val plan = StreamPiecePlanner.plan(
+            fileOffset = storage.fileOffset(fileIndex),
+            fileSize = fileSize,
+            pieceLength = storage.pieceLength().toLong(),
+            requestStart = start,
+            requestLength = length,
+            firstFilePiece = storage.pieceIndexAtFile(fileIndex),
+            lastFilePiece = storage.lastPieceIndexAtFile(fileIndex)
+        )
+        val window = ActiveStreamWindow(fileIndex, plan.firstPiece)
+        if (activeStreamWindows[id] == window) return
+
+        handle.clearPieceDeadlines()
+        plan.deadlines.forEach { deadline ->
+            if (!handle.havePiece(deadline.pieceIndex)) {
+                handle.setPieceDeadline(deadline.pieceIndex, deadline.deadlineMs)
             }
-            if (lastPriorityPiece >= first) handle.piecePriority(lastPriorityPiece, Priority.TOP_PRIORITY)
+        }
+        activeStreamWindows[id] = window
+    }
+
+    /** Clear playback-only deadlines when streaming stops or the task is paused. */
+    @Synchronized
+    fun clearStreamPriorities(id: String) {
+        activeStreamWindows.remove(id)
+        findHandle(id)?.let { handle ->
+            runCatching { handle.clearPieceDeadlines() }
         }
     }
 
     @Synchronized
     fun pause(context: Context, id: String) {
+        clearStreamPriorities(id)
         TorrentQueueStore(context).setPaused(id, true)
         findHandle(id)?.let(::pauseHandle)
         findHandle(id)?.let(::requestResumeData)
@@ -291,6 +335,7 @@ object TorrentEngine {
                 if (path.toPath().startsWith(base.toPath()) && path.isFile) path.delete()
             }
         }
+        clearStreamPriorities(id)
         handle?.let { manager?.remove(it) }
         TorrentQueueStore(context).remove(id)
         resumeFile(context, id).delete()
@@ -477,12 +522,16 @@ object TorrentEngine {
             }
             // Fully downloaded subtitle sidecars can be served without switching priorities.
         }
-        val absoluteStart = storage.fileOffset(fileIndex) + start
+        val absoluteStart = Math.addExact(storage.fileOffset(fileIndex), start)
         require(length - 1L <= Long.MAX_VALUE - absoluteStart) { "Диапазон слишком большой" }
         val absoluteEnd = absoluteStart + length - 1L
         val pieceLength = storage.pieceLength().toLong()
         val firstPiece = (absoluteStart / pieceLength).toInt()
         val lastPiece = (absoluteEnd / pieceLength).toInt()
+
+        if (selected == fileIndex) {
+            prioritizeStreamRange(id, handle, storage, fileIndex, start, length)
+        }
 
         for (piece in firstPiece..lastPiece) {
             val began = System.currentTimeMillis()
