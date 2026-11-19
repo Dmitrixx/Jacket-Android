@@ -65,6 +65,13 @@ class TorrentDownloadService : Service() {
                             require(magnet.startsWith("magnet:?")) { "Для загрузки нужна magnet-ссылка" }
                             TorrentEngine.add(applicationContext, magnet, title)
                         }
+                        ACTION_ADD_AND_PLAY -> {
+                            val magnet = intent?.getStringExtra(EXTRA_MAGNET).orEmpty()
+                            val title = intent?.getStringExtra(EXTRA_TITLE).orEmpty()
+                            require(magnet.startsWith("magnet:?")) { "Для просмотра нужна magnet-ссылка" }
+                            TorrentEngine.add(applicationContext, magnet, title)
+                            awaitAndPlayTorrent(TorrentQueueStore.idFor(magnet))
+                        }
                         ACTION_ADD_TORRENT -> {
                             val path = intent?.getStringExtra(EXTRA_TORRENT_PATH).orEmpty()
                             require(path.isNotBlank()) { "Путь к .torrent не указан" }
@@ -73,12 +80,17 @@ class TorrentDownloadService : Service() {
                         ACTION_ADD_TORRENT_URL -> {
                             val url = intent?.getStringExtra(EXTRA_TORRENT_URL).orEmpty()
                             val title = intent?.getStringExtra(EXTRA_TITLE).orEmpty()
-                            val file = downloadTorrentFile(
-                                url,
-                                title,
-                                intent?.getStringExtra(EXTRA_INDEXER_ID)
-                            )
+                            val file = downloadTorrentFile(url, title, intent?.getStringExtra(EXTRA_INDEXER_ID))
                             TorrentEngine.addTorrent(applicationContext, file, title)
+                            file.delete()
+                        }
+                        ACTION_ADD_TORRENT_URL_AND_PLAY -> {
+                            val url = intent?.getStringExtra(EXTRA_TORRENT_URL).orEmpty()
+                            val title = intent?.getStringExtra(EXTRA_TITLE).orEmpty()
+                            val file = downloadTorrentFile(url, title, intent?.getStringExtra(EXTRA_INDEXER_ID))
+                            val queued = TorrentEngine.addTorrent(applicationContext, file, title)
+                            file.delete()
+                            awaitAndPlayTorrent(queued.id)
                         }
                         ACTION_PAUSE -> TorrentEngine.pause(applicationContext, intent?.getStringExtra(EXTRA_ID).orEmpty())
                         ACTION_RESUME -> TorrentEngine.resume(applicationContext, intent?.getStringExtra(EXTRA_ID).orEmpty())
@@ -173,6 +185,22 @@ class TorrentDownloadService : Service() {
         )
     }
 
+    /** Waits for torrent metadata, chooses the best video file and starts ExoPlayer. */
+    private suspend fun awaitAndPlayTorrent(id: String) {
+        var fileIndex: Int? = null
+        repeat(120) {
+            if (fileIndex == null) {
+                fileIndex = withContext(Dispatchers.IO) { TorrentEngine.firstPlayableFileIndex(id) }
+                if (fileIndex == null) delay(500)
+            }
+        }
+        val selected = fileIndex ?: throw java.net.SocketTimeoutException(
+            "Торрент добавлен, но за 60 секунд не удалось получить список видеофайлов. " +
+                "Загрузка продолжится в разделе «Загрузки»."
+        )
+        startTorrentPlayback(id, selected)
+    }
+
     private suspend fun selectFileWhenReady(id: String, fileIndex: Int) {
         var lastError: Exception? = null
         repeat(60) {
@@ -264,6 +292,11 @@ class TorrentDownloadService : Service() {
         val sourceConfig = indexerId?.let { wanted ->
             MediaSettingsStore(applicationContext).indexers().firstOrNull { it.id == wanted }
         }
+        val trackerConfig = indexerId?.let { wanted ->
+            MediaSettingsStore(applicationContext).webSearchProviders().firstOrNull { it.id == wanted }
+        }
+        val sourceCookie = sourceConfig?.cookie?.takeIf { it.isNotBlank() }
+            ?: trackerConfig?.cookie.orEmpty()
         var currentUrl = urlValue
         val originalUri = Uri.parse(urlValue)
         require(LocalNetwork.isAllowedUrl(urlValue)) {
@@ -321,7 +354,7 @@ class TorrentDownloadService : Service() {
                             )
                             setRequestProperty("Authorization", "Basic $encoded")
                         }
-                        if (sourceConfig.cookie.isNotBlank()) setRequestProperty("Cookie", sourceConfig.cookie.take(4096))
+                        if (sourceCookie.isNotBlank()) setRequestProperty("Cookie", sourceCookie.take(8192))
                         if (sourceConfig.apiKey.isNotBlank() && sourceConfig.protocol != IndexerProtocol.JACKETT) {
                             setRequestProperty("X-Api-Key", sourceConfig.apiKey.take(512))
                         }
@@ -460,8 +493,10 @@ class TorrentDownloadService : Service() {
 
         private const val ACTION_RESTORE = "app.jacket.action.RESTORE"
         private const val ACTION_ADD = "app.jacket.action.ADD"
+        private const val ACTION_ADD_AND_PLAY = "app.jacket.action.ADD_AND_PLAY"
         private const val ACTION_ADD_TORRENT = "app.jacket.action.ADD_TORRENT"
         private const val ACTION_ADD_TORRENT_URL = "app.jacket.action.ADD_TORRENT_URL"
+        private const val ACTION_ADD_TORRENT_URL_AND_PLAY = "app.jacket.action.ADD_TORRENT_URL_AND_PLAY"
         private const val ACTION_PAUSE = "app.jacket.action.PAUSE"
         private const val ACTION_RESUME = "app.jacket.action.RESUME"
         private const val ACTION_SELECT_FILE = "app.jacket.action.SELECT_FILE"
@@ -486,11 +521,20 @@ class TorrentDownloadService : Service() {
             putExtra(EXTRA_MAGNET, magnet)
             putExtra(EXTRA_TITLE, title)
         }
+        fun addAndPlay(context: Context, magnet: String, title: String) = send(context, ACTION_ADD_AND_PLAY) {
+            putExtra(EXTRA_MAGNET, magnet)
+            putExtra(EXTRA_TITLE, title)
+        }
         fun addTorrentFile(context: Context, path: String, title: String? = null) = send(context, ACTION_ADD_TORRENT) {
             putExtra(EXTRA_TORRENT_PATH, path)
             putExtra(EXTRA_TITLE, title)
         }
         fun addTorrentUrl(context: Context, url: String, title: String, indexerId: String? = null) = send(context, ACTION_ADD_TORRENT_URL) {
+            putExtra(EXTRA_TORRENT_URL, url)
+            putExtra(EXTRA_TITLE, title)
+            putExtra(EXTRA_INDEXER_ID, indexerId)
+        }
+        fun addTorrentUrlAndPlay(context: Context, url: String, title: String, indexerId: String? = null) = send(context, ACTION_ADD_TORRENT_URL_AND_PLAY) {
             putExtra(EXTRA_TORRENT_URL, url)
             putExtra(EXTRA_TITLE, title)
             putExtra(EXTRA_INDEXER_ID, indexerId)
