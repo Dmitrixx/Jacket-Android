@@ -94,7 +94,7 @@ object HdRezkaLoginClient {
         ).joinToString("&") { "${encode(it.first)}=${encode(it.second)}" }
 
         val response = request(
-            url = "$activeBase/ajax/login/?t=\${System.currentTimeMillis()}",
+            url = "$activeBase/ajax/login/?t=${System.currentTimeMillis()}",
             method = "POST",
             body = form,
             cookies = cookies,
