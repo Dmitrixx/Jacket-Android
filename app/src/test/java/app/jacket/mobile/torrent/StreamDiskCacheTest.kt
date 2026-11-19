@@ -12,8 +12,8 @@ class StreamDiskCacheTest {
         val directory = Files.createTempDirectory("jacket-stream-cache-test").toFile()
         val cache = StreamDiskCache(directory, maxBytes = 8L, segmentBytes = 4)
         val first = StreamCacheKey("a".repeat(40), 0, 0)
-        val second = StreamCacheKey("a".repeat(40), 0, 1)
-        val third = StreamCacheKey("a".repeat(40), 0, 2)
+        val second = StreamCacheKey("a".repeat(40), 0, 4)
+        val third = StreamCacheKey("a".repeat(40), 0, 8)
 
         try {
             cache.put(first, byteArrayOf(1, 2, 3, 4))
