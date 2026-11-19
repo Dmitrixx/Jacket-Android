@@ -1,8 +1,8 @@
-# Jacket — Android media center 2.4.0
+# Jacket — Android media center 2.5.0
 
 Jacket is a single Android application for phones, tablets and Android TV / Google TV. It combines a poster-based media catalog, a user-configurable indexer cabinet, an integrated BitTorrent engine and a loopback HTTP media server.
 
-**No separately installed Jackett or TorrServer is required.** Neither service is bundled, launched as a second process, nor called over an external API. Indexers are queried directly by the app; torrent files are handled by the in-process libtorrent4j session and served to ExoPlayer through `127.0.0.1`.
+**No separately installed Jackett or TorrServer is required.** Neither service is bundled or launched by Jacket. Direct RSS/Atom and Torznab indexers work independently; an optional connector can also query a Jackett server that the user already runs on a LAN or HTTPS endpoint. Torrent files are handled by the in-process libtorrent4j session and served to ExoPlayer through `127.0.0.1`.
 
 The project is under active development. CI verifies JVM unit tests and APK assembly; real-device streaming, Android TV remote navigation and process-kill recovery still require hands-on acceptance testing.
 
@@ -29,12 +29,13 @@ These account screens manage authentication state. They do not claim universal p
 
 The first run seeds search shortcuts for RuTracker, NNM-Club, Rutor, Kinozal, 1337x, The Pirate Bay and Internet Archive. The user can enable, disable, edit or delete them and restore the preset list later. These shortcuts open the selected website in the external browser. They are not site-specific HTML scrapers or native torrent adapters. For in-app structured results, add a Torznab/Newznab or RSS endpoint under Torrent Sources.
 
-## Indexer cabinet — no Jackett server
+## Indexer cabinet and optional Jackett connector
 
-Add user-owned HTTPS endpoints:
+Add user-owned endpoints:
 
-- RSS / Atom feeds.
-- Torznab / Newznab-compatible search endpoints. A Jackett or Prowlarr Torznab URL can be entered as an ordinary user-configured endpoint if it is reachable and authorized; Jacket does not install either service.
+- RSS / Atom feeds and Torznab / Newznab-compatible endpoints over HTTPS.
+- HTTP endpoints only when they target a private / loopback / link-local IP or a local DNS suffix such as `.local` or `.lan`; this is intended for a Jackett server on your own network.
+- An optional Jackett setup card with server address, API key, tracker filter (`all` by default), connection test and disconnect. Jacket probes Jackett with `t=caps`, then searches its selected tracker set. Jackett remains external and is never installed or bundled.
 - API key, HTTP Basic username/password, or a manually supplied session cookie.
 - Categories, tags, Freeleech flag, sort field and sort order.
 - Enable/disable, edit, individual test, test all and a per-indexer probe search.
@@ -49,7 +50,7 @@ Example Torznab search template:
 https://your-authorized-indexer.example/api?t=search&q={query}
 ```
 
-The URL must use HTTPS and include `{query}`; optionally include `{apikey}` where the provider expects the key in the URL. The adapter understands common Torznab attributes including magnet URL, seeders, peers, size/length and category. RSS/Atom enclosures and Media RSS `media:content` may also publish direct HTTPS video URLs (`video/*`, MP4/WebM/MKV), HLS playlists (`.m3u8`) or DASH manifests (`.mpd`). Jacket recognizes those declared media links and plays them directly in Media3; it does not need to inspect arbitrary pages.
+Search templates include `{query}`; `{apikey}` is optional. Public indexers must use HTTPS. The adapter understands common Torznab attributes including magnet URL, seeders, peers, size/length, category, Jackett's original tracker name and Torznab error responses. Jackett's `peers` value is treated as total peers; leechers are calculated as peers minus seeders. RSS/Atom enclosures and Media RSS `media:content` may also publish direct HTTPS video URLs (`video/*`, MP4/WebM/MKV), HLS playlists (`.m3u8`) or DASH manifests (`.mpd`). Jacket recognizes those declared media links and plays them directly in Media3; it does not need to inspect arbitrary pages.
 
 Release labels such as 720p / 1080p / 2160p, HDR / DV, HEVC / x264 and common audio/dubbing tags are extracted heuristically from the release title. They are not authoritative tracker metadata. Filters operate on the current results and do not issue another request.
 
@@ -118,7 +119,8 @@ GitHub Actions runs unit tests and builds a debug APK on pushes to `main` and `f
 ## Tests in this iteration
 
 The JVM test suite covers:
-- Torznab/RSS XML parsing for magnet, `.torrent`, seeders, peers, size and category.
+- Torznab/RSS/Atom XML parsing for magnet, `.torrent`, tracker name, seeders, peers, size and category.
+- Jackett capabilities and error response handling, local-network URL policy and redirect restrictions.
 - Rejection of insecure-only links and deduplication / seed sorting.
 - Title-only release heuristics.
 - Queue serialization and restoration independent of JNI.
@@ -130,8 +132,8 @@ These tests do not replace manual streaming tests on physical Android 9+, Androi
 ## Security and scope
 
 - No tracker presets, credentials or piracy-site lists are embedded.
-- Indexer URL templates must be HTTPS and cannot contain URL user-info.
+- Public indexer endpoints require HTTPS. HTTP is accepted only for explicit local/private addresses and approved local DNS suffixes; ambiguous single-label hosts and URL user-info are rejected.
 - API keys, usernames/passwords and cookies are encrypted at rest; JSON exports exclude them.
 - Torrent HTTP streaming binds only to loopback and is not a local-network media server.
-- No separate Jackett, Prowlarr or TorrServer process is included.
+- Jackett and TorrServer are not bundled. Jackett is an optional connection to a server managed separately by the user; the app does not need it for direct indexers or torrent playback.
 - Use only sources and media you are authorized to access and use. See [SECURITY.md](SECURITY.md).
