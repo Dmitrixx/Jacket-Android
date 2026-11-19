@@ -13,7 +13,7 @@ class FilmixDeviceAuthTest {
             osVersion = "Android 12",
             appVersion = "2.4.0"
         )
-        assertTrue(url.startsWith("https://filmixapp.cyou/api/v2/token_request?"))
+        assertTrue(url.startsWith("https://api.filmix.tv/api/v2/token_request?"))
         assertTrue(url.contains("user_dev_id=0123456789abcdef"))
         assertTrue(url.contains("user_dev_name=Jacket%20Phone"))
         assertTrue(url.contains("user_dev_vendor=Xiaomi"))
