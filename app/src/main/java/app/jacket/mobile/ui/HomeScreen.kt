@@ -335,7 +335,7 @@ internal fun ContinueWatchingShelf(
 }
 
 @Composable
-private fun MediaShelf(
+internal fun MediaShelf(
     section: MediaSection,
     onOpen: (CatalogItem) -> Unit
 ) {
