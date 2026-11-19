@@ -209,6 +209,26 @@ object TorrentEngine {
         return queued
     }
 
+    /** Chooses the largest playable video file when a user taps Watch on a torrent result. */
+    @Synchronized
+    fun firstPlayableFileIndex(id: String): Int? {
+        val handle = findHandle(id) ?: return null
+        if (!handle.isValid) return null
+        val storage = handle.torrentFile()?.files() ?: return null
+        return (0 until storage.numFiles()).asSequence()
+            .filterNot { runCatching { storage.padFileAt(it) }.getOrDefault(true) }
+            .mapNotNull { index ->
+                val path = storage.filePath(index).replace('\\\\', '/')
+                val extension = path.substringAfterLast('.', "").lowercase()
+                if (extension !in PLAYABLE_VIDEO_EXTENSIONS) return@mapNotNull null
+                val size = storage.fileSize(index).coerceAtLeast(0L)
+                if (size <= 0L) return@mapNotNull null
+                Triple(index, size, path.contains("sample", ignoreCase = true))
+            }
+            .sortedWith(compareBy<Triple<Int, Long, Boolean>> { it.third }.thenByDescending { it.second })
+            .firstOrNull()?.first
+    }
+
     @Synchronized
     fun selectFile(context: Context, id: String, fileIndex: Int) {
         val item = TorrentQueueStore(context).get(id) ?: throw IllegalArgumentException("Загрузка не найдена")
@@ -686,6 +706,7 @@ object TorrentEngine {
     private const val KEY_UPLOAD_KBPS = "upload_kbps"
     private const val KEY_WIFI_ONLY = "wifi_only"
     private const val MAX_SUBTITLE_TRACKS = 12
+    private val PLAYABLE_VIDEO_EXTENSIONS = setOf("mkv", "mp4", "m4v", "webm", "avi", "mov", "ts", "m2ts", "mpg", "mpeg")
 }
 
 /** Versioned CRC envelope. Legacy raw libtorrent fast-resume files remain supported. */
