@@ -503,6 +503,25 @@ object TorrentEngine {
         return file
     }
 
+    /** Picks the largest non-sample video after metadata is available. */
+    fun firstPlayableFileIndex(id: String): Int? {
+        val handle = findHandle(id) ?: return null
+        if (!handle.isValid) return null
+        val storage = handle.torrentFile()?.files() ?: return null
+        return (0 until storage.numFiles()).asSequence()
+            .filterNot { runCatching { storage.padFileAt(it) }.getOrDefault(true) }
+            .mapNotNull { index ->
+                val path = storage.filePath(index).replace(File.separatorChar, '/')
+                val extension = path.substringAfterLast('.', "").lowercase()
+                if (extension !in PLAYABLE_VIDEO_EXTENSIONS) return@mapNotNull null
+                val size = storage.fileSize(index).coerceAtLeast(0L)
+                if (size <= 0L) return@mapNotNull null
+                Triple(index, size, path.contains("sample", ignoreCase = true))
+            }
+            .sortedWith(compareBy<Triple<Int, Long, Boolean>> { it.third }.thenByDescending { it.second })
+            .firstOrNull()?.first
+    }
+
     fun target(id: String, fileIndex: Int): TorrentStreamTarget {
         val handle = findHandle(id) ?: throw IllegalStateException("Торрент не найден")
         val info = handle.torrentFile() ?: throw IllegalStateException("Метаданные ещё не получены")
@@ -686,6 +705,7 @@ object TorrentEngine {
     private const val KEY_UPLOAD_KBPS = "upload_kbps"
     private const val KEY_WIFI_ONLY = "wifi_only"
     private const val MAX_SUBTITLE_TRACKS = 12
+    private val PLAYABLE_VIDEO_EXTENSIONS = setOf("mkv", "mp4", "m4v", "webm", "avi", "mov", "ts", "m2ts", "mpg", "mpeg")
 }
 
 /** Versioned CRC envelope. Legacy raw libtorrent fast-resume files remain supported. */

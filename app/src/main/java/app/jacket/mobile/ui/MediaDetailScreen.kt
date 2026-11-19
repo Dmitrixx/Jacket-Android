@@ -341,7 +341,7 @@ internal fun DetailScreen(
                                                     ) {
                                                         Icon(Icons.Default.Search, contentDescription = null)
                                                         Spacer(Modifier.width(6.dp))
-                                                        Text("Найти эту серию")
+                                                        Text("Найти источники серии")
                                                     }
                                                 }
                                             }
@@ -397,7 +397,7 @@ internal fun DetailScreen(
                             Icon(Icons.Default.Search, contentDescription = null)
                             Spacer(Modifier.width(8.dp))
                         }
-                        Text(if (searchingSources) "Ищем источники…" else "Найти источники")
+                        Text(if (searchingSources) "Ищем источники…" else "Выбрать источник")
                     }
 
                     OutlinedButton(
@@ -482,8 +482,8 @@ internal fun DetailScreen(
                                 SourceCard(
                                     source = source,
                                     onPlay = { url -> onPlay(source.title, url) },
-                                    onMagnet = { magnet -> TorrentDownloadService.add(context, magnet, source.title) },
-                                    onTorrent = { url -> TorrentDownloadService.addTorrentUrl(context, url, source.title, source.indexerId) },
+                                    onMagnet = { magnet -> TorrentDownloadService.addAndPlay(context, magnet, source.title) },
+                                    onTorrent = { url -> TorrentDownloadService.addTorrentUrlAndPlay(context, url, source.title, source.indexerId) },
                                     onPage = { url -> openExternal(context, url) }
                                 )
                             }
@@ -647,12 +647,12 @@ internal fun SourceCard(
                     source.magnetUri != null -> Button(onClick = { onMagnet(source.magnetUri) }) {
                         Icon(Icons.Default.Download, contentDescription = null)
                         Spacer(Modifier.width(6.dp))
-                        Text("Добавить")
+                        Text("Смотреть")
                     }
                     source.downloadUrl != null -> Button(onClick = { onTorrent(source.downloadUrl) }) {
                         Icon(Icons.Default.Download, contentDescription = null)
                         Spacer(Modifier.width(6.dp))
-                        Text("Загрузить")
+                        Text("Смотреть")
                     }
                     source.pageUrl != null -> OutlinedButton(onClick = { onPage(source.pageUrl) }) {
                         Icon(Icons.Default.OpenInNew, contentDescription = null)
