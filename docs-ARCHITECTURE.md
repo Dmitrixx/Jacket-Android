@@ -1,4 +1,4 @@
-# Jacket 2.1.0 — architecture
+# Jacket 2.6.0 — architecture
 
 ## Runtime layout
 
@@ -11,14 +11,15 @@ Compose UI (phone / tablet / Android TV)
         │ HTTP GET/HEAD + Range
         ▼
    LocalStreamServer (127.0.0.1:8090..8099)
-        │ await requested byte range
+        │ exact HTTP byte ranges + bounded disk LRU ring
         ▼
    TorrentEngine (one libtorrent4j SessionManager)
         ├── magnet / private .torrent metainfo
-        ├── file priorities + sequential mode
+        ├── file priorities + range-driven piece deadlines
+        ├── 8 MiB / 32-piece forward playback window
         ├── DHT and download/upload rate limits
         ├── resume-data / error snapshots
-        └── download files in app-specific storage
+        └── verified download files in app-specific storage
 
 Detail card → IndexerRegistry → magnet / .torrent → TorrentEngine → LocalStreamServer → ExoPlayer
 ```
@@ -61,10 +62,15 @@ The registry intentionally does not include tracker-specific HTML parsers or sol
 
 - Magnet links and imported `.torrent` files are stored in the queue. The metainfo is copied into app-private `filesDir/torrent-metainfo`.
 - Once metadata exists, UI can inspect files.
-- Selecting a video file sets its priority to TOP, all other files to IGNORE, enables sequential download and gives initial and final pieces elevated priority.
+- Selecting a video file sets its priority to TOP and all other files to IGNORE. Global sequential mode is disabled for playback because it would continue from the beginning after a seek.
+- `StreamPiecePlanner` maps an HTTP Range start/length to torrent piece indices using `fileOffset` and `pieceLength`. The current piece gets the closest deadline; following pieces receive increasing deadlines in an 8 MiB / 32-piece bounded window. A new seek replaces the previous window.
+- This is deadline-based piece scheduling, not a hard guarantee that every peer will deliver pieces in strict order: peer availability and network conditions still apply. It does, however, prioritize the currently requested playback position ahead of the forward buffer.
 - `LocalStreamServer` listens only on `127.0.0.1`, probes ports 8090–8099, and validates Host and route.
 - Range responses are constructed by a pure `RangeResponseBuilder`; malformed and unsatisfiable ranges are rejected.
-- Before reading each chunk, the server asks the engine to wait for every intersecting piece, bounded to about 25 seconds per piece. It then reads the byte interval from the selected file.
+- The server waits for the exact requested byte interval's pieces to be hash-checked and written to disk before reading that interval. It never requires the whole file to finish first.
+- `StreamDiskCache` stores recent byte intervals in a 32 MiB LRU disk ring (maximum 256 KiB per segment). A seek that overlaps a cached interval can read the cached suffix; old slots are evicted as new segments arrive.
+- Cache reads allocate at most one segment per active HTTP worker. The cache file is temporary and deleted when the local server closes.
+- The disk ring stores disposable playback copies only. Verified torrent data is never removed by cache eviction, preserving hash-check state, seeding data and fast-resume consistency.
 - Matching sidecar subtitles are exposed only when their files are already fully downloaded. Serving a subtitle never changes the selected video file's priority.
 - The stream server never binds a LAN interface.
 
@@ -103,4 +109,4 @@ Resume data is asynchronous and periodic: abruptly killing the process can lose 
 
 ## Automated tests
 
-The JVM suite includes XML fixtures for RSS/Torznab, release-name heuristics, queue codec round-trips, Range parsing / response headers and route / Host policy checks. JNI torrent streaming, actual file-piece availability, Android foreground-service behavior and TV remote navigation require device-level acceptance tests.
+The JVM suite includes XML fixtures for RSS/Torznab, release-name heuristics, queue codec round-trips, Range parsing / response headers, byte-range-to-piece planning, forward-window limits, disk-cache LRU eviction, overlapping-range cache hits and route / Host policy checks. JNI torrent streaming, actual file-piece availability, Android foreground-service behavior and TV remote navigation require device-level acceptance tests.
