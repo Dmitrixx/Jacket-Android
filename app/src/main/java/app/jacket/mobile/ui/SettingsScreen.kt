@@ -129,7 +129,7 @@ private const val TAB_LIBRARY = 4
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-internal fun SettingsScreen(
+private fun SettingsScreen(
     viewModel: MainViewModel,
     onBack: () -> Unit
 ) {
@@ -686,45 +686,7 @@ internal fun SettingsScreen(
                 }
             }
 
-            if (selectedSettingsSection == "sites") {
-                item {
-                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        Text(
-                            if (webEditingId.isBlank()) "Добавить сайт поиска" else "Изменить сайт",
-                            style = MaterialTheme.typography.titleLarge,
-                            fontWeight = FontWeight.Bold
-                        )
-                        Text(
-                            "В списке уже есть популярные сайты поиска. Они открываются во внешнем браузере; RSS / Atom и Torznab-индексаторы работают отдельно и показывают результаты внутри Jacket.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        OutlinedButton(
-                            onClick = { viewModel.restoreDefaultTrackerShortcuts() },
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Icon(Icons.Default.Refresh, contentDescription = null)
-                            Spacer(Modifier.width(8.dp))
-                            Text("Восстановить список сайтов и трекеров")
-                        }
-                        OutlinedTextField(
-                            value = webName,
-                            onValueChange = { webName = it },
-                            modifier = Modifier.fillMaxWidth(),
-                            label = { Text("Название сайта") },
-                            placeholder = { Text("Например, мой видеокаталог") },
-                            singleLine = true
-                        )
-                        OutlinedTextField(
-                            value = webUrlTemplate,
-                            onValueChange = { webUrlTemplate = it },
-                            modifier = Modifier.fillMaxWidth(),
-                            label = { Text("URL поиска с {query}") },
-                            placeholder = { Text("https://site.example/search?q={query}") },
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
-                            minLines = 2
-                        )
-                         SettingsSourcesSections(
+            SettingsSourcesSections(
                 selectedSettingsSection = selectedSettingsSection,
                 viewModel = viewModel,
                 context = context,
@@ -733,7 +695,56 @@ internal fun SettingsScreen(
                 onExportIndexers = { exportIndexers.launch("jacket-indexers.json") }
             )
 
-ck = onClick),
+            if (selectedSettingsSection == "about") {
+                item {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+                    ) {
+                        Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text("JACKET 2.4", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Black)
+                            Text("Единое приложение для Android, планшетов и Android TV.",
+                                color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text("Есть Filmix-привязка по коду и настройки HDRezka. RSS / Atom и Torznab обрабатываются внутри приложения; трекер-пресеты открываются в браузере.")
+                            Text("Jacket не извлекает медиапотоки с произвольных страниц и не обходит ограничения сайта.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                }
+            }
+
+        }
+    }
+}
+
+
+@Composable
+private fun SettingsMenuRow(
+    title: String,
+    subtitle: String,
+    badge: String? = null,
+    onClick: () -> Unit,
+    icon: @Composable () -> Unit
+) {
+    val context = LocalContext.current
+    val isTv = (context.resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_TYPE_MASK) ==
+        android.content.res.Configuration.UI_MODE_TYPE_TELEVISION
+    var focused by remember { mutableStateOf(false) }
+    val scale by animateFloatAsState(
+        targetValue = if (isTv && focused) 1.018f else 1f,
+        label = "settings-row-focus"
+    )
+    Card(
+        modifier = Modifier.fillMaxWidth()
+            .graphicsLayer { scaleX = scale; scaleY = scale }
+            .onFocusChanged { focused = it.isFocused }
+            .border(
+                width = if (isTv && focused) 2.dp else 0.dp,
+                color = if (isTv && focused) MaterialTheme.colorScheme.primary else Color.Transparent,
+                shape = RoundedCornerShape(22.dp)
+            )
+            .clickable(onClick = onClick),
         shape = RoundedCornerShape(22.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
         elevation = CardDefaults.cardElevation(defaultElevation = if (isTv && focused) 7.dp else 2.dp)
