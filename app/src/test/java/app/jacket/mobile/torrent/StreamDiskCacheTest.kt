@@ -21,7 +21,7 @@ class StreamDiskCacheTest {
             assertArrayEquals(byteArrayOf(1, 2, 3, 4), cache.get(first, 4)?.bytes)
             cache.put(third, byteArrayOf(9, 10, 11, 12))
 
-            assertArrayEquals(byteArrayOf(1, 2, 3, 4), cache.get(first, 4))
+            assertArrayEquals(byteArrayOf(1, 2, 3, 4), cache.get(first, 4)?.bytes)
             assertNull(cache.get(second, 4)?.bytes)
             assertArrayEquals(byteArrayOf(9, 10, 11, 12), cache.get(third, 4)?.bytes)
             assertEquals(1L, cache.evictions)
