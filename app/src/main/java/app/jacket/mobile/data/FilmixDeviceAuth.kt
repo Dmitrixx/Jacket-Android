@@ -117,6 +117,17 @@ object FilmixDeviceAuth {
         }
     }
 
+    /** Avoid exposing raw TLS stack diagnostics in the pairing screen. Never downgrade TLS. */
+    fun userFriendlyError(error: Throwable): String {
+        val chain = generateSequence(error) { it.cause }.take(8).toList()
+        if (chain.any { it is javax.net.ssl.SSLHandshakeException || it is javax.net.ssl.SSLPeerUnverifiedException } ||
+            chain.any { it.message.orEmpty().contains("not verified", ignoreCase = true) ||
+                it.message.orEmpty().contains("certificate", ignoreCase = true) }) {
+            return "Filmix API: ошибка проверки HTTPS-сертификата. Проверьте адрес API или попробуйте позже. Безопасное соединение не отключается."
+        }
+        return error.message?.take(240)?.ifBlank { "Не удалось подключить Filmix" } ?: "Не удалось подключить Filmix"
+    }
+
     private fun encode(value: String): String =
         URLEncoder.encode(value, Charsets.UTF_8.name()).replace("+", "%20")
 }
