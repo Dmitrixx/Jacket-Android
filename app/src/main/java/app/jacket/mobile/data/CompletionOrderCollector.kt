@@ -23,7 +23,7 @@ internal object CompletionOrderCollector {
 
         val executor = Executors.newFixedThreadPool(minOf(maxConcurrency, tasks.size))
         val completion = ExecutorCompletionService<T>(executor)
-        val futures = tasks.map(completion::submit)
+        val futures = tasks.map { task -> completion.submit(task) }
         val deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMs)
         var completed = 0
         try {
