@@ -29,7 +29,7 @@ object HdRezkaLoginClient {
      */
     fun hasAuthenticatedCookie(cookieHeader: String): Boolean {
         if (cookieHeader.isBlank() || cookieHeader.length > 8_192 ||
-            cookieHeader.any { it == '\\r' || it == '\\n' }
+            cookieHeader.any { it == '\r' || it == '\n' }
         ) return false
         val values = cookieHeader.split(';').mapNotNull { part ->
             val pair = part.trim().split('=', limit = 2)

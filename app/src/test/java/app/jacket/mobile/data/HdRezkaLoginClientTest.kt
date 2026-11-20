@@ -1,6 +1,7 @@
 package app.jacket.mobile.data
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.ByteArrayInputStream
@@ -18,7 +19,6 @@ class HdRezkaLoginClientTest {
     }
 
     @Test
-    fun identifiesAnubisBrowserChallenge() {    @Test
     fun recognizesOnlyACompleteDleAuthenticationCookiePair() {
         assertTrue(HdRezkaLoginClient.hasAuthenticatedCookie(
             "dle_user_id=12345; dle_password=secret-value; other=value"
@@ -29,10 +29,11 @@ class HdRezkaLoginClientTest {
         assertFalse(HdRezkaLoginClient.hasAuthenticatedCookie("session=opaque-token"))
         assertFalse(HdRezkaLoginClient.hasAuthenticatedCookie("dle_user_id=123; dle_password="))
         assertFalse(HdRezkaLoginClient.hasAuthenticatedCookie("dle_user_id=0; dle_password=secret"))
-        assertFalse(HdRezkaLoginClient.hasAuthenticatedCookie("dle_user_id=1; dle_password=x\\r\\nInjected: yes"))
+        assertFalse(HdRezkaLoginClient.hasAuthenticatedCookie("dle_user_id=1; dle_password=x\r\nInjected: yes"))
     }
 
-
+    @Test
+    fun identifiesAnubisBrowserChallenge() {
         val html = """
             <html><head><title>О нет!</title></head>
             <body>Доступ запрещён: код ошибки. Защищено Anubis.</body></html>
@@ -59,7 +60,6 @@ class HdRezkaLoginClientTest {
         assertEquals(null, HdRezkaLoginClient.loginRedirectMethod(308))
         assertEquals("", HdRezkaLoginClient.loginRedirectMethod(200))
     }
-
 
     @Test
     fun largeLandingPageCanBeInspectedWithoutBufferingTheWholeResponse() {

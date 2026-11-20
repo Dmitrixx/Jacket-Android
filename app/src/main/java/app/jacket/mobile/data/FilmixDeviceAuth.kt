@@ -152,7 +152,7 @@ object FilmixDeviceAuth {
             "user_dev_os" to API_DEVICE_OS,
             "user_dev_apk" to API_DEVICE_APK
         )
-        return safeBase + "/" + endpoint.trimStart('/') + "?"
+        return safeBase + "/" + endpoint.trimStart('/') + "?" +
             params.entries.joinToString("&") { "${encode(it.key)}=${encode(it.value)}" }
     }
 
