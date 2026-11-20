@@ -228,7 +228,8 @@ object TrackerSearchClient {
             val row = resultContainer(anchor)
             val rowMagnet = row.selectFirst("a[href^=magnet:]")?.attr("href")
                 ?.takeIf { it.startsWith("magnet:", true) }
-            if (rowMagnet != null && candidates.containsKey(magnetInfoHash(rowMagnet))) return@forEach
+            val rowHash = magnetInfoHash(rowMagnet)
+            if (rowHash != null && candidates.containsKey(rowHash)) return@forEach
             addCandidate(row, title, href, null, findTorrentLink(row, baseUrl))
         }
 
