@@ -43,7 +43,7 @@ object ReleaseHeuristics {
         "POL" to Regex("""(?i)(?<![a-z0-9])(?:pol|polish)(?![a-z0-9])"""),
         "JPN" to Regex("""(?i)(?<![a-z0-9])(?:jpn|japanese)(?![a-z0-9])"""),
         "CHI" to Regex("""(?i)(?<![a-z0-9])(?:chi|chinese)(?![a-z0-9])"""),
-        "HEB" to Regex("""(?i)(?<![a-z0-9])(?:heb|hebrew)(?![a-z0-9])")
+        "HEB" to Regex("""(?i)(?<![a-z0-9])(?:heb|hebrew)(?![a-z0-9])""")
     )
     private val subtitlePattern = Regex(
         """(?i)(?:sub(?:title)?s?[ ._-]*[:=]?[ ._-]*(rus|ukr|eng|ger|fre|spa|ita|por|pol|jpn|chi|heb))|(?:(rus|ukr|eng|ger|fre|spa|ita|por|pol|jpn|chi|heb)[ ._-]*sub(?:title)?s?)"""
