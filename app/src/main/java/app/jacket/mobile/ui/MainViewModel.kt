@@ -179,7 +179,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _items.value = emptyList()
         _sourceResults.value = emptyList()
         _indexerErrors.value = emptyList()
-        _isSearchingSources.value = false
         _message.value = null
         _isError.value = false
     }
