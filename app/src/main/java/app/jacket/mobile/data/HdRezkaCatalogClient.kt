@@ -10,7 +10,22 @@ import java.net.URL
 import java.net.URLEncoder
 
 data class HdRezkaSearchEntry(val title: String, val pageUrl: String, val posterUrl: String?, val description: String)
-data class HdRezkaTranslator(val id: String, val name: String)
+data class HdRezkaTranslator(
+    val id: String,
+    val name: String,
+    val isCamrip: String = "0",
+    val isAds: String = "0",
+    val isDirector: String = "0",
+    val isPremium: Boolean = false
+)
+data class HdRezkaPageContext(
+    val postId: String,
+    val translators: List<HdRezkaTranslator>,
+    val favs: String,
+    val isSeries: Boolean,
+    val defaultSeasonId: String? = null,
+    val defaultEpisodeId: String? = null
+)
 data class HdRezkaEpisodeIds(val seasonId: String, val episodeId: String)
 data class HdRezkaQualityVariant(val qualityLabel: String?, val url: String)
 
@@ -28,70 +43,93 @@ object HdRezkaCatalogClient {
     private val qualityPattern = Regex("\\[([^\\]]+)](https://[^,\\s]+)", RegexOption.IGNORE_CASE)
     private val directUrlPattern = Regex("https://[^\\s,\\]<>\\\"']+", RegexOption.IGNORE_CASE)
     private val episodeCodePattern = Regex("(?i)S(\\d{1,2})E(\\d{1,3})")
+    private val seriesInitPattern = Regex("""initCDNSeriesEvents\\(\\s*(\\d+)\\s*,\\s*(\\d+)\\s*,\\s*(\\d+)\\s*,\\s*(\\d+)""")
+    private val movieInitPattern = Regex("""initCDNMoviesEvents\\(\\s*(\\d+)\\s*,\\s*(\\d+)\\s*,\\s*(\\d+)\\s*,\\s*(\\d+)\\s*,\\s*(\\d+)""")
     private val redirectCodes = setOf(301, 302, 303, 307, 308)
 
-    fun searchSources(settings: HdRezkaSettings, query: String, kind: MediaKind, episodeCode: String? = null): List<SourceResult> {
+    fun searchSources(
+        settings: HdRezkaSettings,
+        query: String,
+        kind: MediaKind,
+        episodeCode: String? = null
+    ): List<SourceResult> {
         require(query.isNotBlank()) { "Введите название для поиска HDRezka" }
         val mirror = HdRezkaLoginClient.validateMirror(settings.mirror)
         val searchUrl = "$mirror/search/?do=search&subaction=search&q=${encode(query.trim().take(160))}"
         val html = requestText(mirror, searchUrl, "GET", null, "$mirror/", settings)
         val entries = parseSearchEntries(html, mirror).distinctBy { it.pageUrl }.take(MAX_SEARCH_RESULTS)
-
         return buildList {
-            entries.forEach { entry ->
-                val page = runCatching { requestText(mirror, entry.pageUrl, "GET", null, "$mirror/", settings) }
-                    .getOrNull() ?: return@forEach
-                val translators = parseTranslators(page).take(MAX_TRANSLATORS)
-                val postId = parsePostId(page, entry.pageUrl) ?: return@forEach
-                val isSeries = isSeriesPage(page)
-                if (kind == MediaKind.MOVIE && isSeries) return@forEach
-                if (kind == MediaKind.SERIES && !isSeries) return@forEach
+            entries.forEach entryLoop@{ entry ->
+                val pageHtml = requestText(mirror, entry.pageUrl, "GET", null, "$mirror/", settings)
+                val page = parsePageContext(pageHtml, entry.pageUrl) ?: return@entryLoop
+                if (kind == MediaKind.MOVIE && page.isSeries) return@entryLoop
+                if (kind == MediaKind.SERIES && !page.isSeries) return@entryLoop
+                val translators = page.translators.ifEmpty {
+                    listOf(HdRezkaTranslator("0", "Оригинал"))
+                }.take(MAX_TRANSLATORS)
 
-                if (!isSeries) {
-                    val options = translators.ifEmpty { listOf(HdRezkaTranslator("0", "Оригинал")) }
-                    options.forEach { translator ->
-                        val response = runCatching {
-                            ajax(mirror, entry.pageUrl, settings, linkedMapOf(
-                                "action" to "get_movie", "id" to postId, "translator_id" to translator.id
-                            ))
-                        }.getOrNull() ?: return@forEach
+                if (!page.isSeries) {
+                    translators.forEach translatorLoop@{ translator ->
+                        if (translator.isPremium) {
+                            add(paywallResult(entry, translator, null))
+                            return@translatorLoop
+                        }
+                        val response = ajax(
+                            mirror, entry.pageUrl, settings, page.favs, linkedMapOf(
+                                "action" to "get_movie",
+                                "id" to page.postId,
+                                "translator_id" to translator.id,
+                                "is_camrip" to translator.isCamrip,
+                                "is_ads" to translator.isAds,
+                                "is_director" to translator.isDirector
+                            )
+                        )
                         addAll(parseStreamSources(response, entry, translator, entry.pageUrl, null))
                     }
                 } else {
                     val match = episodeCodePattern.find(episodeCode.orEmpty())
                     if (match == null) {
-                        add(SourceResult(
-                            id = "hdrezka:$postId",
-                            title = entry.title,
-                            providerName = "HDRezka",
-                            pageUrl = entry.pageUrl,
-                            sourceType = MediaSourceType.HDREZKA
-                        ))
-                    } else {
-                        val wantedSeason = match.groupValues[1].toIntOrNull() ?: return@forEach
-                        val wantedEpisode = match.groupValues[2].toIntOrNull() ?: return@forEach
-                        val options = translators.ifEmpty { listOf(HdRezkaTranslator("0", "Оригинал")) }
-                        options.forEach { translator ->
-                            val episodeIds = runCatching {
-                                resolveEpisodeIds(
-                                    ajax(mirror, entry.pageUrl, settings, linkedMapOf(
-                                        "action" to "get_episodes", "id" to postId, "translator_id" to translator.id
-                                    )),
-                                    wantedSeason,
-                                    wantedEpisode
-                                )
-                            }.getOrNull() ?: return@forEach
-                            val response = runCatching {
-                                ajax(mirror, entry.pageUrl, settings, linkedMapOf(
-                                    "action" to "get_stream",
-                                    "id" to postId,
-                                    "translator_id" to translator.id,
-                                    "season" to episodeIds.seasonId,
-                                    "episode" to episodeIds.episodeId
-                                ))
-                            }.getOrNull() ?: return@forEach
-                            addAll(parseStreamSources(response, entry, translator, entry.pageUrl, episodeCode))
+                        translators.forEach { translator ->
+                            add(SourceResult(
+                                id = "hdrezka:${page.postId}:${translator.id}:episodes",
+                                title = entry.title,
+                                providerName = "HDRezka",
+                                pageUrl = entry.pageUrl,
+                                sourceType = MediaSourceType.HDREZKA,
+                                translationName = translator.name,
+                                requiresSubscription = translator.isPremium
+                            ))
                         }
+                        return@entryLoop
+                    }
+                    val wantedSeason = match.groupValues[1].toIntOrNull() ?: return@entryLoop
+                    val wantedEpisode = match.groupValues[2].toIntOrNull() ?: return@entryLoop
+                    translators.forEach translatorLoop@{ translator ->
+                        if (translator.isPremium) {
+                            add(paywallResult(entry, translator, episodeCode))
+                            return@translatorLoop
+                        }
+                        val episodeResponse = ajax(
+                            mirror, entry.pageUrl, settings, page.favs, linkedMapOf(
+                                "action" to "get_episodes",
+                                "id" to page.postId,
+                                "translator_id" to translator.id
+                            )
+                        )
+                        val episodeIds = resolveEpisodeIds(
+                            episodeResponse, wantedSeason, wantedEpisode,
+                            page.defaultSeasonId, page.defaultEpisodeId
+                        ) ?: return@translatorLoop
+                        val streamResponse = ajax(
+                            mirror, entry.pageUrl, settings, page.favs, linkedMapOf(
+                                "action" to "get_stream",
+                                "id" to page.postId,
+                                "translator_id" to translator.id,
+                                "season" to episodeIds.seasonId,
+                                "episode" to episodeIds.episodeId
+                            )
+                        )
+                        addAll(parseStreamSources(streamResponse, entry, translator, entry.pageUrl, episodeCode))
                     }
                 }
             }
@@ -117,46 +155,109 @@ object HdRezkaCatalogClient {
 
     internal fun parseTranslators(html: String): List<HdRezkaTranslator> =
         Jsoup.parse(html).select("#translators-list [data-translator_id], [data-translator_id]")
-            .mapNotNull { el ->
-                val id = el.attr("data-translator_id").trim().takeIf { it.matches(Regex("[0-9]{1,12}")) }
-                    ?: return@mapNotNull null
-                val name = el.attr("title").ifBlank { el.text() }.trim().take(100).ifBlank { "Озвучка $id" }
-                HdRezkaTranslator(id, name)
+            .mapNotNull { element ->
+                val id = element.attr("data-translator_id").trim()
+                    .takeIf { it.matches(Regex("[0-9]{1,12}")) } ?: return@mapNotNull null
+                val name = element.attr("title").ifBlank { element.text() }.trim()
+                    .take(100).ifBlank { "Озвучка $id" }
+                HdRezkaTranslator(
+                    id = id,
+                    name = name,
+                    isCamrip = element.attr("data-camrip").ifBlank { "0" },
+                    isAds = element.attr("data-ads").ifBlank { "0" },
+                    isDirector = element.attr("data-director").ifBlank { "0" },
+                    isPremium = element.hasClass("b-prem_translator")
+                )
             }.distinctBy { it.id }.take(MAX_TRANSLATORS)
 
-    internal fun parsePostId(html: String, pageUrl: String): String? {
-        val doc = Jsoup.parse(html, pageUrl)
-        val input = doc.selectFirst("input#post_id, input[name=post_id]")?.attr("value")
+    internal fun parsePageContext(html: String, pageUrl: String): HdRezkaPageContext? {
+        val document = Jsoup.parse(html, pageUrl)
+        val seriesInit = seriesInitPattern.find(html)
+        val movieInit = movieInitPattern.find(html)
+        val postId = document.selectFirst("input#post_id, input[name=post_id]")?.attr("value")
             ?.takeIf { it.matches(Regex("[0-9]{1,12}")) }
-        if (input != null) return input
-        val pagePath = runCatching { URI(pageUrl).path.orEmpty() }.getOrDefault("")
-        return Regex("/(?:film|serial|cartoon|anime)/([0-9]{1,12})-").find(pagePath)?.groupValues?.getOrNull(1)
+            ?: seriesInit?.groupValues?.get(1)
+            ?: movieInit?.groupValues?.get(1)
+            ?: runCatching { URI(pageUrl).path.orEmpty() }.getOrDefault("")
+                .let { Regex("/(?:films?|serials?|cartoons?|anime)/([0-9]{1,12})-").find(it)?.groupValues?.get(1) }
+            ?: return null
+        val translators = parseTranslators(html).toMutableList()
+        val defaultTranslator = seriesInit?.groupValues?.get(2) ?: movieInit?.groupValues?.get(2)
+        if (translators.isEmpty() && defaultTranslator != null) {
+            translators += HdRezkaTranslator(
+                id = defaultTranslator,
+                name = "Оригинал",
+                isCamrip = movieInit?.groupValues?.getOrNull(3) ?: "0",
+                isAds = movieInit?.groupValues?.getOrNull(4) ?: "0",
+                isDirector = movieInit?.groupValues?.getOrNull(5) ?: "0"
+            )
+        }
+        val favs = document.selectFirst("input#ctrl_favs")?.attr("value").orEmpty().take(256)
+        val isSeries = seriesInit != null ||
+            document.selectFirst("#simple-episodes-tabs, #simple-seasons-tabs") != null ||
+            document.select(".b-simple_episode__item").isNotEmpty()
+        return HdRezkaPageContext(
+            postId, translators.distinctBy { it.id }.take(MAX_TRANSLATORS), favs, isSeries,
+            seriesInit?.groupValues?.getOrNull(3),
+            seriesInit?.groupValues?.getOrNull(4)
+        )
     }
+
+    internal fun parsePostId(html: String, pageUrl: String): String? =
+        parsePageContext(html, pageUrl)?.postId
 
     internal fun isSeriesPage(html: String): Boolean {
-        val doc = Jsoup.parse(html)
-        return doc.selectFirst("meta[property=og:type]")?.attr("content")
-            .equals("video.tv_series", true) || doc.select(".b-simple_episode__item").isNotEmpty()
+        val document = Jsoup.parse(html)
+        return document.selectFirst("meta[property=og:type]")?.attr("content")
+            .equals("video.tv_series", true) || seriesInitPattern.containsMatchIn(html) ||
+            document.selectFirst("#simple-episodes-tabs, #simple-seasons-tabs") != null ||
+            document.select(".b-simple_episode__item").isNotEmpty()
     }
 
-    internal fun resolveEpisodeIds(response: JSONObject, wantedSeason: Int, wantedEpisode: Int): HdRezkaEpisodeIds? {
-        val html = response.optString("episodes")
+    internal fun resolveEpisodeIds(
+        response: JSONObject,
+        wantedSeason: Int,
+        wantedEpisode: Int,
+        fallbackSeasonId: String? = null,
+        fallbackEpisodeId: String? = null
+    ): HdRezkaEpisodeIds? {
+        val seasonsHtml = response.optString("seasons")
+            .ifBlank { response.optJSONObject("data")?.optString("seasons").orEmpty() }
+        val episodesHtml = response.optString("episodes")
             .ifBlank { response.optJSONObject("data")?.optString("episodes").orEmpty() }
-            .ifBlank { response.optString("message") }
-        if (html.isBlank()) return null
-        val items = Jsoup.parse(html).select(".b-simple_episode__item[data-season_id][data-episode_id]")
+        if (episodesHtml.isBlank()) {
+            return if (wantedSeason == 1 && wantedEpisode == 1 &&
+                fallbackSeasonId?.matches(Regex("[0-9]{1,12}")) == true &&
+                fallbackEpisodeId?.matches(Regex("[0-9]{1,12}")) == true
+            ) HdRezkaEpisodeIds(fallbackSeasonId, fallbackEpisodeId) else null
+        }
+        val seasonTabs = Jsoup.parse("<ul>$seasonsHtml</ul>").select(".b-simple_season__item")
+        val seasonTab = seasonTabs.firstOrNull { tab ->
+            Regex("\\d+").find(tab.text())?.value?.toIntOrNull() == wantedSeason
+        } ?: seasonTabs.getOrNull(wantedSeason - 1)
+        val preferredSeasonId = seasonTab?.attr("data-tab_id")
+            ?.takeIf { it.matches(Regex("[0-9]{1,12}")) }
+        val items = Jsoup.parse("<div>$episodesHtml</div>")
+            .select(".b-simple_episode__item[data-season_id][data-episode_id]")
         if (items.isEmpty()) return null
-        val seasons = items.map { it.attr("data-season_id") }
-            .filter { it.matches(Regex("[0-9]{1,12}")) }.distinct()
-        val seasonId = if (seasons.contains(wantedSeason.toString())) wantedSeason.toString()
-        else seasons.mapNotNull(String::toIntOrNull).sorted().getOrNull(wantedSeason - 1)?.toString()
-            ?: return null
-        val seasonItems = items.filter { it.attr("data-season_id") == seasonId }
-        val episode = seasonItems.firstOrNull {
-            it.attr("data-episode_id") == wantedEpisode.toString() ||
-                it.attr("data-episode-number") == wantedEpisode.toString()
-        } ?: seasonItems.getOrNull(wantedEpisode - 1) ?: return null
-        val episodeId = episode.attr("data-episode_id").takeIf { it.matches(Regex("[0-9]{1,12}")) } ?: return null
+        val availableSeasonIds = items.map { it.attr("data-season_id") }.distinct()
+        val seasonId = preferredSeasonId?.takeIf(availableSeasonIds::contains)
+            ?: if (availableSeasonIds.contains(wantedSeason.toString())) wantedSeason.toString()
+            else availableSeasonIds.getOrNull(wantedSeason - 1)
+                ?: fallbackSeasonId?.takeIf(availableSeasonIds::contains)
+                ?: return null
+        val seasonEpisodes = items.filter { it.attr("data-season_id") == seasonId }
+        val selected = seasonEpisodes.firstOrNull { element ->
+            Regex("\\d+").find(element.text())?.value?.toIntOrNull() == wantedEpisode ||
+                element.attr("data-episode-number") == wantedEpisode.toString()
+        } ?: seasonEpisodes.getOrNull(wantedEpisode - 1)
+        if (selected == null) {
+            return if (wantedSeason == 1 && wantedEpisode == 1 && fallbackSeasonId == seasonId &&
+                fallbackEpisodeId?.matches(Regex("[0-9]{1,12}")) == true
+            ) HdRezkaEpisodeIds(seasonId, fallbackEpisodeId) else null
+        }
+        val episodeId = selected.attr("data-episode_id")
+            .takeIf { it.matches(Regex("[0-9]{1,12}")) } ?: return null
         return HdRezkaEpisodeIds(seasonId, episodeId)
     }
 
@@ -181,7 +282,17 @@ object HdRezkaCatalogClient {
         episodeLabel: String?
     ): List<SourceResult> {
         val data = response.optJSONObject("data") ?: response.optJSONObject("response") ?: response
+        val premium = isPremiumResponse(response) || translator.isPremium
+        if (response.has("success") && !response.optBoolean("success", false)) {
+            if (premium) return listOf(paywallResult(entry, translator, episodeLabel))
+            val message = response.optString("message").replace(Regex("[\\r\\n\\t]+"), " ").take(160)
+            throw IOException(message.ifBlank { "HDRezka не вернула медиапоток для выбранной озвучки" })
+        }
         val variants = parseQualityVariants(data.optString("url").ifBlank { data.optString("stream") })
+        if (variants.isEmpty()) {
+            if (premium) return listOf(paywallResult(entry, translator, episodeLabel))
+            return emptyList()
+        }
         val subtitles = parseSubtitles(data)
         return variants.map { variant ->
             val title = entry.title + if (episodeLabel.isNullOrBlank()) "" else " • $episodeLabel"
@@ -198,6 +309,28 @@ object HdRezkaCatalogClient {
                 requestHeaders = mapOf("Referer" to pageUrl)
             )
         }
+    }
+
+    private fun paywallResult(entry: HdRezkaSearchEntry, translator: HdRezkaTranslator, episodeLabel: String?): SourceResult =
+        SourceResult(
+            id = "hdrezka:${entry.pageUrl.hashCode()}:${translator.id}:${episodeLabel.orEmpty()}:premium",
+            title = entry.title + if (episodeLabel.isNullOrBlank()) "" else " • $episodeLabel",
+            providerName = "HDRezka",
+            pageUrl = entry.pageUrl,
+            sourceType = MediaSourceType.HDREZKA,
+            translationName = translator.name,
+            requiresSubscription = true
+        )
+
+    private fun isPremiumResponse(response: JSONObject): Boolean {
+        val flag = response.opt("premium_content")
+        return when (flag) {
+            is Boolean -> flag
+            is Number -> flag.toInt() == 1
+            is String -> flag == "1" || flag.equals("true", true)
+            else -> false
+        } || response.optString("message").contains("premium", true) ||
+            response.optString("message").contains("преми", true)
     }
 
     internal fun parseSubtitles(data: JSONObject): List<MediaSubtitle> {
@@ -230,10 +363,18 @@ object HdRezkaCatalogClient {
         return parsed.distinctBy { it.url }.take(12)
     }
 
-    private fun ajax(mirror: String, pageUrl: String, settings: HdRezkaSettings, fields: Map<String, String>): JSONObject {
-        val body = fields.entries.joinToString("&") { "${encode(it.key)}=${encode(it.value)}" }
+    private fun ajax(
+        mirror: String,
+        pageUrl: String,
+        settings: HdRezkaSettings,
+        favs: String,
+        fields: Map<String, String>
+    ): JSONObject {
+        val values = LinkedHashMap(fields)
+        values["favs"] = favs
+        val body = values.entries.joinToString("&") { "${encode(it.key)}=${encode(it.value)}" }
         val text = requestText(
-            mirror, "$mirror/ajax/get_cdn_series/", "POST", body, pageUrl, settings,
+            mirror, "$mirror/ajax/get_cdn_series/?t=${System.currentTimeMillis()}", "POST", body, pageUrl, settings,
             "application/x-www-form-urlencoded; charset=UTF-8"
         )
         return runCatching { JSONObject(text) }
