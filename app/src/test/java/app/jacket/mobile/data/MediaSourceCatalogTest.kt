@@ -24,17 +24,17 @@ class MediaSourceCatalogTest {
     }
 
     @Test
-    fun marksOnlyExistingConnectorsAsIntegrated() {
+    fun marksOnlyExistingAuthenticationFlowsAsAvailable() {
         val integrated = MediaSourceCatalog.sources
-            .filter { it.integration == MediaSourceIntegration.IN_APP_CONNECTOR }
+            .filter { it.integration == MediaSourceIntegration.AUTH_SETTINGS_ONLY }
             .map { it.id }
 
         assertEquals(listOf("hdrezka", "filmix"), integrated)
         assertTrue(MediaSourceCatalog.sources
-            .filter { it.integration == MediaSourceIntegration.NOT_CONNECTED }
+            .filter { it.integration == MediaSourceIntegration.MEDIA_ADAPTER_MISSING }
             .all { it.notes.contains("адаптер") || it.notes.contains("API") ||
                 it.notes.contains("источник") || it.notes.contains("плагин") })
         assertFalse(MediaSourceCatalog.sources.any { it.id == "coldfilm" &&
-            it.integration == MediaSourceIntegration.IN_APP_CONNECTOR })
+            it.integration == MediaSourceIntegration.AUTH_SETTINGS_ONLY })
     }
 }
