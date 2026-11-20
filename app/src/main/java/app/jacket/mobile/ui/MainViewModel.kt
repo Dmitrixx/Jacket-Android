@@ -12,6 +12,8 @@ import app.jacket.mobile.data.IndexerConfig
 import app.jacket.mobile.data.IndexerFailure
 import app.jacket.mobile.data.IndexerRegistry
 import app.jacket.mobile.data.JackettUrl
+import app.jacket.mobile.data.JackettIndexerClient
+import app.jacket.mobile.data.JackettIndexerEntry
 import app.jacket.mobile.data.MediaCatalogClient
 import app.jacket.mobile.data.MediaDetails
 import app.jacket.mobile.data.MediaSection
@@ -39,6 +41,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val indexers = IndexerRegistry(catalog)
     private var catalogJob: Job? = null
     private var sourcesJob: Job? = null
+    private var jackettCatalogJob: Job? = null
     private var indexerTestJob: Job? = null
     private var episodeJob: Job? = null
     private var filmixPairingJob: Job? = null
@@ -113,6 +116,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _sourceResults = MutableStateFlow<List<SourceResult>>(emptyList())
     val sourceResults: StateFlow<List<SourceResult>> = _sourceResults.asStateFlow()
+
+    private val _jackettIndexers = MutableStateFlow<List<JackettIndexerEntry>>(emptyList())
+    val jackettIndexers: StateFlow<List<JackettIndexerEntry>> = _jackettIndexers.asStateFlow()
+
+    private val _isLoadingJackettIndexers = MutableStateFlow(false)
+    val isLoadingJackettIndexers: StateFlow<Boolean> = _isLoadingJackettIndexers.asStateFlow()
+
+    private val _jackettCatalogStatus = MutableStateFlow<String?>(null)
+    val jackettCatalogStatus: StateFlow<String?> = _jackettCatalogStatus.asStateFlow()
+
 
     private val _isLoading = MutableStateFlow(false)
     val isLoading: StateFlow<Boolean> = _isLoading.asStateFlow()
@@ -484,6 +497,89 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }?.let { testIndexer(it.id) }
         }
     }
+    /** Loads Jackett's native t=indexers catalogue into the in-app settings screen. */
+    fun refreshJackettIndexers() {
+        val config = _customIndexers.value.firstOrNull {
+            it.protocol == app.jacket.mobile.data.IndexerProtocol.JACKETT
+        }
+        if (config == null) {
+            _jackettIndexers.value = emptyList()
+            _jackettCatalogStatus.value = "Сначала подключите свой сервер Jackett."
+            _isLoadingJackettIndexers.value = false
+            return
+        }
+        jackettCatalogJob?.cancel()
+        jackettCatalogJob = viewModelScope.launch {
+            _isLoadingJackettIndexers.value = true
+            _jackettCatalogStatus.value = "Загружаем список индексаторов Jackett…"
+            try {
+                val entries = withContext(Dispatchers.IO) {
+                    JackettIndexerClient.fetch(config)
+                }
+                _jackettIndexers.value = entries
+                val configured = entries.count { it.configured }
+                _jackettCatalogStatus.value =
+                    "Получено индексаторов: ${entries.size} • настроено на сервере: $configured."
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                _jackettCatalogStatus.value =
+                    error.message?.replace(Regex("[\\r\\n\\t]+"), " ")?.take(220)
+                        ?: "Не удалось загрузить каталог Jackett."
+            } finally {
+                _isLoadingJackettIndexers.value = false
+            }
+        }
+    }
+
+    /** Searches one configured Jackett tracker and keeps the results in Jacket's native list. */
+    fun searchJackettIndexer(indexerId: String, query: String) {
+        val base = _customIndexers.value.firstOrNull {
+            it.protocol == app.jacket.mobile.data.IndexerProtocol.JACKETT
+        } ?: run {
+            showError("Сначала подключите Jackett")
+            return
+        }
+        if (query.isBlank()) {
+            showError("Введите название для поиска")
+            return
+        }
+        val target = try {
+            JackettIndexerClient.searchConfig(base, indexerId)
+        } catch (error: Exception) {
+            showError(error.message ?: "Некорректный индексатор Jackett")
+            return
+        }
+        sourcesJob?.cancel()
+        sourcesJob = viewModelScope.launch {
+            _isSearchingSources.value = true
+            _sourceResults.value = emptyList()
+            _indexerErrors.value = emptyList()
+            clearMessage()
+            try {
+                val results = withContext(Dispatchers.IO) {
+                    indexers.searchOne(target, query.trim())
+                }
+                _sourceResults.value = results
+                _message.value = if (results.isEmpty()) {
+                    "В «${target.name}» ничего не найдено"
+                } else {
+                    "Найдено в «${target.name}»: ${results.size}"
+                }
+                _isError.value = false
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                _indexerErrors.value = listOf(
+                    IndexerFailure(target.id, target.name, error.message ?: "Ошибка поиска Jackett")
+                )
+                showError("«${target.name}»: ${error.message ?: "ошибка поиска"}")
+            } finally {
+                _isSearchingSources.value = false
+            }
+        }
+    }
+
     fun saveWebSearchProvider(provider: WebSearchProvider): Boolean {
         return try {
             settings.saveWebSearchProvider(provider)
