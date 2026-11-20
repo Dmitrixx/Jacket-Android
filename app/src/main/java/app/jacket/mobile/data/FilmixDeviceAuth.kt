@@ -25,6 +25,7 @@ data class FilmixPendingDevice(
  */
 object FilmixDeviceAuth {
     const val ACTIVATION_URL = "https://filmix.my/consoles"
+    const val SITE_BASE = "https://filmix.my"
     const val DEFAULT_API_BASE = "https://filmixapp.cyou/api/v2"
     const val ALTERNATE_API_BASE = "https://fxapp.biz/api/v2"
 
@@ -141,6 +142,36 @@ object FilmixDeviceAuth {
 
     internal fun buildTokenRequestUrl(apiBase: String, deviceId: String): String =
         buildApiUrl(apiBase, "token_request", deviceId)
+
+    /** Builds a token-authenticated Filmix v2 API URL without logging its secret query value. */
+    internal fun buildAuthenticatedApiUrl(
+        apiBase: String,
+        endpoint: String,
+        deviceId: String,
+        token: String,
+        extraQuery: Map<String, String> = emptyMap()
+    ): String {
+        require(token.isNotBlank() && token.length <= 4096) { "Токен Filmix отсутствует или имеет неверный размер" }
+        val safeBase = normalizeApiBase(apiBase)
+        require(endpoint.matches(Regex("[a-zA-Z0-9_/-]{1,80}")) && !endpoint.contains("..")) {
+            "Некорректный endpoint Filmix"
+        }
+        val params = linkedMapOf(
+            "user_dev_id" to deviceId,
+            "user_dev_name" to API_DEVICE_NAME,
+            "user_dev_vendor" to API_DEVICE_VENDOR,
+            "user_dev_os" to API_DEVICE_OS,
+            "user_dev_apk" to API_DEVICE_APK,
+            "user_dev_token" to token
+        )
+        extraQuery.forEach { (key, value) ->
+            require(key.matches(Regex("[a-zA-Z0-9_]{1,40}"))) { "Некорректный параметр Filmix" }
+            require(key !in params) { "Переопределение параметров авторизации запрещено" }
+            params[key] = value.take(300)
+        }
+        return safeBase + "/" + endpoint.trimStart('/') + "?" +
+            params.entries.joinToString("&") { "${encode(it.key)}=${encode(it.value)}" }
+    }
 
     private fun buildApiUrl(apiBase: String, endpoint: String, deviceId: String): String {
         val safeBase = normalizeApiBase(apiBase)
