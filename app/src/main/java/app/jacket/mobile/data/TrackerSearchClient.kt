@@ -97,7 +97,7 @@ object TrackerSearchClient {
      * Searches up to six enabled built-in trackers concurrently, with a strict
      * per-provider concurrency cap. Partial results are retained if one site fails.
      */
-    fun searchAll(providers: List<WebSearchProvider>, query: String): TrackerSearchBatchOutcome {
+    internal fun searchAll(providers: List<WebSearchProvider>, query: String): TrackerSearchBatchOutcome {
         require(query.isNotBlank()) { "Введите название для поиска" }
         val active = providers
             .filter { it.enabled && supports(it.id) }
