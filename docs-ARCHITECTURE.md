@@ -26,6 +26,10 @@ Detail card → IndexerRegistry → magnet / .torrent → TorrentEngine → Loca
 
 No external Jackett or TorrServer process is started or packaged.
 
+## Video source registry
+
+`MediaSourceCatalog` preserves the ten requested provider IDs, priorities, media types, auth requirements and 4K flags. The registry marks only HDRezka and Filmix as app-side connectors; ColdFilm, Baskino, Kinogo, VideoCDN, Collaps, Kinobase, CDNMovies and Lordfilm remain visibly unconnected until a lawful, documented adapter/API is available. Metadata in the registry is not a claim that those services can currently be searched or played.
+
 ## Catalog flow
 
 - `MediaCatalogClient` reads Internet Archive catalog metadata directly.
@@ -45,6 +49,10 @@ No external Jackett or TorrServer process is started or packaged.
 - Results are deduplicated by magnet, download URL, stream URL, then provider result ID; sorting is seeders descending, then release title.
 - Per-indexer test and probe search are separate operations. Test-all also runs with a four-worker cap.
 - Quality, codec, HDR/DV and audio/dubbing tags are title-only heuristics. Client filters do not repeat the network request.
+- `ReleaseHeuristics` also derives resolution dimensions, audio channel count, recognizable language/subtitle markers and bitrate from release titles. These labels are best-effort heuristics, not verified track metadata.
+- `IndexerRegistry` preserves Torznab/RSS publication dates for release cards when a feed provides `pubDate` / `published`.
+- `JackettIndexerClient` uses the documented `t=indexers` Torznab catalogue endpoint with the user's API key, displays type/language/categories/configured state in the native UI, and builds per-indexer Torznab search URLs. Only configured indexers can be searched from Jacket; credential forms for unconfigured private trackers still have to be saved in the user's Jackett server dashboard, since those admin endpoints require a dashboard-authenticated session.
+- `.torrent` download actions from the indexer cabinet enqueue the file in Jacket's foreground torrent service. Release results remain native `SourceCard` items and do not navigate to the browser to display the list.
 - JSON import/export includes non-secret configuration only. Credentials must be entered again after import.
 
 The registry intentionally does not include tracker-specific HTML parsers or solve CAPTCHA, anti-bot checks or interactive 2FA. A user may supply a session cookie if the indexer's rules allow it.
