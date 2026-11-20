@@ -333,7 +333,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Exception) {
-                showError(error.message ?: "Не удалось разобрать результаты трекера")
+                if (sourceSearchEpoch.isCurrent(searchEpoch)) {
+                    showError(error.message ?: "Не удалось разобрать результаты трекера")
+                }
             } finally {
                 finishSourceSearch(searchEpoch)
             }
@@ -392,7 +394,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Exception) {
-                showError(error.message ?: "Не удалось выполнить поиск по трекерам")
+                if (sourceSearchEpoch.isCurrent(searchEpoch)) {
+                    showError(error.message ?: "Не удалось выполнить поиск по трекерам")
+                }
             } finally {
                 finishSourceSearch(searchEpoch)
             }
@@ -443,7 +447,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Exception) {
-                showError(error.message ?: "Ошибка поиска источников")
+                if (sourceSearchEpoch.isCurrent(searchEpoch)) {
+                    showError(error.message ?: "Ошибка поиска источников")
+                }
             } finally {
                 finishSourceSearch(searchEpoch)
             }
@@ -735,10 +741,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Exception) {
-                _indexerErrors.value = listOf(
-                    IndexerFailure(config.id, config.name, error.message ?: "Ошибка пробного поиска")
-                )
-                showError("Пробный поиск «${config.name}»: ${error.message ?: "ошибка источника"}")
+                if (sourceSearchEpoch.isCurrent(searchEpoch)) {
+                    _indexerErrors.value = listOf(
+                        IndexerFailure(config.id, config.name, error.message ?: "Ошибка пробного поиска")
+                    )
+                    showError("Пробный поиск «${config.name}»: ${error.message ?: "ошибка источника"}")
+                }
             } finally {
                 finishSourceSearch(searchEpoch)
             }
