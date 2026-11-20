@@ -774,6 +774,8 @@ private fun SearchScreen(
     val webProviders by viewModel.webSearchProviders.collectAsState()
     val items by viewModel.items.collectAsState()
     val loading by viewModel.isLoading.collectAsState()
+    val trackerResults by viewModel.sourceResults.collectAsState()
+    val searchingTrackers by viewModel.isSearchingSources.collectAsState()
     val message by viewModel.message.collectAsState()
     val isError by viewModel.isError.collectAsState()
 
@@ -2461,7 +2463,7 @@ private fun SettingsScreen(
                             fontWeight = FontWeight.Bold
                         )
                         Text(
-                            "Встроенные поддерживаемые трекеры показывают раздачи списком прямо в Jacket. Остальные сайты можно добавить как внешние поисковые ссылки."
+                            "Встроенные поддерживаемые трекеры показывают раздачи списком прямо в Jacket. Остальные сайты можно добавить как внешние поисковые ссылки.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )

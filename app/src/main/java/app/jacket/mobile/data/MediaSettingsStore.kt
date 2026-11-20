@@ -224,7 +224,8 @@ class MediaSettingsStore(context: Context) {
                     id = item.optString("id"),
                     name = item.optString("name"),
                     searchUrlTemplate = item.optString("url"),
-                    enabled = item.optBoolean("enabled", true)
+                    enabled = item.optBoolean("enabled", true),
+                    cookie = decrypt(item.optString("cookieEnc"))
                 )
                 if (provider.id.isNotBlank() && provider.name.isNotBlank() &&
                     runCatching { WebSearchUrlBuilder.validateTemplate(provider.searchUrlTemplate) }.isSuccess

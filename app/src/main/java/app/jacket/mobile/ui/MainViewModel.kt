@@ -167,11 +167,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun search(query: String) {
         val clean = query.trim()
         if (clean.isBlank()) {
-            _items.value = emptyList()
+            clearSearch()
             _message.value = "Введите название фильма или сериала"
             _isError.value = true
             return
         }
+        sourcesJob?.cancel()
+        _sourceResults.value = emptyList()
+        _indexerErrors.value = emptyList()
+        _isSearchingSources.value = false
         loadList { catalog.search(clean, _tmdbToken.value) }
     }
 
