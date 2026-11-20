@@ -519,12 +519,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             _filmixStatus.value = "Запрашиваем код у Filmix…"
             try {
                 val deviceId = settings.filmixDeviceId()
-                val deviceName = Build.MODEL?.take(80)?.ifBlank { "Jacket" } ?: "Jacket"
-                val vendor = Build.MANUFACTURER?.take(80)?.ifBlank { "Android" } ?: "Android"
-                val osVersion = "Android ${Build.VERSION.RELEASE.orEmpty()}"
-                val appVersion = BuildConfig.VERSION_NAME
                 val pending = withContext(Dispatchers.IO) {
-                    FilmixDeviceAuth.requestCode(deviceId, deviceName, vendor, osVersion, appVersion)
+                    FilmixDeviceAuth.requestCode(deviceId)
                 }
                 _filmixCode.value = pending.code
                 _filmixStatus.value = "Введите код на странице устройств Filmix. Проверяем подтверждение автоматически."
@@ -534,7 +530,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     delay(FILMIX_PAIRING_POLL_MS)
                     val activated = try {
                         withContext(Dispatchers.IO) {
-                            FilmixDeviceAuth.pollActivation(pending, deviceName, vendor, osVersion, appVersion)
+                            FilmixDeviceAuth.pollActivation(pending)
                         }
                     } catch (cancelled: CancellationException) {
                         throw cancelled

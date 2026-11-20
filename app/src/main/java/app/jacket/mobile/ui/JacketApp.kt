@@ -1206,7 +1206,11 @@ private fun DetailScreen(
                                                         onClick = {
                                                             selectedEpisodeForSources = episode
                                                             showSourcesSheet = true
-                                                            viewModel.findSources(item, episode)
+                                                            if (activeInAppTrackers.isNotEmpty()) {
+                                                                viewModel.findSourcesOnAllTrackers(item, episode)
+                                                            } else {
+                                                                viewModel.findSources(item, episode)
+                                                            }
                                                         },
                                                         enabled = !searchingSources
                                                     ) {
@@ -1260,7 +1264,11 @@ private fun DetailScreen(
                         onClick = {
                             selectedEpisodeForSources = null
                             showSourcesSheet = true
-                            viewModel.findSources(item)
+                            if (activeInAppTrackers.isNotEmpty()) {
+                                viewModel.findSourcesOnAllTrackers(item)
+                            } else {
+                                viewModel.findSources(item)
+                            }
                         },
                         enabled = !searchingSources,
                         modifier = Modifier.fillMaxWidth()
@@ -1269,10 +1277,10 @@ private fun DetailScreen(
                             CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
                             Spacer(Modifier.width(8.dp))
                         } else {
-                            Icon(Icons.Default.PlayArrow, contentDescription = null)
+                            Icon(Icons.Default.Search, contentDescription = null)
                             Spacer(Modifier.width(8.dp))
                         }
-                        Text(if (searchingSources) "Ищем источники…" else "Смотреть")
+                        Text(if (searchingSources) "Ищем раздачи…" else "Поиск торрентов")
                     }
 
                     OutlinedButton(
@@ -1418,7 +1426,13 @@ private fun DetailScreen(
                     }
                     IconButton(
                         onClick = {
-                            details?.item?.let { viewModel.findSources(it, selectedEpisodeForSources) }
+                            details?.item?.let {
+                                if (activeInAppTrackers.isNotEmpty()) {
+                                    viewModel.findSourcesOnAllTrackers(it, selectedEpisodeForSources)
+                                } else {
+                                    viewModel.findSources(it, selectedEpisodeForSources)
+                                }
+                            }
                         },
                         enabled = !searchingSources
                     ) {
@@ -1439,6 +1453,19 @@ private fun DetailScreen(
                         Icon(Icons.Default.Search, contentDescription = null)
                         Spacer(Modifier.width(8.dp))
                         Text("Искать на всех встроенных трекерах • ${activeInAppTrackers.size}")
+                    }
+                } else {
+                    MessageCard(
+                        "Встроенные трекеры пока не добавлены. Добавьте их один раз, чтобы искать раздачи прямо в карточках фильмов.",
+                        false
+                    )
+                    OutlinedButton(
+                        onClick = { viewModel.restoreDefaultTrackerShortcuts() },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Icon(Icons.Default.Add, contentDescription = null)
+                        Spacer(Modifier.width(8.dp))
+                        Text("Добавить список трекеров")
                     }
                 }
 

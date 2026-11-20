@@ -1,7 +1,9 @@
 package app.jacket.mobile.data
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.io.ByteArrayInputStream
 
 class HdRezkaLoginClientTest {
     @Test
@@ -37,6 +39,22 @@ class HdRezkaLoginClientTest {
         assertEquals(null, HdRezkaLoginClient.loginRedirectMethod(307))
         assertEquals(null, HdRezkaLoginClient.loginRedirectMethod(308))
         assertEquals("", HdRezkaLoginClient.loginRedirectMethod(200))
+    }
+
+
+    @Test
+    fun largeLandingPageCanBeInspectedWithoutBufferingTheWholeResponse() {
+        val page = ByteArray(512 * 1024) { (it % 251).toByte() }
+        val preview = HdRezkaLoginClient.readResponsePreview(ByteArrayInputStream(page), 64 * 1024)
+        assertEquals(64 * 1024, preview.size)
+        assertTrue(preview.contentEquals(page.copyOf(64 * 1024)))
+    }
+
+    @Test
+    fun mirrorPreviewHandlesSmallResponsesWithoutPadding() {
+        val bytes = "<html><title>OK</title></html>".toByteArray()
+        val preview = HdRezkaLoginClient.readResponsePreview(ByteArrayInputStream(bytes), 64 * 1024)
+        assertTrue(preview.contentEquals(bytes))
     }
 
     @Test(expected = IllegalArgumentException::class)
