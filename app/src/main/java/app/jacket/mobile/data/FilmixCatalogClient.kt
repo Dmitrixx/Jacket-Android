@@ -331,14 +331,6 @@ object FilmixCatalogClient {
         }
     }
 
-    private fun buildApiUrl(
-        apiBase: String,
-        path: String,
-        deviceId: String,
-        token: String,
-        params: Map<String, String> = emptyMap()
-    ): String = FilmixDeviceAuth.buildAuthenticatedApiUrl(apiBase, path, deviceId, token, params)
-
     private fun isHttpsUrl(value: String): Boolean = runCatching {
         val uri = URI(value)
         uri.scheme.equals("https", true) && !uri.host.isNullOrBlank() && uri.rawUserInfo == null

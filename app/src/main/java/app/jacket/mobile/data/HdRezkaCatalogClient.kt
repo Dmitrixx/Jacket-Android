@@ -254,6 +254,7 @@ object HdRezkaCatalogClient {
         var currentMethod = method
         var currentBody = body
         repeat(MAX_REDIRECTS + 1) {
+            val requestBody = currentBody
             val uri = URI(currentUrl)
             val connection = (URL(currentUrl).openConnection() as HttpURLConnection).apply {
                 requestMethod = currentMethod
@@ -270,7 +271,7 @@ object HdRezkaCatalogClient {
                 if (HdRezkaLoginClient.hasAuthenticatedCookie(settings.cookie) &&
                     uri.host.equals(URI(mirror).host, true)
                 ) setRequestProperty("Cookie", settings.cookie)
-                if (currentBody != null) {
+                if (requestBody != null) {
                     doOutput = true
                     setRequestProperty("Content-Type", contentType ?: "application/x-www-form-urlencoded")
                 }
