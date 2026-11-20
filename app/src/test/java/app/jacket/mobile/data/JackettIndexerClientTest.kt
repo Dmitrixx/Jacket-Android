@@ -244,6 +244,11 @@ class JackettIndexerClientTest {
     }
 
     @Test(expected = IllegalArgumentException::class)
+    fun rejectsDotSegmentIndexerIds() {
+        JackettIndexerClient.buildIndexerConfigUrl("https://seedbox.example", "..")
+    }
+
+    @Test(expected = IllegalArgumentException::class)
     fun rejectsTraversalIndexerId() {
         JackettIndexerClient.buildIndexerConfigUrl("https://seedbox.example", "../admin")
     }
