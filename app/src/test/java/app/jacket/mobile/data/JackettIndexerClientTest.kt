@@ -4,6 +4,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import org.kxml2.io.KXmlParser
 
 class JackettIndexerClientTest {
     @Test
@@ -44,7 +45,7 @@ class JackettIndexerClientTest {
             </indexers>
         """.trimIndent()
 
-        val entries = JackettIndexerClient.parseIndexers(xml)
+        val entries = JackettIndexerClient.parseIndexers(xml, KXmlParser())
 
         assertEquals(2, entries.size)
         assertEquals("RuTracker", entries[0].name)
