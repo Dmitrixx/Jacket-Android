@@ -80,13 +80,17 @@ class MediaSettingsStore(context: Context) {
         return id
     }
 
-    fun hdRezkaSettings(): HdRezkaSettings = HdRezkaSettings(
-        mirror = preferences.getString(KEY_HDREZKA_MIRROR, "") ?: "",
-        login = decrypt(preferences.getString(KEY_HDREZKA_LOGIN, null)),
-        password = decrypt(preferences.getString(KEY_HDREZKA_PASSWORD, null)),
-        cookie = decrypt(preferences.getString(KEY_HDREZKA_COOKIE, null)),
-        connected = preferences.getBoolean(KEY_HDREZKA_CONNECTED, false)
-    )
+    fun hdRezkaSettings(): HdRezkaSettings {
+        val cookie = decrypt(preferences.getString(KEY_HDREZKA_COOKIE, null))
+        return HdRezkaSettings(
+            mirror = preferences.getString(KEY_HDREZKA_MIRROR, "") ?: "",
+            login = decrypt(preferences.getString(KEY_HDREZKA_LOGIN, null)),
+            password = decrypt(preferences.getString(KEY_HDREZKA_PASSWORD, null)),
+            cookie = cookie,
+            connected = preferences.getBoolean(KEY_HDREZKA_CONNECTED, false) &&
+                HdRezkaLoginClient.hasAuthenticatedCookie(cookie)
+        )
+    }
 
     @Synchronized
     fun saveHdRezkaSettings(settings: HdRezkaSettings) {
