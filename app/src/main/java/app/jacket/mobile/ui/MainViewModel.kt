@@ -1,7 +1,6 @@
 package app.jacket.mobile.ui
 
 import android.app.Application
-import android.os.Build
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import app.jacket.mobile.data.CatalogItem
@@ -20,7 +19,6 @@ import app.jacket.mobile.data.MediaSeason
 import app.jacket.mobile.data.MediaEpisode
 import app.jacket.mobile.data.MediaSettingsStore
 import app.jacket.mobile.data.WebSearchProvider
-import app.jacket.mobile.BuildConfig
 import app.jacket.mobile.data.SourceResult
 import app.jacket.mobile.data.TrackerSearchClient
 import kotlinx.coroutines.CancellationException
