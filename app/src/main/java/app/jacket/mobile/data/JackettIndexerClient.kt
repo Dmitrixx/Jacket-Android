@@ -78,7 +78,7 @@ object JackettIndexerClient {
         validateJackettConfig(config)
         val url = buildIndexersUrl(baseUrl(config))
         val body = execute(config, url, "GET").toString(Charsets.UTF_8)
-        val entries = parseIndexersJson(body)
+        val entries = parseIndexersJson(body, listOf(config.apiKey, config.cookie, config.username, config.password))
         if (entries.isEmpty()) throw IOException("Jackett вернул пустой каталог индексаторов")
         return entries
     }
@@ -152,7 +152,10 @@ object JackettIndexerClient {
         )
     }
 
-    internal fun parseIndexersJson(json: String): List<JackettIndexerEntry> {
+    internal fun parseIndexersJson(
+        json: String,
+        configuredSecrets: Collection<String> = emptyList()
+    ): List<JackettIndexerEntry> {
         require(json.length <= MAX_RESPONSE_BYTES) { "Ответ каталога Jackett слишком большой" }
         val array = runCatching { JSONArray(json) }
             .getOrElse { throw IOException("Jackett вернул некорректный JSON каталога", it) }
@@ -188,7 +191,8 @@ object JackettIndexerClient {
                 configured = item.optBoolean("configured", false),
                 categoryIds = categoryIds.distinct().take(100),
                 categoryNames = categoryNames.distinct().take(100),
-                lastError = item.optString("last_error").takeIf(String::isNotBlank)?.take(240)
+                lastError = item.optString("last_error").takeIf(String::isNotBlank)
+                    ?.let { IndexerErrorSanitizer.sanitize(it, configuredSecrets) }
             )
         }
         return entries.values.sortedWith(
