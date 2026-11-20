@@ -39,7 +39,7 @@ Add user-owned endpoints:
 
 - RSS / Atom feeds and Torznab / Newznab-compatible endpoints over HTTPS.
 - HTTP endpoints only when they target a private / loopback / link-local IP or a local DNS suffix such as `.local` or `.lan`; this is intended for a Jackett server on your own network.
-- A native Jackett REST catalogue using `GET /api/v2.0/indexers`, showing public/private type, language, categories, configured status and source links. Configured trackers can be searched individually; their releases remain native Jacket cards and magnet/`.torrent` actions use Jacket's own queue.
+- A native Jackett REST catalogue using `GET /api/v2.0/indexers`, showing public/private type, language, categories, configured status and source links. Configured trackers can be tested and searched individually; their releases remain native Jacket cards and magnet/`.torrent` actions use Jacket's own queue.
 - Dynamic per-indexer setup forms use Jackett's `GET/POST /api/v2.0/indexers/{id}/config` endpoints. The API key is used for Torznab search; a separate optional dashboard session Cookie is used only for authenticated setup operations. The Cookie is encrypted at rest and sent only to the configured Jackett host. If the dashboard does not require login, the Cookie can be left blank.
 - API key, HTTP Basic username/password, or a manually supplied session cookie.
 - Categories, tags, Freeleech flag, sort field and sort order.
