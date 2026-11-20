@@ -39,6 +39,7 @@ No external Jackett or TorrServer process is started or packaged.
 `IndexerConfig` contains protocol, HTTPS template, API key, Basic credentials, cookie, categories, tags, Freeleech and sort settings.
 
 - `IndexerRegistry.searchDetailed` launches enabled sources through a fixed pool of four workers.
+- Built-in multi-tracker search consumes providers in completion order and publishes merged partial results as each finishes. The aggregate has a 25-second deadline, and detail-page lookups use a separate bounded budget so a slow page cannot stall every result.
 - Every provider failure is isolated as an `IndexerFailure`; other responses are still returned.
 - RSS/Atom and Torznab/Newznab are parsed into provider-neutral `SourceResult` values.
 - Common Torznab attributes are parsed: `magneturl`, `seeders`, `peers`, `size` / `length`, `category`.
