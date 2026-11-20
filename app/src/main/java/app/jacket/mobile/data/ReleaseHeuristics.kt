@@ -25,6 +25,33 @@ object ReleaseHeuristics {
         "DV" to Regex("""(?i)(?<![a-z0-9])(?:dolby[ ._-]?vision|dv)(?![a-z0-9])""")
     )
 
+    private val dimensionPattern = Regex(
+        """(?i)(?<![0-9])([0-9]{3,4})\\s*[x×]\\s*([0-9]{3,4})(?![0-9])"""
+    )
+    private val channelPattern = Regex(
+        """(?i)(?<![0-9])([1-8]\\.[0-2])(?![0-9])"""
+    )
+    private val languageNames = linkedMapOf(
+        "RUS" to Regex("""(?i)(?<![a-z0-9])(?:rus|russian)(?![a-z0-9])"""),
+        "UKR" to Regex("""(?i)(?<![a-z0-9])(?:ukr|ukrainian)(?![a-z0-9])"""),
+        "ENG" to Regex("""(?i)(?<![a-z0-9])(?:eng|english)(?![a-z0-9])"""),
+        "GER" to Regex("""(?i)(?<![a-z0-9])(?:ger|german)(?![a-z0-9])"""),
+        "FRE" to Regex("""(?i)(?<![a-z0-9])(?:fre|french)(?![a-z0-9])"""),
+        "SPA" to Regex("""(?i)(?<![a-z0-9])(?:spa|spanish)(?![a-z0-9])"""),
+        "ITA" to Regex("""(?i)(?<![a-z0-9])(?:ita|italian)(?![a-z0-9])"""),
+        "POR" to Regex("""(?i)(?<![a-z0-9])(?:por|portuguese)(?![a-z0-9])"""),
+        "POL" to Regex("""(?i)(?<![a-z0-9])(?:pol|polish)(?![a-z0-9])"""),
+        "JPN" to Regex("""(?i)(?<![a-z0-9])(?:jpn|japanese)(?![a-z0-9])"""),
+        "CHI" to Regex("""(?i)(?<![a-z0-9])(?:chi|chinese)(?![a-z0-9])"""),
+        "HEB" to Regex("""(?i)(?<![a-z0-9])(?:heb|hebrew)(?![a-z0-9])")
+    )
+    private val subtitlePattern = Regex(
+        """(?i)(?:sub(?:title)?s?[ ._-]*[:=]?[ ._-]*(rus|ukr|eng|ger|fre|spa|ita|por|pol|jpn|chi|heb))|(?:(rus|ukr|eng|ger|fre|spa|ita|por|pol|jpn|chi|heb)[ ._-]*sub(?:title)?s?)"""
+    )
+    private val bitratePattern = Regex(
+        """(?i)([0-9]+(?:[.,][0-9]+)?)\\s*(?:mbit/s|мбит/с|mbps)"""
+    )
+
     fun classify(title: String): ReleaseMetadata {
         val quality = resolutionPatterns.firstOrNull { it.second.containsMatchIn(title) }?.first
         val hdr = Regex("""(?i)(?<![a-z0-9])hdr(?:10\+?)?(?![a-z0-9])""").containsMatchIn(title)
@@ -40,13 +67,35 @@ object ReleaseHeuristics {
             listOf("DUB", "MVO", "AVO", "VO", "LE", "LostFilm", "NewStudio").filter {
                 Regex("""(?i)(?<![a-z0-9])${Regex.escape(it)}(?![a-z0-9])""").containsMatchIn(title)
             }
+        val dimensions = dimensionPattern.find(title)?.let { "${it.groupValues[1]}x${it.groupValues[2]}" }
+        val channelCount = channelPattern.find(title)?.groupValues?.getOrNull(1)
+        val subtitleLanguages = subtitlePattern.findAll(title).mapNotNull { match ->
+            (match.groupValues.getOrNull(1).orEmpty().ifBlank { match.groupValues.getOrNull(2).orEmpty() })
+                .uppercase().takeIf(String::isNotBlank)
+        }.distinct().toList()
+        val foundLanguages = languageNames.mapNotNull { (code, pattern) ->
+            code.takeIf { pattern.containsMatchIn(title) }
+        }
+        val audioLanguages = foundLanguages.filterNot { it in subtitleLanguages }
+        val bitrate = bitratePattern.find(title)?.groupValues?.getOrNull(1)?.replace(',', '.')?.let { "$it Мбит/с" }
+        val displayQuality = quality ?: when {
+            dimensions?.startsWith("3840") == true -> "2160p"
+            dimensions?.startsWith("1920") == true -> "FHD"
+            dimensions?.startsWith("1280") == true -> "720p"
+            else -> null
+        }
         return ReleaseMetadata(
-            quality = quality,
+            quality = displayQuality,
             hdr = hdr,
             dolbyVision = dolbyVision,
             videoCodec = codec,
             audioTags = audio.distinct(),
-            sourceTags = source.distinct()
+            sourceTags = source.distinct(),
+            resolutionDimensions = dimensions,
+            audioChannels = channelCount,
+            audioLanguages = audioLanguages,
+            subtitleLanguages = subtitleLanguages,
+            bitrate = bitrate
         )
     }
 }
