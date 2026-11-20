@@ -105,14 +105,18 @@ class TorrentQueueStore(context: Context) {
         save(all().filterNot { it.id.equals(id, true) })
         val paused = preferences.getStringSet(KEY_PAUSED, emptySet()).orEmpty().toMutableSet()
         paused.remove(id)
-        preferences.edit().putStringSet(KEY_PAUSED, paused).apply()
+        check(preferences.edit().putStringSet(KEY_PAUSED, paused).commit()) {
+            "Не удалось надёжно сохранить состояние паузы загрузки"
+        }
     }
 
     @Synchronized
     fun setPaused(id: String, paused: Boolean) {
         val values = preferences.getStringSet(KEY_PAUSED, emptySet()).orEmpty().toMutableSet()
         if (paused) values.add(id) else values.remove(id)
-        preferences.edit().putStringSet(KEY_PAUSED, values).apply()
+        check(preferences.edit().putStringSet(KEY_PAUSED, values).commit()) {
+            "Не удалось надёжно сохранить состояние паузы загрузки"
+        }
     }
 
     fun isPaused(id: String): Boolean = id in preferences.getStringSet(KEY_PAUSED, emptySet()).orEmpty()
@@ -124,7 +128,12 @@ class TorrentQueueStore(context: Context) {
     }
 
     private fun save(items: List<QueuedTorrent>) {
-        preferences.edit().putString(KEY_QUEUE, TorrentQueueCodec.encode(items)).apply()
+        // Queue writes happen on the torrent service IO dispatcher. Commit before
+        // libtorrent is mutated so a process kill cannot lose the newest magnet,
+        // .torrent path or selected-file decision from an asynchronously applied edit.
+        check(preferences.edit().putString(KEY_QUEUE, TorrentQueueCodec.encode(items)).commit()) {
+            "Не удалось надёжно сохранить очередь торрентов"
+        }
     }
 
     companion object {
