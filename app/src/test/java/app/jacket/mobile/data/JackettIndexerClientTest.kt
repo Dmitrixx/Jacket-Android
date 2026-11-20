@@ -74,7 +74,7 @@ class JackettIndexerClientTest {
             </indexers>
         """.trimIndent()
 
-        val entries = JackettIndexerClient.parseIndexers(xml)
+        val entries = JackettIndexerClient.parseIndexers(xml, KXmlParser())
 
         assertEquals(1, entries.size)
         assertEquals(null, entries.single().siteLink)
