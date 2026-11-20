@@ -97,6 +97,7 @@ Resume data is asynchronous and periodic: abruptly killing the process can lose 
 - One application module and one APK for phone, tablet and Android TV.
 - Leanback launcher category and banner are provided; touchscreen is optional.
 - Phone uses bottom navigation; television uses a navigation rail.
+- The main shell and each home/movies/series/search/library tab are wrapped in independent `SaveableStateProvider` keys. Navigating to a detail, downloads, settings or player screen, then returning, restores saveable state and list/grid scroll position instead of recreating the tab from its initial position.
 - Cards have larger TV artwork and visible focus borders; the player maps D-pad left/right to 10-second seeking and center/play-pause to playback.
 - Dialogs, list rows and text fields remain normal Compose focus targets and should be checked with physical remotes.
 
