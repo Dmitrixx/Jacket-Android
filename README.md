@@ -39,7 +39,8 @@ Add user-owned endpoints:
 
 - RSS / Atom feeds and Torznab / Newznab-compatible endpoints over HTTPS.
 - HTTP endpoints only when they target a private / loopback / link-local IP or a local DNS suffix such as `.local` or `.lan`; this is intended for a Jackett server on your own network.
-- An optional Jackett setup card with server address, API key, tracker filter (`all` by default), connection test and disconnect. Jacket probes Jackett with `t=caps`, then searches its selected tracker set. Jackett remains external and is never installed or bundled.
+- A native Jackett REST catalogue using `GET /api/v2.0/indexers`, showing public/private type, language, categories, configured status and source links. Configured trackers can be searched individually; their releases remain native Jacket cards and magnet/`.torrent` actions use Jacket's own queue.
+- Dynamic per-indexer setup forms use Jackett's `GET/POST /api/v2.0/indexers/{id}/config` endpoints. The API key is used for Torznab search; a separate optional dashboard session Cookie is used only for authenticated setup operations. The Cookie is encrypted at rest and sent only to the configured Jackett host. If the dashboard does not require login, the Cookie can be left blank.
 - API key, HTTP Basic username/password, or a manually supplied session cookie.
 - Categories, tags, Freeleech flag, sort field and sort order.
 - Enable/disable, edit, individual test, test all and a per-indexer probe search.
@@ -58,7 +59,7 @@ Search templates include `{query}`; `{apikey}` is optional. Public indexers must
 
 Release labels such as 720p / 1080p / 2160p, HDR / DV, HEVC / x264 and common audio/dubbing tags are extracted heuristically from the release title. They are not authoritative tracker metadata. Filters operate on the current results and do not issue another request.
 
-The app does not ship private tracker credentials or site-specific page scrapers. CAPTCHA, anti-bot challenges, proprietary sign-in flows and interactive 2FA are not automated. A manually entered cookie may work where the source permits it.
+The app does not ship private tracker credentials or site-specific page scrapers. Jackett's own authenticated setup UI/API stores the credentials for each private tracker; Jacket sends only the configuration values you explicitly enter into the Jackett-provided form. CAPTCHA, anti-bot challenges, proprietary sign-in flows and interactive 2FA remain under Jackett's supported configuration flow and are not bypassed by Jacket.
 
 ## User-configured website search
 
