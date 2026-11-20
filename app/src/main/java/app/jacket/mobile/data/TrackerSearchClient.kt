@@ -19,6 +19,11 @@ import java.util.concurrent.Executors
  * It parses result markup and direct links published by the tracker. It does not
  * solve CAPTCHA, bypass anti-bot challenges, or automate account verification.
  */
+internal data class TrackerSearchBatchOutcome(
+    val results: List<SourceResult>,
+    val failures: List<String>
+)
+
 object TrackerSearchClient {
     private const val MAX_HTML_BYTES = 4 * 1024 * 1024
     private const val MAX_RESULTS = 40
@@ -86,6 +91,66 @@ object TrackerSearchClient {
         val result = template.replace("{query}", encoded)
         require(result.length <= 4_096) { "Ссылка поиска слишком длинная" }
         return result
+    }
+
+    /**
+     * Searches up to six enabled built-in trackers concurrently, with a strict
+     * per-provider concurrency cap. Partial results are retained if one site fails.
+     */
+    internal fun searchAll(providers: List<WebSearchProvider>, query: String): TrackerSearchBatchOutcome {
+        require(query.isNotBlank()) { "Введите название для поиска" }
+        val active = providers
+            .filter { it.enabled && supports(it.id) }
+            .distinctBy { it.id }
+            .take(6)
+        require(active.isNotEmpty()) { "Нет включённых встроенных трекеров" }
+
+        val executor = Executors.newFixedThreadPool(minOf(3, active.size))
+        val futures = active.map { provider ->
+            provider to executor.submit(Callable { search(provider, query.trim()) })
+        }
+        val batches = ArrayList<List<SourceResult>>(active.size)
+        val failures = ArrayList<String>()
+        try {
+            futures.forEach { (provider, future) ->
+                try {
+                    batches += future.get()
+                } catch (interrupted: InterruptedException) {
+                    Thread.currentThread().interrupt()
+                    throw IOException("Поиск трекеров прерван", interrupted)
+                } catch (error: Exception) {
+                    val cause = error.cause ?: error
+                    failures += "${provider.name}: ${cause.message?.take(160) ?: cause.javaClass.simpleName}"
+                }
+            }
+        } finally {
+            executor.shutdownNow()
+        }
+        return TrackerSearchBatchOutcome(
+            results = mergeResults(batches),
+            failures = failures
+        )
+    }
+
+    /** Merges provider batches by BitTorrent info-hash and keeps the healthiest duplicate. */
+    internal fun mergeResults(batches: List<List<SourceResult>>): List<SourceResult> {
+        val merged = LinkedHashMap<String, SourceResult>()
+        batches.flatten().forEach { source ->
+            val key = magnetInfoHash(source.magnetUri)
+                ?: source.downloadUrl
+                ?: source.id
+            val current = merged[key]
+            if (current == null || (source.seeders ?: -1) > (current.seeders ?: -1)) {
+                merged[key] = source
+            }
+        }
+        return merged.values
+            .sortedWith(
+                compareByDescending<SourceResult> { it.seeders ?: -1 }
+                    .thenByDescending { it.sizeBytes ?: -1L }
+                    .thenBy { it.title.lowercase(Locale.ROOT) }
+            )
+            .take(MAX_RESULTS * 6)
     }
 
     fun search(provider: WebSearchProvider, query: String): List<SourceResult> {

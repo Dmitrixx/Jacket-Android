@@ -56,6 +56,61 @@ class TrackerSearchClientTest {
     }
 
     @Test
+    fun parsesResultLinksFromEveryBuiltInTrackerAdapter() {
+        val samples = listOf(
+            Triple("tracker-rutracker", "https://rutracker.org/forum/tracker.php", """<a class="tLink" href="/forum/viewtopic.php?t=1">Rutracker release</a>"""),
+            Triple("tracker-nnmclub", "https://nnmclub.to/forum/tracker.php", """<a href="/forum/viewtopic.php?t=2">NNM release</a>"""),
+            Triple("tracker-rutor", "https://rutor.info/search/film", """<a class="detLink" href="/torrent/3">Rutor release</a>"""),
+            Triple("tracker-kinozal", "https://kinozal.tv/browse.php", """<a href="/details.php?id=4">Kinozal release</a>"""),
+            Triple("tracker-1337x", "https://1337x.to/search/film/1/", """<a href="/torrent/example/5">1337x release</a>"""),
+            Triple("tracker-tpb", "https://thepiratebay.org/search.php", """<a href="/torrent/6">TPB release</a>""")
+        )
+
+        samples.forEach { (providerId, baseUrl, anchorHtml) ->
+            val parsed = TrackerSearchClient.parseListing(
+                "<html><body><table><tr><td>$anchorHtml</td></tr></table></body></html>",
+                baseUrl,
+                providerId
+            )
+            assertTrue("No row parsed for $providerId", parsed.isNotEmpty())
+            assertTrue("Wrong result title for $providerId", parsed.single().title.isNotBlank())
+        }
+    }
+
+    @Test
+    fun mergesTrackerResultsByInfoHashAndPrefersMoreSeeders() {
+        val hash = "0123456789abcdef0123456789abcdef01234567"
+        val lower = SourceResult(
+            id = "rutor:1",
+            title = "Release from Rutor",
+            providerName = "Built-in",
+            magnetUri = "magnet:?xt=urn:btih:$hash&dn=Movie",
+            seeders = 12,
+            indexerId = "tracker-rutor"
+        )
+        val higher = lower.copy(
+            id = "rutracker:2",
+            title = "Same release from RuTracker",
+            seeders = 54,
+            indexerId = "tracker-rutracker"
+        )
+        val different = SourceResult(
+            id = "kinozal:3",
+            title = "Different release",
+            providerName = "Built-in",
+            magnetUri = "magnet:?xt=urn:btih:abcdef0123456789abcdef0123456789abcdef01&dn=Other",
+            seeders = 30,
+            indexerId = "tracker-kinozal"
+        )
+
+        val merged = TrackerSearchClient.mergeResults(listOf(listOf(lower, different), listOf(higher)))
+
+        assertEquals(2, merged.size)
+        assertEquals("Same release from RuTracker", merged.first().title)
+        assertEquals(54, merged.first().seeders)
+    }
+
+    @Test
     fun genericCaptchaWordDoesNotTriggerChallengeDetection() {
         val html = """
             <html><head><title>Search results</title></head>

@@ -24,11 +24,14 @@ data class FilmixPendingDevice(
 object FilmixDeviceAuth {
     const val ACTIVATION_URL = "https://filmix.gg/consoles"
     const val DEFAULT_API_BASE = "https://filmixapp.cyou/api/v2"
+    // Filmix v2's documented fallback is filmixapp.cyou over HTTPS.
+    // api.filmix.tv is retained only as the certificate-name alias reported
+    // by the Android TLS failure; never probe unverified third-party hosts.
     private val API_BASE_CANDIDATES = listOf(
         DEFAULT_API_BASE,
-        "https://api.filmix.tv/api/v2",
-        "https://fxapp.biz/api/v2"
+        "https://api.filmix.tv/api/v2"
     )
+    private const val CHECK_UPDATE_DEVICE_ID = "abcdef0123456789"
     private const val MAX_RESPONSE_BYTES = 256 * 1024
     private const val MAX_PROBE_BYTES = 16 * 1024
 
@@ -97,8 +100,10 @@ object FilmixDeviceAuth {
         osVersion: String,
         appVersion: String
     ): Boolean {
+        // Use Filmix's fixed non-account ID for discovery; the permanent
+        // user device identity is sent only to token_request.
         val url = buildApiUrl(
-            apiBase, "check_update", deviceId, deviceName, vendor, osVersion, appVersion
+            apiBase, "check_update", CHECK_UPDATE_DEVICE_ID, deviceName, vendor, osVersion, appVersion
         )
         val connection = (URL(url).openConnection() as HttpURLConnection).apply {
             requestMethod = "GET"
@@ -127,13 +132,12 @@ object FilmixDeviceAuth {
 
     internal fun buildCheckUpdateUrl(
         apiBase: String,
-        deviceId: String,
         deviceName: String,
         vendor: String,
         osVersion: String,
         appVersion: String
     ): String = buildApiUrl(
-        apiBase, "check_update", deviceId, deviceName, vendor, osVersion, appVersion
+        apiBase, "check_update", CHECK_UPDATE_DEVICE_ID, deviceName, vendor, osVersion, appVersion
     )
 
     internal fun buildTokenRequestUrl(
