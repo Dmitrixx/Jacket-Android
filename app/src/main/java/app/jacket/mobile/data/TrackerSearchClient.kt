@@ -32,7 +32,7 @@ object TrackerSearchClient {
     private const val MAX_DETAIL_PAGES = 10
     private const val MAX_DETAIL_CONCURRENCY = 4
     private const val SEARCH_ALL_TIMEOUT_MS = 25_000L
-    private const val DETAIL_RESOLUTION_TIMEOUT_MS = 8_000L
+    private const val DETAIL_RESOLUTION_TIMEOUT_MS = 12_000L
     private const val DETAIL_CONNECT_TIMEOUT_MS = 3_000
     private const val DETAIL_READ_TIMEOUT_MS = 5_000
     private const val CONNECT_TIMEOUT_MS = 8_000
