@@ -2,6 +2,9 @@
 
 ## Next
 
+- Federate the detail-card source picker across Filmix API v2, the configured HDRezka mirror, custom torrent indexers, built-in tracker adapters and license-gated Internet Archive media. Direct provider cards show source type, selected translation and server-provided quality; premium-only options link to their provider page.
+- Pass only allowlisted non-secret Referer/User-Agent headers and parsed subtitles to Media3. Never forward account cookies to media CDNs.
+
 - Filmix device pairing now lets the user explicitly choose the default API or the alternate HTTPS API published by Filmix support. The selected host is probed before a device-specific request; there is no automatic host fallback and TLS verification remains enabled. TLS hostname, expiry and trust-chain failures receive distinct diagnostics.
 - HDRezka no longer labels any non-empty Cookie string as an authenticated session. A saved session must contain both DLE auth cookie fields; the UI clarifies that this is a format check, not a live server validation. The catalogue/stream adapter remains unimplemented.
 

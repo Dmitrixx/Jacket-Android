@@ -26,6 +26,13 @@ Detail card → IndexerRegistry → magnet / .torrent → TorrentEngine → Loca
 
 No external Jackett or TorrServer process is started or packaged.
 
+## Direct video sources
+
+- Filmix uses the explicitly selected allowlisted HTTPS API host and encrypted device token. Search, post details, account profile and plan-limited quality variants are resolved through Filmix v2.
+- HDRezka uses only the mirror explicitly configured by the user. The client parses `post_id`, `initCDN*Events`, translator flags, favorites token and series defaults; AJAX requests use movie flags or resolved season/episode IDs. DLE cookies are sent only to the configured mirror, never to media CDNs. CAPTCHA/Anubis, `#2` obfuscated manifests and cross-origin redirects are not bypassed.
+- Media3 receives only non-secret `Referer`/`User-Agent` headers and parsed subtitle configurations. Account cookies are never copied into player request headers.
+- The detail-card source picker merges torrents, Filmix, HDRezka and license-gated Internet Archive results, isolates individual provider failures and displays source type/quality/translation metadata.
+
 ## Video source registry
 
 `MediaSourceCatalog` preserves the ten requested provider IDs, priorities, media types, auth requirements and 4K flags. HDRezka's URL/Cookie screen and Filmix's device-code flow are available, but the catalogue/stream adapters are not yet complete. All ten providers therefore remain without an active media adapter; the UI distinguishes available authentication settings from an implemented provider search/playback connector. Metadata in the registry is not a claim that those services can currently be searched or played.
