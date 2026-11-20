@@ -27,6 +27,11 @@ class HdRezkaLoginClientTest {
     }
 
     @Test(expected = IllegalArgumentException::class)
+    fun requiresAnExplicitSourceAddress() {
+        HdRezkaLoginClient.validateMirror("")
+    }
+
+    @Test(expected = IllegalArgumentException::class)
     fun rejectsInsecureMirror() {
         HdRezkaLoginClient.validateMirror("http://hdrezka.example")
     }
