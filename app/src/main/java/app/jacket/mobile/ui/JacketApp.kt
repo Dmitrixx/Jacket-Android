@@ -2944,6 +2944,14 @@ private fun SettingsScreen(
                             Text(entry.description, style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 3)
                         }
+                        if (!entry.lastError.isNullOrBlank()) {
+                            Text(
+                                "Последняя ошибка: ${entry.lastError}",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.error,
+                                maxLines = 3
+                            )
+                        }
                         val details = listOfNotNull(
                             entry.language?.takeIf(String::isNotBlank),
                             entry.categoryNames.takeIf { it.isNotEmpty() }?.take(4)?.joinToString(", ")
