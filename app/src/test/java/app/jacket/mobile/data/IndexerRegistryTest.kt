@@ -127,6 +127,21 @@ class IndexerRegistryTest {
     }
 
     @Test
+    fun extractsPublicationDateForNativeReleaseCards() {
+        val xml = """
+            <rss><channel><item>
+              <title>Film.1080p.WEB-DL</title>
+              <guid>https://tracker.example/release/1</guid>
+              <pubDate>Fri, 20 Nov 2026 10:15:00 +0000</pubDate>
+              <enclosure url="https://tracker.example/release/1.torrent" type="application/x-bittorrent" />
+            </item></channel></rss>
+        """.trimIndent()
+
+        val result = registry.parseFeedXml(xml, config).single()
+        assertEquals("Fri, 20 Nov 2026 10:15:00 +0000", result.publishedDate)
+    }
+
+    @Test
     fun orderDeduplicatesByMagnetAndSortsBySeeders() {
         val duplicate = SourceResult(
             id = "one",
