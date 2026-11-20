@@ -28,6 +28,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runInterruptible
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withContext
@@ -39,6 +40,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val indexers = IndexerRegistry(catalog)
     private var catalogJob: Job? = null
     private var sourcesJob: Job? = null
+    private val sourceSearchEpoch = SourceSearchEpoch()
     private var indexerTestJob: Job? = null
     private var episodeJob: Job? = null
     private var filmixPairingJob: Job? = null
@@ -117,6 +119,27 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _isLoading = MutableStateFlow(false)
     val isLoading: StateFlow<Boolean> = _isLoading.asStateFlow()
 
+    private fun beginSourceSearch(): Long {
+        val epoch = sourceSearchEpoch.next()
+        sourcesJob?.cancel()
+        _isSearchingSources.value = true
+        return epoch
+    }
+
+    private fun cancelSourceSearch() {
+        sourceSearchEpoch.next()
+        sourcesJob?.cancel()
+        sourcesJob = null
+        _isSearchingSources.value = false
+    }
+
+    private fun finishSourceSearch(epoch: Long) {
+        if (sourceSearchEpoch.isCurrent(epoch)) {
+            sourcesJob = null
+            _isSearchingSources.value = false
+        }
+    }
+
     private val _isSearchingSources = MutableStateFlow(false)
     val isSearchingSources: StateFlow<Boolean> = _isSearchingSources.asStateFlow()
 
@@ -153,7 +176,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun clearSearch() {
         catalogJob?.cancel()
-        sourcesJob?.cancel()
+        cancelSourceSearch()
         _items.value = emptyList()
         _sourceResults.value = emptyList()
         _indexerErrors.value = emptyList()
@@ -170,10 +193,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             _isError.value = true
             return
         }
-        sourcesJob?.cancel()
+        cancelSourceSearch()
         _sourceResults.value = emptyList()
         _indexerErrors.value = emptyList()
-        _isSearchingSources.value = false
         loadList { catalog.search(clean, _tmdbToken.value) }
     }
 
@@ -288,14 +310,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             showError("Введите название для поиска")
             return
         }
-        sourcesJob?.cancel()
+        val searchEpoch = beginSourceSearch()
         sourcesJob = viewModelScope.launch {
-            _isSearchingSources.value = true
             _sourceResults.value = emptyList()
             _indexerErrors.value = emptyList()
             clearMessage()
             try {
-                val results = withContext(Dispatchers.IO) {
+                val results = runInterruptible(Dispatchers.IO) {
                     if (provider.id == "tracker-archive") {
                         catalog.archiveSources(query.trim())
                     } else {
@@ -312,9 +333,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Exception) {
-                showError(error.message ?: "Не удалось разобрать результаты трекера")
+                if (sourceSearchEpoch.isCurrent(searchEpoch)) {
+                    showError(error.message ?: "Не удалось разобрать результаты трекера")
+                }
             } finally {
-                _isSearchingSources.value = false
+                finishSourceSearch(searchEpoch)
             }
         }
     }
@@ -332,21 +355,37 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             showError("Включите хотя бы один встроенный трекер в настройках сайтов")
             return
         }
-        sourcesJob?.cancel()
+        val searchEpoch = beginSourceSearch()
         sourcesJob = viewModelScope.launch {
-            _isSearchingSources.value = true
             _sourceResults.value = emptyList()
             _indexerErrors.value = emptyList()
             clearMessage()
             try {
-                val outcome = withContext(Dispatchers.IO) {
-                    TrackerSearchClient.searchAll(providers, query.trim())
+                val outcome = runInterruptible(Dispatchers.IO) {
+                    TrackerSearchClient.searchAll(providers, query.trim()) { partial ->
+                        if (sourceSearchEpoch.isCurrent(searchEpoch)) {
+                            _sourceResults.value = partial.results
+                            _message.value = buildString {
+                                append("Получено раздач: ${partial.results.size}")
+                                append(" • трекеров ответило: ${partial.completedProviders}/${partial.totalProviders}")
+                                if (partial.failures.isNotEmpty()) append(" • ошибок: ${partial.failures.size}")
+                                if (partial.timedOut) append(" • поиск остановлен по тайм-ауту")
+                                else if (partial.completedProviders < partial.totalProviders) append(" • ищем дальше…")
+                            }
+                            _isError.value = false
+                        }
+                    }
                 }
                 _sourceResults.value = outcome.results
-                val summary = if (outcome.results.isEmpty()) {
-                    "На включённых трекерах не найдено раздач с прямыми magnet или .torrent ссылками."
-                } else {
-                    "Найдено раздач: ${outcome.results.size} • трекеров ответило: ${providers.size - outcome.failures.size}/${providers.size}."
+                val summary = when {
+                    outcome.results.isEmpty() && outcome.timedOut ->
+                        "Поиск остановлен по тайм-ауту. Попробуйте повторить запрос позже."
+                    outcome.results.isEmpty() ->
+                        "На включённых трекерах не найдено раздач с прямыми magnet или .torrent ссылками."
+                    outcome.timedOut ->
+                        "Найдено раздач: ${outcome.results.size} • часть трекеров не успела ответить за 25 секунд."
+                    else ->
+                        "Найдено раздач: ${outcome.results.size} • трекеров ответило: ${providers.size - outcome.failures.size}/${providers.size}."
                 }
                 _message.value = if (outcome.failures.isEmpty()) summary else {
                     "$summary Ошибок: ${outcome.failures.size}."
@@ -355,9 +394,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Exception) {
-                showError(error.message ?: "Не удалось выполнить поиск по трекерам")
+                if (sourceSearchEpoch.isCurrent(searchEpoch)) {
+                    showError(error.message ?: "Не удалось выполнить поиск по трекерам")
+                }
             } finally {
-                _isSearchingSources.value = false
+                finishSourceSearch(searchEpoch)
             }
         }
     }
@@ -383,9 +424,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun runSourceSearch(query: String, includeArchive: Boolean) {
-        sourcesJob?.cancel()
+        val searchEpoch = beginSourceSearch()
         sourcesJob = viewModelScope.launch {
-            _isSearchingSources.value = true
             _sourceResults.value = emptyList()
             _indexerErrors.value = emptyList()
             clearMessage()
@@ -407,9 +447,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Exception) {
-                showError(error.message ?: "Ошибка поиска источников")
+                if (sourceSearchEpoch.isCurrent(searchEpoch)) {
+                    showError(error.message ?: "Ошибка поиска источников")
+                }
             } finally {
-                _isSearchingSources.value = false
+                finishSourceSearch(searchEpoch)
             }
         }
     }
@@ -687,25 +729,26 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             showError("Введите название для пробного поиска")
             return
         }
-        sourcesJob?.cancel()
+        val searchEpoch = beginSourceSearch()
         sourcesJob = viewModelScope.launch {
-            _isSearchingSources.value = true
             _sourceResults.value = emptyList()
             _indexerErrors.value = emptyList()
             clearMessage()
             try {
-                val results = withContext(Dispatchers.IO) { indexers.searchOne(config, query) }
+                val results = runInterruptible(Dispatchers.IO) { indexers.searchOne(config, query) }
                 _sourceResults.value = results
                 _message.value = if (results.isEmpty()) "Пробный поиск: результатов нет" else "Пробный поиск: ${results.size} результатов"
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Exception) {
-                _indexerErrors.value = listOf(
-                    IndexerFailure(config.id, config.name, error.message ?: "Ошибка пробного поиска")
-                )
-                showError("Пробный поиск «${config.name}»: ${error.message ?: "ошибка источника"}")
+                if (sourceSearchEpoch.isCurrent(searchEpoch)) {
+                    _indexerErrors.value = listOf(
+                        IndexerFailure(config.id, config.name, error.message ?: "Ошибка пробного поиска")
+                    )
+                    showError("Пробный поиск «${config.name}»: ${error.message ?: "ошибка источника"}")
+                }
             } finally {
-                _isSearchingSources.value = false
+                finishSourceSearch(searchEpoch)
             }
         }
     }
