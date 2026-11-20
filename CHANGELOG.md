@@ -2,6 +2,8 @@
 
 ## Next
 
+- Preserve saveable screen state for the main shell and each navigation tab, including catalog/search text and list/grid scroll positions, while opening details, downloads, settings or the player.
+
 - Avoid buffering the full HDRezka landing page during mirror discovery and login; only a bounded preview is read when checking for browser challenges.
 - Align Filmix device authorization with the known-compatible Android API fingerprint and report per-host HTTPS failures without exposing request parameters.
 - Make torrent search explicit on the movie detail card, automatically search enabled in-app trackers, and offer an opt-in way to add tracker shortcuts when none are configured.
