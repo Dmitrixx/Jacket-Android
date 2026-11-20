@@ -19,7 +19,7 @@ The project is under active development. CI verifies JVM unit tests and APK asse
 
 ## Video source catalogue
 
-The built-in source registry preserves the requested priority order for HDRezka, Filmix, ColdFilm, Baskino, Kinogo, VideoCDN, Collaps, Kinobase, CDNMovies and Lordfilm. At this stage, only the HDRezka login/session flow and Filmix device-code flow have app-side connectors. The remaining entries are explicitly marked as not connected; no undocumented scraping endpoints or pretend integrations are added.
+The in-app source registry preserves the requested priority order for HDRezka, Filmix, ColdFilm, Baskino, Kinogo, VideoCDN, Collaps, Kinobase, CDNMovies and Lordfilm. HDRezka currently has source URL/Cookie settings and Filmix has device-code authorization, but neither has a complete catalogue/stream adapter yet. The remaining providers are unconnected. The UI distinguishes available auth settings from a working media adapter; no undocumented endpoints or pretend integrations are added.
 
 ## Filmix and HDRezka accounts
 
