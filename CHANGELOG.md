@@ -2,6 +2,8 @@
 
 ## Next
 
+- Persist torrent queue and pause-state mutations synchronously before acknowledging service commands, reducing the window where a force-stop can lose a newly added or paused task.
+
 - Preserve Jackett's masked previous-password marker when a private tracker password field is left unchanged or edited and cleared; add regression tests for both preserve and replace paths.
 - Add a native per-tracker Test action using Jackett's REST endpoint, refresh the server-reported last-error state, and redact API keys, cookies and configured credentials from diagnostics.
 - Reject dot-segment indexer identifiers before building Jackett REST paths.
