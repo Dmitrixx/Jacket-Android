@@ -45,6 +45,63 @@ class HdRezkaCatalogClientTest {
     }
 
     @Test
+    fun parsesMovieBootstrapFlagsAndFavoritesToken() {
+        val html = """
+            <input id="ctrl_favs" value="fav-token-42">
+            <div id="translators-list">
+              <span data-translator_id="17" data-camrip="1" data-ads="0" data-director="1">Озвучка</span>
+            </div>
+            <script>initCDNMoviesEvents(7712, 17, 1, 0, 1);</script>
+        """.trimIndent()
+        val page = HdRezkaCatalogClient.parsePageContext(
+            html,
+            "https://hdrezka.example/film/demo.html"
+        )
+        assertNotNull(page)
+        assertEquals("7712", page?.postId)
+        assertEquals("fav-token-42", page?.favs)
+        assertFalse(page?.isSeries ?: true)
+        assertEquals("17", page?.translators?.single()?.id)
+        assertEquals("1", page?.translators?.single()?.isCamrip)
+        assertEquals("0", page?.translators?.single()?.isAds)
+        assertEquals("1", page?.translators?.single()?.isDirector)
+    }
+
+    @Test
+    fun parsesSeriesBootstrapSeasonAndEpisodeDefaults() {
+        val html = """
+            <script>initCDNSeriesEvents(991, 7, 3, 105);</script>
+            <div id="simple-episodes-tabs"></div>
+        """.trimIndent()
+        val page = HdRezkaCatalogClient.parsePageContext(
+            html,
+            "https://hdrezka.example/serial/demo.html"
+        )
+        assertNotNull(page)
+        assertEquals("991", page?.postId)
+        assertTrue(page?.isSeries ?: false)
+        assertEquals("3", page?.defaultSeasonId)
+        assertEquals("105", page?.defaultEpisodeId)
+        assertEquals("7", page?.translators?.single()?.id)
+    }
+
+    @Test
+    fun exposesPremiumTranslationAsSubscriptionPageInsteadOfBrokenStream() {
+        val entry = HdRezkaSearchEntry("Демо", "https://hdrezka.example/film/demo.html", null, "")
+        val result = HdRezkaCatalogClient.parseStreamSources(
+            JSONObject().put("success", false).put("premium_content", true),
+            entry,
+            HdRezkaTranslator("99", "Premium", isPremium = true),
+            entry.pageUrl,
+            null
+        )
+        assertEquals(1, result.size)
+        assertTrue(result.single().requiresSubscription)
+        assertEquals(entry.pageUrl, result.single().pageUrl)
+        assertNull(result.single().streamUrl)
+    }
+
+    @Test
     fun mapsSeasonAndEpisodeIdsFromEpisodesResponse() {
         val response = JSONObject().put(
             "episodes",

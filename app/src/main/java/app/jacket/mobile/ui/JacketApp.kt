@@ -1513,7 +1513,7 @@ private fun DetailScreen(
                     }
                 }
 
-                if (sources.isEmpty() && !searchingSources && activeInAppTrackers.isNotEmpty()) {
+                if (sources.isEmpty() && !searchingSources && configuredSources > 0) {
                     MessageCard(
                         "Пока нет результатов. Добавьте RSS/Atom или Torznab-источники либо повторите поиск на встроенных трекерах.",
                         false
