@@ -1,6 +1,7 @@
 package app.jacket.mobile.data
 
 enum class MediaSourceIntegration {
+    DIRECT_ADAPTER,
     AUTH_SETTINGS_ONLY,
     MEDIA_ADAPTER_MISSING
 }
@@ -28,8 +29,8 @@ object MediaSourceCatalog {
             types = listOf("movie", "serial", "anime"),
             authRequired = false,
             supports4k = true,
-            notes = "Есть настройки HTTPS-источника и Cookie-сессии; поисковый/медиапотоковый адаптер ещё не подключён. Доступность зависит от региона и сети.",
-            integration = MediaSourceIntegration.AUTH_SETTINGS_ONLY
+            notes = "Подключён прямой поиск по заданному HTTPS-зеркалу, озвучкам, сериям и поддерживаемым HTTPS-потокам. CAPTCHA/Anubis не обходится.",
+            integration = MediaSourceIntegration.DIRECT_ADAPTER
         ),
         MediaSourceDescriptor(
             id = "filmix",
@@ -39,8 +40,8 @@ object MediaSourceCatalog {
             types = listOf("movie", "serial"),
             authRequired = true,
             supports4k = true,
-            notes = "Есть привязка устройства по одноразовому коду; каталог и медиапотоковый адаптер ещё не подключены. Качество зависит от тарифа аккаунта.",
-            integration = MediaSourceIntegration.AUTH_SETTINGS_ONLY
+            notes = "Подключён поиск через Filmix API v2, варианты качества с учётом тарифа аккаунта и прямое воспроизведение поддерживаемых HTTPS-ссылок.",
+            integration = MediaSourceIntegration.DIRECT_ADAPTER
         ),
         MediaSourceDescriptor(
             id = "coldfilm",
