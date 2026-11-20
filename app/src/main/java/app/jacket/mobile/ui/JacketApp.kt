@@ -2684,7 +2684,7 @@ private fun SettingsScreen(
                                         color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 }
                                 MetadataPill(
-                                    if (source.integration == MediaSourceIntegration.AUTH_SETTINGS_ONLY) "АВТОРИЗАЦИЯ ЕСТЬ"
+                                    if (source.integration == MediaSourceIntegration.AUTH_SETTINGS_ONLY) "ЕСТЬ НАСТРОЙКИ"
                                     else "АДАПТЕР НЕ ПОДКЛЮЧЁН",
                                     accent = source.integration == MediaSourceIntegration.AUTH_SETTINGS_ONLY
                                 )
