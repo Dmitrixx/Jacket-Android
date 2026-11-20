@@ -342,10 +342,11 @@ object TrackerSearchClient {
             val parts = host.split('.')
             if (parts.size != 4 || parts.any { part ->
                     part.isEmpty() || part.length > 3 || !part.all(Char::isDigit) ||
-                        (part.length > 1 && part.startsWith('0')) || part.toIntOrNull()?.let { it !in 0..255 } ?: true
+                        (part.length > 1 && part[0] == '0')
                 }
             ) return false
-            val octets = parts.map { it.toInt() }
+            val octets = parts.map { it.toIntOrNull() ?: return false }
+            if (octets.any { it !in 0..255 }) return false
             val a = octets[0]
             val b = octets[1]
             val c = octets[2]
