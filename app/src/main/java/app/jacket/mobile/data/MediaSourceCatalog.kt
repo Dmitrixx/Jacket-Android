@@ -1,8 +1,8 @@
 package app.jacket.mobile.data
 
 enum class MediaSourceIntegration {
-    IN_APP_CONNECTOR,
-    NOT_CONNECTED
+    AUTH_SETTINGS_ONLY,
+    MEDIA_ADAPTER_MISSING
 }
 
 /** Curated source metadata. An entry is not considered connected until a real adapter exists. */
@@ -28,8 +28,8 @@ object MediaSourceCatalog {
             types = listOf("movie", "serial", "anime"),
             authRequired = false,
             supports4k = true,
-            notes = "Основной источник. Много озвучек. Доступность зависит от региона и сети.",
-            integration = MediaSourceIntegration.IN_APP_CONNECTOR
+            notes = "Есть настройки HTTPS-источника и Cookie-сессии; поисковый/медиапотоковый адаптер ещё не подключён. Доступность зависит от региона и сети.",
+            integration = MediaSourceIntegration.AUTH_SETTINGS_ONLY
         ),
         MediaSourceDescriptor(
             id = "filmix",
@@ -39,8 +39,8 @@ object MediaSourceCatalog {
             types = listOf("movie", "serial"),
             authRequired = true,
             supports4k = true,
-            notes = "Поддерживается привязка устройства по одноразовому коду; качество зависит от тарифа аккаунта.",
-            integration = MediaSourceIntegration.IN_APP_CONNECTOR
+            notes = "Есть привязка устройства по одноразовому коду; каталог и медиапотоковый адаптер ещё не подключены. Качество зависит от тарифа аккаунта.",
+            integration = MediaSourceIntegration.AUTH_SETTINGS_ONLY
         ),
         MediaSourceDescriptor(
             id = "coldfilm",
@@ -51,7 +51,7 @@ object MediaSourceCatalog {
             authRequired = false,
             supports4k = false,
             notes = "Сериалы и собственная озвучка. Проверенный адаптер пока не подключён.",
-            integration = MediaSourceIntegration.NOT_CONNECTED
+            integration = MediaSourceIntegration.MEDIA_ADAPTER_MISSING
         ),
         MediaSourceDescriptor(
             id = "baskino",
@@ -62,7 +62,7 @@ object MediaSourceCatalog {
             authRequired = false,
             supports4k = false,
             notes = "Нужен проверенный адаптер и подтверждённый формат источника.",
-            integration = MediaSourceIntegration.NOT_CONNECTED
+            integration = MediaSourceIntegration.MEDIA_ADAPTER_MISSING
         ),
         MediaSourceDescriptor(
             id = "kinogo",
@@ -73,7 +73,7 @@ object MediaSourceCatalog {
             authRequired = false,
             supports4k = false,
             notes = "Нужен проверенный адаптер и подтверждённый формат источника.",
-            integration = MediaSourceIntegration.NOT_CONNECTED
+            integration = MediaSourceIntegration.MEDIA_ADAPTER_MISSING
         ),
         MediaSourceDescriptor(
             id = "videocdn",
@@ -84,7 +84,7 @@ object MediaSourceCatalog {
             authRequired = false,
             supports4k = false,
             notes = "Требуется документированный API или совместимый плагин-поставщик.",
-            integration = MediaSourceIntegration.NOT_CONNECTED
+            integration = MediaSourceIntegration.MEDIA_ADAPTER_MISSING
         ),
         MediaSourceDescriptor(
             id = "collaps",
@@ -95,7 +95,7 @@ object MediaSourceCatalog {
             authRequired = false,
             supports4k = false,
             notes = "Требуется документированный API или совместимый плагин-поставщик.",
-            integration = MediaSourceIntegration.NOT_CONNECTED
+            integration = MediaSourceIntegration.MEDIA_ADAPTER_MISSING
         ),
         MediaSourceDescriptor(
             id = "kinobase",
@@ -106,7 +106,7 @@ object MediaSourceCatalog {
             authRequired = false,
             supports4k = false,
             notes = "Дополнительный источник. Проверенный адаптер пока не подключён.",
-            integration = MediaSourceIntegration.NOT_CONNECTED
+            integration = MediaSourceIntegration.MEDIA_ADAPTER_MISSING
         ),
         MediaSourceDescriptor(
             id = "cdnmovies",
@@ -117,7 +117,7 @@ object MediaSourceCatalog {
             authRequired = false,
             supports4k = false,
             notes = "Резервный источник. Проверенный адаптер пока не подключён.",
-            integration = MediaSourceIntegration.NOT_CONNECTED
+            integration = MediaSourceIntegration.MEDIA_ADAPTER_MISSING
         ),
         MediaSourceDescriptor(
             id = "lordfilm",
@@ -128,7 +128,7 @@ object MediaSourceCatalog {
             authRequired = false,
             supports4k = false,
             notes = "Требуется проверенный источник и поддержка смены URL через настройки, не через обход блокировок.",
-            integration = MediaSourceIntegration.NOT_CONNECTED
+            integration = MediaSourceIntegration.MEDIA_ADAPTER_MISSING
         )
     )
 }
