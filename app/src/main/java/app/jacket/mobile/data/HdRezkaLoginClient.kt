@@ -65,7 +65,7 @@ object HdRezkaLoginClient {
         ).joinToString("&") { "${encode(it.first)}=${encode(it.second)}" }
 
         val response = requestFollowingLoginRedirects(
-            startUrl = "$activeBase/ajax/login/?t=\${System.currentTimeMillis()}",
+            startUrl = "$activeBase/ajax/login/?t=${System.currentTimeMillis()}",
             body = form,
             cookies = cookies,
             referer = "$activeBase/"
@@ -121,7 +121,7 @@ object HdRezkaLoginClient {
                 "HDRezka не ответила вовремя. Зеркало перегружено или недоступно из вашей сети."
             chain.any { it is java.net.ConnectException } ->
                 "Не удалось подключиться к HDRezka. Проверьте доступность зеркала или сеть."
-            else -> error.message?.replace(Regex("[\\\\r\\\\n\\\\t]+"), " ")?.take(240)
+            else -> error.message?.replace(Regex("[\\r\\n\\t]+"), " ")?.take(240)
                 ?.ifBlank { "Не удалось подключиться к HDRezka." } ?: "Не удалось подключиться к HDRezka."
         }
     }
@@ -154,7 +154,7 @@ object HdRezkaLoginClient {
             if (response.status !in REDIRECT_CODES) return response
 
             val location = response.location
-                ?: throw IOException("HDRezka перенаправила вход без адреса (HTTP \${response.status})")
+                ?: throw IOException("HDRezka перенаправила вход без адреса (HTTP ${response.status})")
             val nextUrl = resolveRedirect(currentUrl, location)
             val nextMethod = loginRedirectMethod(response.status)
                 ?: method.takeIf { sameOrigin(currentUrl, nextUrl) }
