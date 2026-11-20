@@ -270,9 +270,14 @@ class TorrentDownloadService : Service() {
     }
 
     private fun downloadTorrentFile(urlValue: String, title: String, indexerId: String?): File {
+        val settingsStore = MediaSettingsStore(applicationContext)
         val sourceConfig = indexerId?.let { wanted ->
-            MediaSettingsStore(applicationContext).indexers().firstOrNull { it.id == wanted }
+            settingsStore.indexers().firstOrNull { it.id == wanted }
         }
+        val trackerCookie = indexerId?.let { wanted ->
+            settingsStore.webSearchProviders().firstOrNull { it.id == wanted }?.cookie
+        }.orEmpty()
+        val sourceCookie = sourceConfig?.cookie?.takeIf { it.isNotBlank() } ?: trackerCookie
         var currentUrl = urlValue
         val originalUri = Uri.parse(urlValue)
         require(LocalNetwork.isAllowedUrl(urlValue)) {
@@ -330,7 +335,7 @@ class TorrentDownloadService : Service() {
                             )
                             setRequestProperty("Authorization", "Basic $encoded")
                         }
-                        if (sourceConfig.cookie.isNotBlank()) setRequestProperty("Cookie", sourceConfig.cookie.take(4096))
+                        if (sourceCookie.isNotBlank()) setRequestProperty("Cookie", sourceCookie.take(4096))
                         if (sourceConfig.apiKey.isNotBlank() && sourceConfig.protocol != IndexerProtocol.JACKETT) {
                             setRequestProperty("X-Api-Key", sourceConfig.apiKey.take(512))
                         }
@@ -376,7 +381,7 @@ class TorrentDownloadService : Service() {
                 error,
                 listOfNotNull(
                     sourceConfig?.apiKey,
-                    sourceConfig?.cookie,
+                    sourceCookie,
                     sourceConfig?.username,
                     sourceConfig?.password
                 )
