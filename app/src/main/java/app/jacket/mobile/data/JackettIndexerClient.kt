@@ -224,12 +224,17 @@ object JackettIndexerClient {
                 val fieldValue = item.opt("value")?.let { value ->
                     if (value == JSONObject.NULL) "" else value.toString()
                 }.orEmpty().take(8_192)
+                // Jackett deliberately masks an existing password with this marker.
+                // Present an empty editor, but retain the original marker for POST.
+                val editableValue = if (
+                    type == "password" && fieldValue == JackettConfigField.PASSWORD_REPLACEMENT
+                ) "" else fieldValue
                 add(
                     JackettConfigField(
                         id = id,
                         type = type,
                         name = item.optString("name").ifBlank { id }.take(160),
-                        value = fieldValue,
+                        value = editableValue,
                         originalValue = fieldValue,
                         values = values.take(300),
                         options = options,
