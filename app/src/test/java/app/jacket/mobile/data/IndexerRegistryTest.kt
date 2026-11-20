@@ -137,7 +137,7 @@ class IndexerRegistryTest {
             </item></channel></rss>
         """.trimIndent()
 
-        val result = registry.parseFeedXml(xml, config).single()
+        val result = registry.parseFeedXml(xml, config, KXmlParser()).single()
         assertEquals("Fri, 20 Nov 2026 10:15:00 +0000", result.publishedDate)
     }
 
