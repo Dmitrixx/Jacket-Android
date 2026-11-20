@@ -85,7 +85,7 @@ fun JackettSetupCard(
                 modifier = Modifier.fillMaxWidth()
             )
             Text(
-                "Cookie нужна для просмотра и сохранения настроек приватных индексаторов. Она шифруется на устройстве и отправляется только вашему серверу Jackett.",
+                "Cookie нужна для просмотра и сохранения настроек приватных индексаторов, если панель требует вход. Она шифруется на устройстве и отправляется только указанному серверу; для внешнего сервера используйте HTTPS.",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
