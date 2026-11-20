@@ -1994,7 +1994,7 @@ private fun SettingsScreen(
     var webCookie by rememberSaveable { mutableStateOf("") }
 
     var hdMirror by remember(hdRezkaSettings.mirror) {
-        mutableStateOf(hdRezkaSettings.mirror.ifBlank { "https://standby-rezka.tv" })
+        mutableStateOf(hdRezkaSettings.mirror)
     }
     var hdLogin by remember(hdRezkaSettings.login) { mutableStateOf(hdRezkaSettings.login) }
     var hdPassword by remember(hdRezkaSettings.password) { mutableStateOf(hdRezkaSettings.password) }
