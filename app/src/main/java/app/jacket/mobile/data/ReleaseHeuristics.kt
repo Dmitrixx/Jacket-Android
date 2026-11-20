@@ -26,10 +26,10 @@ object ReleaseHeuristics {
     )
 
     private val dimensionPattern = Regex(
-        """(?i)(?<![0-9])([0-9]{3,4})\\s*[x×]\\s*([0-9]{3,4})(?![0-9])"""
+        """(?i)(?<![0-9])([0-9]{3,4})\s*[x×]\s*([0-9]{3,4})(?![0-9])"""
     )
     private val channelPattern = Regex(
-        """(?i)(?<![0-9])([1-8]\\.[0-2])(?![0-9])"""
+        """(?i)(?<![0-9])([1-8]\.[0-2])(?![0-9])"""
     )
     private val languageNames = linkedMapOf(
         "RUS" to Regex("""(?i)(?<![a-z0-9])(?:rus|russian)(?![a-z0-9])"""),
@@ -49,7 +49,7 @@ object ReleaseHeuristics {
         """(?i)(?:sub(?:title)?s?[ ._-]*[:=]?[ ._-]*(rus|ukr|eng|ger|fre|spa|ita|por|pol|jpn|chi|heb))|(?:(rus|ukr|eng|ger|fre|spa|ita|por|pol|jpn|chi|heb)[ ._-]*sub(?:title)?s?)"""
     )
     private val bitratePattern = Regex(
-        """(?i)([0-9]+(?:[.,][0-9]+)?)\\s*(?:mbit/s|мбит/с|mbps)"""
+        """(?i)([0-9]+(?:[.,][0-9]+)?)\s*(?:mbit/s|мбит/с|mbps)"""
     )
 
     fun classify(title: String): ReleaseMetadata {
