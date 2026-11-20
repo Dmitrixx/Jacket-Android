@@ -121,5 +121,10 @@ class FilmixCatalogClientTest {
         ))
         val results = FilmixCatalogClient.parsePostSources(post, entry, null, 1080)
         assertEquals(listOf("1080p", "720p"), results.map { it.qualityLabel })
+        assertEquals(
+            FilmixDeviceAuth.SITE_BASE,
+            results.first().requestHeaders["Referer"]
+        )
+        assertTrue(results.first().requestHeaders["User-Agent"].orEmpty().contains("Filmix v2"))
     }
 }

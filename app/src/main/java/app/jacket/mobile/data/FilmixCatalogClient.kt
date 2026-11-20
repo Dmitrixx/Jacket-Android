@@ -315,7 +315,11 @@ object FilmixCatalogClient {
                 pageUrl = entry.pageUrl,
                 sourceType = MediaSourceType.FILMIX,
                 qualityLabel = qualityText,
-                translationName = translation
+                translationName = translation,
+                requestHeaders = mapOf(
+                    "Referer" to (entry.pageUrl ?: FilmixDeviceAuth.SITE_BASE),
+                    "User-Agent" to USER_AGENT
+                )
             )
         }
     }
