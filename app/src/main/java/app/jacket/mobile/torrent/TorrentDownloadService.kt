@@ -326,19 +326,21 @@ class TorrentDownloadService : Service() {
                     readTimeout = 25_000
                     instanceFollowRedirects = false
                     setRequestProperty("User-Agent", "JacketAndroid/2.1")
-                    if (sameOrigin && sourceConfig != null) {
-                        if (sourceConfig.username.isNotBlank() || sourceConfig.password.isNotBlank()) {
-                            val credentials = "${sourceConfig.username}:${sourceConfig.password}"
-                            val encoded = android.util.Base64.encodeToString(
-                                credentials.toByteArray(Charsets.UTF_8),
-                                android.util.Base64.NO_WRAP
-                            )
-                            setRequestProperty("Authorization", "Basic $encoded")
+                    if (sameOrigin) {
+                        if (sourceConfig != null) {
+                            if (sourceConfig.username.isNotBlank() || sourceConfig.password.isNotBlank()) {
+                                val credentials = "${sourceConfig.username}:${sourceConfig.password}"
+                                val encoded = android.util.Base64.encodeToString(
+                                    credentials.toByteArray(Charsets.UTF_8),
+                                    android.util.Base64.NO_WRAP
+                                )
+                                setRequestProperty("Authorization", "Basic $encoded")
+                            }
+                            if (sourceConfig.apiKey.isNotBlank() && sourceConfig.protocol != IndexerProtocol.JACKETT) {
+                                setRequestProperty("X-Api-Key", sourceConfig.apiKey.take(512))
+                            }
                         }
                         if (sourceCookie.isNotBlank()) setRequestProperty("Cookie", sourceCookie.take(4096))
-                        if (sourceConfig.apiKey.isNotBlank() && sourceConfig.protocol != IndexerProtocol.JACKETT) {
-                            setRequestProperty("X-Api-Key", sourceConfig.apiKey.take(512))
-                        }
                     }
                 }
                 try {
