@@ -39,6 +39,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val indexers = IndexerRegistry(catalog)
     private var catalogJob: Job? = null
     private var sourcesJob: Job? = null
+    private val sourceSearchEpoch = SourceSearchEpoch()
     private var indexerTestJob: Job? = null
     private var episodeJob: Job? = null
     private var filmixPairingJob: Job? = null
@@ -117,6 +118,27 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _isLoading = MutableStateFlow(false)
     val isLoading: StateFlow<Boolean> = _isLoading.asStateFlow()
 
+    private fun beginSourceSearch(): Long {
+        val epoch = sourceSearchEpoch.next()
+        sourcesJob?.cancel()
+        _isSearchingSources.value = true
+        return epoch
+    }
+
+    private fun cancelSourceSearch() {
+        sourceSearchEpoch.next()
+        sourcesJob?.cancel()
+        sourcesJob = null
+        _isSearchingSources.value = false
+    }
+
+    private fun finishSourceSearch(epoch: Long) {
+        if (sourceSearchEpoch.isCurrent(epoch)) {
+            sourcesJob = null
+            _isSearchingSources.value = false
+        }
+    }
+
     private val _isSearchingSources = MutableStateFlow(false)
     val isSearchingSources: StateFlow<Boolean> = _isSearchingSources.asStateFlow()
 
@@ -153,11 +175,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun clearSearch() {
         catalogJob?.cancel()
-        sourcesJob?.cancel()
+        cancelSourceSearch()
         _items.value = emptyList()
         _sourceResults.value = emptyList()
         _indexerErrors.value = emptyList()
-        _isSearchingSources.value = false
         _message.value = null
         _isError.value = false
     }
@@ -170,10 +191,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             _isError.value = true
             return
         }
-        sourcesJob?.cancel()
+        cancelSourceSearch()
         _sourceResults.value = emptyList()
         _indexerErrors.value = emptyList()
-        _isSearchingSources.value = false
         loadList { catalog.search(clean, _tmdbToken.value) }
     }
 
@@ -288,9 +308,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             showError("Введите название для поиска")
             return
         }
-        sourcesJob?.cancel()
+        val searchEpoch = beginSourceSearch()
         sourcesJob = viewModelScope.launch {
-            _isSearchingSources.value = true
             _sourceResults.value = emptyList()
             _indexerErrors.value = emptyList()
             clearMessage()
@@ -314,7 +333,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             } catch (error: Exception) {
                 showError(error.message ?: "Не удалось разобрать результаты трекера")
             } finally {
-                _isSearchingSources.value = false
+                finishSourceSearch(searchEpoch)
             }
         }
     }
@@ -332,9 +351,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             showError("Включите хотя бы один встроенный трекер в настройках сайтов")
             return
         }
-        sourcesJob?.cancel()
+        val searchEpoch = beginSourceSearch()
         sourcesJob = viewModelScope.launch {
-            _isSearchingSources.value = true
             _sourceResults.value = emptyList()
             _indexerErrors.value = emptyList()
             clearMessage()
@@ -357,7 +375,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             } catch (error: Exception) {
                 showError(error.message ?: "Не удалось выполнить поиск по трекерам")
             } finally {
-                _isSearchingSources.value = false
+                finishSourceSearch(searchEpoch)
             }
         }
     }
@@ -383,9 +401,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun runSourceSearch(query: String, includeArchive: Boolean) {
-        sourcesJob?.cancel()
+        val searchEpoch = beginSourceSearch()
         sourcesJob = viewModelScope.launch {
-            _isSearchingSources.value = true
             _sourceResults.value = emptyList()
             _indexerErrors.value = emptyList()
             clearMessage()
@@ -409,7 +426,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             } catch (error: Exception) {
                 showError(error.message ?: "Ошибка поиска источников")
             } finally {
-                _isSearchingSources.value = false
+                finishSourceSearch(searchEpoch)
             }
         }
     }
@@ -687,9 +704,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             showError("Введите название для пробного поиска")
             return
         }
-        sourcesJob?.cancel()
+        val searchEpoch = beginSourceSearch()
         sourcesJob = viewModelScope.launch {
-            _isSearchingSources.value = true
             _sourceResults.value = emptyList()
             _indexerErrors.value = emptyList()
             clearMessage()
@@ -705,7 +721,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 )
                 showError("Пробный поиск «${config.name}»: ${error.message ?: "ошибка источника"}")
             } finally {
-                _isSearchingSources.value = false
+                finishSourceSearch(searchEpoch)
             }
         }
     }
