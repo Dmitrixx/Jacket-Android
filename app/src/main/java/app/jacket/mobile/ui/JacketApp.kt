@@ -2377,6 +2377,20 @@ private fun SettingsScreen(
                                     modifier = Modifier.weight(1f)
                                 ) { Text("Открыть зеркало") }
                             }
+                            OutlinedButton(
+                                onClick = { viewModel.checkHdRezkaMirror(hdMirror) },
+                                modifier = Modifier.fillMaxWidth(),
+                                enabled = !isHdRezkaBusy && hdMirror.isNotBlank()
+                            ) {
+                                Icon(Icons.Default.Refresh, contentDescription = null)
+                                Spacer(Modifier.width(8.dp))
+                                Text("Проверить зеркало")
+                            }
+                            Text(
+                                "Проверка откроет зеркало без отправки логина и пароля. Если зеркало перенаправляет на другой домен, Jacket обновит адрес.",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
                             Text(
                                 "Если сайт требует CAPTCHA или Cloudflare, автоматический вход остановится. Jacket не обходит защиту; в таком случае используй Cookie из своего браузера.",
                                 style = MaterialTheme.typography.labelSmall,
