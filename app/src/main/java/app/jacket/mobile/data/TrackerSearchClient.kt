@@ -329,6 +329,48 @@ object TrackerSearchClient {
         return magnet to torrent
     }
 
+    /** Built-in tracker requests must stay on public HTTPS hosts, including after redirects. */
+    internal fun isSafeTrackerRequestUrl(urlValue: String): Boolean {
+        val uri = runCatching { URI(urlValue.trim()) }.getOrNull() ?: return false
+        val host = uri.host?.removePrefix("[")?.removeSuffix("]")?.lowercase(Locale.ROOT)
+            ?: return false
+        if (!uri.scheme.equals("https", ignoreCase = true) ||
+            uri.rawUserInfo != null || uri.rawFragment != null
+        ) return false
+
+        if (host.matches(Regex("[0-9.]+"))) {
+            val parts = host.split('.')
+            if (parts.size != 4 || parts.any { part ->
+                    part.isEmpty() || part.length > 3 || !part.all(Char::isDigit) ||
+                        (part.length > 1 && part[0] == '0')
+                }
+            ) return false
+            val octets = parts.map { it.toIntOrNull() ?: return false }
+            if (octets.any { it !in 0..255 }) return false
+            val a = octets[0]
+            val b = octets[1]
+            val c = octets[2]
+            val nonPublic = a == 0 || a == 10 || a == 127 || a >= 224 ||
+                (a == 169 && b == 254) ||
+                (a == 172 && b in 16..31) ||
+                (a == 192 && (b == 168 || (b == 0 && c in 0..2) || (b == 88 && c == 99))) ||
+                (a == 198 && (b in 18..19 || (b == 51 && c == 100))) ||
+                (a == 203 && b == 0 && c == 113) ||
+                (a == 100 && b in 64..127)
+            if (nonPublic) return false
+        } else if (!host.contains('.') && !host.contains(':')) {
+            return false
+        }
+
+        if (host.contains(':') && (host == "::" || host.startsWith("::ffff:") ||
+                host.startsWith("2001:db8", ignoreCase = true) || host.startsWith("ff", ignoreCase = true))) {
+            return false
+        }
+        val privateSuffixes = listOf(".internal", ".intranet", ".private", ".corp")
+        return !LocalNetwork.isLocalHost(host) && privateSuffixes.none(host::endsWith)
+    }
+
+
     private fun fetchHtml(
         urlValue: String,
         cookie: String,
@@ -337,7 +379,7 @@ object TrackerSearchClient {
     ): HtmlPage {
         var current = urlValue
         for (redirect in 0..4) {
-            if (!LocalNetwork.isAllowedUrl(current)) throw IOException("Трекер вернул небезопасный URL")
+            if (!isSafeTrackerRequestUrl(current)) throw IOException("Трекер перенаправил запрос на небезопасный адрес")
             val uri = URI(current)
             val connection = (URL(current).openConnection() as HttpURLConnection).apply {
                 requestMethod = "GET"
@@ -459,7 +501,7 @@ object TrackerSearchClient {
         if (clean.startsWith("magnet:", true)) return clean
         return runCatching {
             val resolved = URL(URL(baseUrl), clean).toString()
-            resolved.takeIf { LocalNetwork.isAllowedUrl(it) }
+            resolved.takeIf { isSafeTrackerRequestUrl(it) }
         }.getOrNull()
     }
 

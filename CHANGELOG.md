@@ -2,6 +2,7 @@
 
 ## Next
 
+- Restrict built-in tracker requests and parsed download links to public HTTPS hosts; reject private, local, single-label and non-routable IP targets before fetching.
 - Avoid buffering the full HDRezka landing page during mirror discovery and login; only a bounded preview is read when checking for browser challenges.
 - Align Filmix device authorization with the known-compatible Android API fingerprint and report per-host HTTPS failures without exposing request parameters.
 - Make torrent search explicit on the movie detail card, automatically search enabled in-app trackers, and offer an opt-in way to add tracker shortcuts when none are configured.
