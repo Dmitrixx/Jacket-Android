@@ -528,7 +528,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
     }
-    /** Loads Jackett's native t=indexers catalogue into the in-app settings screen. */
+    /** Loads Jackett's native REST indexer catalogue into the in-app settings screen. */
     fun refreshJackettIndexers() {
         val config = _customIndexers.value.firstOrNull {
             it.protocol == app.jacket.mobile.data.IndexerProtocol.JACKETT
