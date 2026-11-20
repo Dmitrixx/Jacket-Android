@@ -37,7 +37,10 @@ object HdRezkaLoginClient {
             "Укажите HTTPS-домен зеркала без логина и пароля в URL"
         }
         val host = uri.host.lowercase().removePrefix("www.")
-        val isRezkaMirror = host.startsWith("hdrezka.") || host.startsWith("hdrezka-") ||
+        // rezkify.com is a user-reported alternate mirror; keep it as an exact
+        // allowlisted host rather than trusting arbitrary redirect domains.
+        val isRezkaMirror = host == "rezkify.com" ||
+            host.startsWith("hdrezka.") || host.startsWith("hdrezka-") ||
             host.startsWith("rezka.") || host.startsWith("rezka-") ||
             host.startsWith("standby-rezka.")
         require(isRezkaMirror) {
@@ -72,9 +75,7 @@ object HdRezkaLoginClient {
             referer = "$activeBase/"
         )
         val confirmedBase = validateMirror(originOf(response.finalUrl))
-        if (response.status == 403 || response.body.contains("cf-chl", true) ||
-            response.body.contains("Just a moment", true)
-        ) {
+        if (response.status == 403 || containsChallenge(response.body)) {
             throw IOException(
                 "HDRezka показала защитную проверку. Jacket не обходит CAPTCHA или Cloudflare; " +
                     "войдите через обычный браузер и вставьте свою Cookie-сессию."
@@ -182,10 +183,14 @@ object HdRezkaLoginClient {
     private fun effectivePort(uri: URI): Int =
         if (uri.port >= 0) uri.port else 443
 
-    private fun containsChallenge(body: String): Boolean =
+    internal fun containsBrowserChallenge(body: String): Boolean =
         body.contains("cf-chl", true) ||
             body.contains("Just a moment", true) ||
-            body.contains("challenge-platform", true)
+            body.contains("challenge-platform", true) ||
+            (body.contains("anubis", true) &&
+                (body.contains("Доступ запрещён", true) || body.contains("Access denied", true)))
+
+    private fun containsChallenge(body: String): Boolean = containsBrowserChallenge(body)
 
     private fun requestFollowingGetRedirects(startUrl: String, cookies: CookieManager): HttpResult {
         var currentUrl = startUrl
