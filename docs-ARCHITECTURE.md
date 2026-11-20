@@ -35,7 +35,7 @@ No external Jackett or TorrServer process is started or packaged.
 
 ## Video source registry
 
-`MediaSourceCatalog` preserves the ten requested provider IDs, priorities, media types, auth requirements and 4K flags. HDRezka's URL/Cookie screen and Filmix's device-code flow are available, but the catalogue/stream adapters are not yet complete. All ten providers therefore remain without an active media adapter; the UI distinguishes available authentication settings from an implemented provider search/playback connector. Metadata in the registry is not a claim that those services can currently be searched or played.
+`MediaSourceCatalog` preserves the ten requested provider IDs, priorities, media types, auth requirements and 4K flags. Filmix and HDRezka now have direct adapters: Filmix uses its selected HTTPS API and device token; HDRezka uses only the mirror explicitly entered by the user. The other eight descriptors remain catalog metadata with no active adapter. Provider availability still depends on the user's network, account, source mirror and the site's supported stream format.
 
 ## Catalog flow
 
