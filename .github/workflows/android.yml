@@ -38,16 +38,22 @@ jobs:
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: '9.5.0'
 
-      - name: Run unit tests and build APK
-        run: gradle --no-daemon --stacktrace testDebugUnitTest assembleDebug
+      - name: Run lint, unit tests and debug/release builds
+        run: ./gradlew --no-daemon --stacktrace lint testDebugUnitTest assembleDebug assembleRelease
 
       - name: Upload debug APK
         uses: actions/upload-artifact@v4
         with:
           name: jacket-debug-apk
           path: app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload release APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: jacket-release-apk
+          path: app/build/outputs/apk/release/*.apk
           if-no-files-found: error
           retention-days: 14

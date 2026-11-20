@@ -1,6 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <network-security-config>
-    <base-config cleartextTrafficPermitted="false" />
+    <!-- Cleartext is enabled at the Android transport layer so a user can reach a self-hosted Jackett over LAN HTTP. -->
+    <!-- Every app-level HTTP endpoint must still pass LocalNetwork.isAllowedUrl(). -->
+    <base-config cleartextTrafficPermitted="true" />
     <domain-config cleartextTrafficPermitted="true">
         <domain includeSubdomains="false">127.0.0.1</domain>
     </domain-config>
