@@ -1934,6 +1934,11 @@ private fun SettingsScreen(
     val loadingJackettIndexers by viewModel.isLoadingJackettIndexers.collectAsState()
     val jackettCatalogStatus by viewModel.jackettCatalogStatus.collectAsState()
     val savedJackett = indexers.firstOrNull { it.protocol == IndexerProtocol.JACKETT }
+    val jackettConfigIndexerId by viewModel.jackettConfigIndexerId.collectAsState()
+    val jackettConfigFields by viewModel.jackettConfigFields.collectAsState()
+    val loadingJackettConfig by viewModel.isLoadingJackettConfig.collectAsState()
+    val savingJackettConfig by viewModel.isSavingJackettConfig.collectAsState()
+    val jackettConfigStatus by viewModel.jackettConfigStatus.collectAsState()
     val filmixToken by viewModel.filmixToken.collectAsState()
     val filmixCode by viewModel.filmixCode.collectAsState()
     val filmixStatus by viewModel.filmixStatus.collectAsState()
@@ -1946,7 +1951,8 @@ private fun SettingsScreen(
         selectedSettingsSection,
         savedJackett?.id,
         savedJackett?.searchUrlTemplate,
-        savedJackett?.apiKey
+        savedJackett?.apiKey,
+        savedJackett?.cookie
     ) {
         if (selectedSettingsSection == "indexers" && savedJackett != null) {
             viewModel.refreshJackettIndexers()
@@ -2838,6 +2844,76 @@ private fun SettingsScreen(
                 }
             }
 
+            if (jackettConfigIndexerId != null) {
+                val editingEntry = jackettIndexers.firstOrNull { it.id == jackettConfigIndexerId }
+                item(key = "jackett-config-editor") {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+                    ) {
+                        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                                    Text(
+                                        editingEntry?.name ?: jackettConfigIndexerId.orEmpty(),
+                                        style = MaterialTheme.typography.titleLarge,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                    Text(
+                                        "Настройка индексатора на вашем сервере Jackett",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                                IconButton(onClick = viewModel::closeJackettIndexerConfig) {
+                                    Icon(Icons.Default.Close, contentDescription = "Закрыть настройки")
+                                }
+                            }
+                            if (loadingJackettConfig) {
+                                LinearProgressIndicator(Modifier.fillMaxWidth())
+                            }
+                            jackettConfigFields.forEach { field ->
+                                JackettConfigFieldEditor(
+                                    field = field,
+                                    onValueChange = { value ->
+                                        viewModel.updateJackettConfigField(field.id, value)
+                                    },
+                                    onValuesChange = { values ->
+                                        viewModel.updateJackettConfigValues(field.id, values)
+                                    }
+                                )
+                            }
+                            jackettConfigStatus?.let { status ->
+                                MessageCard(
+                                    status,
+                                    isError = status.startsWith("Не удалось") ||
+                                        status.startsWith("Jackett отклонил")
+                                )
+                            }
+                            Button(
+                                modifier = Modifier.fillMaxWidth(),
+                                onClick = viewModel::saveJackettIndexerConfig,
+                                enabled = !loadingJackettConfig && !savingJackettConfig &&
+                                    jackettConfigFields.isNotEmpty()
+                            ) {
+                                if (savingJackettConfig) {
+                                    CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                                    Spacer(Modifier.width(8.dp))
+                                } else {
+                                    Icon(Icons.Default.Check, contentDescription = null)
+                                    Spacer(Modifier.width(8.dp))
+                                }
+                                Text(if (savingJackettConfig) "Сохраняем…" else "Сохранить настройки трекера")
+                            }
+                        }
+                    }
+                }
+            }
+
             items(jackettIndexers, key = { "jackett-${it.id}" }) { entry ->
                 Card(
                     modifier = Modifier.fillMaxWidth(),
@@ -2885,13 +2961,14 @@ private fun SettingsScreen(
                                     Spacer(Modifier.width(6.dp))
                                     Text("Искать")
                                 }
-                            } else {
-                                Text(
-                                    "Сначала сохраните логин/пароль этого трекера в панели Jackett, затем обновите каталог.",
-                                    modifier = Modifier.weight(1f),
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
+                            }
+                            OutlinedButton(
+                                onClick = { viewModel.loadJackettIndexerConfig(entry.id) },
+                                enabled = !loadingJackettConfig
+                            ) {
+                                Icon(Icons.Default.Settings, contentDescription = null)
+                                Spacer(Modifier.width(5.dp))
+                                Text(if (entry.configured) "Изменить" else "Настроить")
                             }
                             entry.siteLink?.let { link ->
                                 OutlinedButton(onClick = { openExternal(context, link) }) {
@@ -3183,6 +3260,116 @@ private fun SettingsScreen(
     }
 }
 
+
+@Composable
+private fun JackettConfigFieldEditor(
+    field: app.jacket.mobile.data.JackettConfigField,
+    onValueChange: (String) -> Unit,
+    onValuesChange: (List<String>) -> Unit
+) {
+    val secret = field.type == "password" || field.name.contains("password", ignoreCase = true)
+    val shownValue = if (field.isPreviousPassword) "" else field.value
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        when (field.type) {
+            "inputstring", "password", "inputtags" -> {
+                OutlinedTextField(
+                    value = shownValue,
+                    onValueChange = onValueChange,
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text(field.name) },
+                    placeholder = {
+                        Text(
+                            when {
+                                field.isPreviousPassword -> "Сохранённый пароль останется без изменений"
+                                field.type == "inputtags" -> "Введите теги через запятую"
+                                else -> ""
+                            }
+                        )
+                    },
+                    singleLine = field.type != "inputtags",
+                    visualTransformation = if (secret) PasswordVisualTransformation()
+                        else androidx.compose.ui.text.input.VisualTransformation.None
+                )
+                if (field.isPreviousPassword) {
+                    Text(
+                        "Пароль уже сохранён на сервере. Оставьте поле пустым, чтобы не менять его.",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+            "inputbool" -> {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(field.name, modifier = Modifier.weight(1f), fontWeight = FontWeight.Medium)
+                    Switch(
+                        checked = field.value.equals("true", ignoreCase = true),
+                        onCheckedChange = { onValueChange(it.toString()) }
+                    )
+                }
+            }
+            "inputselect" -> {
+                Text(field.name, fontWeight = FontWeight.Medium)
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    items(field.options.toList(), key = { it.first }) { option ->
+                        OutlinedButton(onClick = { onValueChange(option.first) }) {
+                            Text(
+                                if (field.value == option.first) "✓ ${option.second}" else option.second,
+                                maxLines = 1
+                            )
+                        }
+                    }
+                }
+            }
+            "inputcheckbox" -> {
+                Text(field.name, fontWeight = FontWeight.Medium)
+                field.options.forEach { (optionId, optionName) ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Checkbox(
+                            checked = optionId in field.values,
+                            onCheckedChange = { checked ->
+                                val updated = if (checked) field.values + optionId
+                                    else field.values.filterNot { it == optionId }
+                                onValuesChange(updated)
+                            }
+                        )
+                        Text(optionName, style = MaterialTheme.typography.bodyMedium)
+                    }
+                }
+            }
+            "displayinfo" -> {
+                val plainText = field.value
+                    .replace(Regex("<[^>]*>"), " ")
+                    .replace("&nbsp;", " ", ignoreCase = true)
+                    .replace(Regex("\\s+"), " ")
+                    .trim()
+                    .take(1600)
+                if (plainText.isNotBlank()) {
+                    Text(field.name, fontWeight = FontWeight.Medium)
+                    Text(plainText, style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+            "displayimage" -> {
+                Text(field.name, fontWeight = FontWeight.Medium)
+                Text("Изображение указано в панели Jackett; в настройках приложения оно не загружается.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            else -> {
+                Text("${field.name}: неподдерживаемый тип поля «${field.type}».",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error)
+            }
+        }
+    }
+}
 
 @Composable
 private fun SettingsMenuRow(
