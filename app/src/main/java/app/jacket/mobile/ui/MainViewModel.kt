@@ -22,6 +22,7 @@ import app.jacket.mobile.data.MediaSettingsStore
 import app.jacket.mobile.data.WebSearchProvider
 import app.jacket.mobile.BuildConfig
 import app.jacket.mobile.data.SourceResult
+import app.jacket.mobile.data.TrackerSearchClient
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -154,7 +155,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun clearSearch() {
         catalogJob?.cancel()
+        sourcesJob?.cancel()
         _items.value = emptyList()
+        _sourceResults.value = emptyList()
+        _indexerErrors.value = emptyList()
+        _isSearchingSources.value = false
         _message.value = null
         _isError.value = false
     }
@@ -273,6 +278,39 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             listOfNotNull(item.title, year).joinToString(" ")
         }
         runSourceSearch(query, includeArchive = true)
+    }
+
+    /** Fetches and parses releases from one selected tracker inside Jacket. */
+    fun searchTracker(provider: WebSearchProvider, query: String) {
+        if (query.isBlank()) {
+            showError("Введите название для поиска")
+            return
+        }
+        sourcesJob?.cancel()
+        sourcesJob = viewModelScope.launch {
+            _isSearchingSources.value = true
+            _sourceResults.value = emptyList()
+            _indexerErrors.value = emptyList()
+            clearMessage()
+            try {
+                val results = withContext(Dispatchers.IO) {
+                    TrackerSearchClient.search(provider, query.trim())
+                }
+                _sourceResults.value = results
+                _message.value = if (results.isEmpty()) {
+                    "На сайте не найдено раздач с прямой magnet или .torrent ссылкой."
+                } else {
+                    "Найдено раздач: ${results.size} • выберите релиз."
+                }
+                _isError.value = false
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                showError(error.message ?: "Не удалось разобрать результаты трекера")
+            } finally {
+                _isSearchingSources.value = false
+            }
+        }
     }
 
     /** Manual search from the indexer dashboard; queries all enabled user indexers in parallel order. */

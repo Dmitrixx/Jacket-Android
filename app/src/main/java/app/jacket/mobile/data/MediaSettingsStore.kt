@@ -102,7 +102,8 @@ class MediaSettingsStore(context: Context) {
                     freeleechOnly = item.optBoolean("freeleechOnly", false),
                     sortBy = item.optString("sortBy", "created"),
                     sortOrder = item.optString("sortOrder", "desc"),
-                    enabled = item.optBoolean("enabled", true)
+                    enabled = item.optBoolean("enabled", true),
+                    cookie = decrypt(item.optString("cookieEnc"))
                 )
                 if (config.id.isNotBlank() && config.name.isNotBlank() && isValidTemplate(config.searchUrlTemplate)) {
                     add(config)
@@ -203,16 +204,7 @@ class MediaSettingsStore(context: Context) {
     }
 
     @Synchronized
-    fun webSearchProviders(): List<WebSearchProvider> {
-        if (!preferences.getBoolean(KEY_TRACKER_PRESETS_SEEDED, false)) {
-            val merged = (readWebSearchProviders() + DEFAULT_TRACKER_SHORTCUTS)
-                .distinctBy { it.id }
-                .take(MAX_WEB_SEARCH_PROVIDERS)
-            saveWebSearchProviders(merged)
-            preferences.edit { putBoolean(KEY_TRACKER_PRESETS_SEEDED, true) }
-        }
-        return readWebSearchProviders()
-    }
+    fun webSearchProviders(): List<WebSearchProvider> = readWebSearchProviders()
 
     @Synchronized
     fun restoreDefaultTrackerShortcuts(): List<WebSearchProvider> {
@@ -247,7 +239,8 @@ class MediaSettingsStore(context: Context) {
         val normalized = provider.copy(
             id = provider.id.ifBlank { UUID.randomUUID().toString() },
             name = provider.name.trim().take(80),
-            searchUrlTemplate = WebSearchUrlBuilder.validateTemplate(provider.searchUrlTemplate)
+            searchUrlTemplate = WebSearchUrlBuilder.validateTemplate(provider.searchUrlTemplate),
+            cookie = provider.cookie.replace(Regex("[\\r\\n]"), "").trim().take(8_192)
         )
         val current = webSearchProviders().filterNot { it.id == normalized.id }
         require(current.size < MAX_WEB_SEARCH_PROVIDERS) {
@@ -304,6 +297,7 @@ class MediaSettingsStore(context: Context) {
                     .put("name", provider.name)
                     .put("url", provider.searchUrlTemplate)
                     .put("enabled", provider.enabled)
+                    .put("cookieEnc", encrypt(provider.cookie))
             )
         }
         preferences.edit { putString(KEY_WEB_SEARCH_PROVIDERS, json.toString()) }
