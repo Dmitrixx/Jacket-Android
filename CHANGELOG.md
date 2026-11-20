@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.6.0
+
+- Added a Lampa-style source picker sheet that opens automatically from movie and episode playback actions.
+- Replaced global sequential torrent mode during playback with HTTP Range-driven piece deadlines, starting at the exact requested byte position.
+- Added an ordered forward prefetch window capped at 8 MiB / 32 pieces; seek requests move the priority window instead of restarting from byte zero.
+- Added a 32 MiB LRU disk ring for recently served byte ranges, including overlapping-range reuse and automatic eviction.
+- Kept playback cache buffers bounded to 256 KiB per active stream worker; cache eviction never deletes verified torrent payload data.
+- Added JVM tests for range-to-piece mapping, prefetch bounds, LRU eviction, overlapping byte-range hits and loopback Range delivery.
+
 ## 2.5.0
 
 - Added an optional Jackett connector for a user-managed LAN or HTTPS server.

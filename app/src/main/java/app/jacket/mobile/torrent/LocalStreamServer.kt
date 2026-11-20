@@ -25,8 +25,10 @@ import java.util.concurrent.TimeUnit
  */
 class LocalStreamServer(
     private val metadata: (String, Int) -> TorrentStreamTarget,
-    private val awaitRange: (String, Int, Long, Long) -> File
+    private val awaitRange: (String, Int, Long, Long) -> File,
+    cacheDirectory: File = File(System.getProperty("java.io.tmpdir") ?: ".", "jacket-stream-cache")
 ) : Closeable {
+    private val streamCache = StreamDiskCache(cacheDirectory)
     @Volatile private var serverSocket: ServerSocket? = null
     @Volatile private var acceptThread: Thread? = null
     @Volatile private var workers: ExecutorService? = null
@@ -192,22 +194,38 @@ class LocalStreamServer(
                 if (method == "HEAD") return
 
                 var offset = start
-                val buffer = ByteArray(STREAM_CHUNK_BYTES)
                 while (offset <= end) {
-                    val count = minOf(buffer.size.toLong(), end - offset + 1L).toInt()
-                    val file = awaitRange(id, fileIndex, offset, count.toLong())
-                    java.io.RandomAccessFile(file, "r").use { input ->
-                        input.seek(offset)
-                        var remaining = count
-                        while (remaining > 0) {
-                            val read = input.read(buffer, 0, minOf(buffer.size, remaining))
-                            if (read < 0) throw java.io.IOException("Файл оборвался во время чтения")
-                            out.write(buffer, 0, read)
-                            remaining -= read
+                    // Keep the first cache miss anchored at the exact byte
+                    // requested by ExoPlayer. This lets the engine prioritize
+                    // the right torrent piece on a seek, not the start of a
+                    // preceding cache-alignment block.
+                    val count = minOf(
+                        STREAM_CHUNK_BYTES,
+                        end - offset + 1L
+                    ).toInt()
+                    if (count <= 0) throw java.io.IOException("Пустой диапазон видеопотока")
+
+                    val key = StreamCacheKey(id, fileIndex, offset)
+                    val cached = runCatching {
+                        streamCache.get(key, count)
+                    }.getOrNull()
+
+                    val bytes = cached?.bytes ?: run {
+                        val file = awaitRange(id, fileIndex, offset, count.toLong())
+                        ByteArray(count).also { buffer ->
+                            java.io.RandomAccessFile(file, "r").use { input ->
+                                input.seek(offset)
+                                input.readFully(buffer)
+                            }
+                            // The verified torrent file remains authoritative.
+                            // A full/failed cache must never prevent playback.
+                            runCatching { streamCache.put(key, buffer) }
                         }
                     }
+
+                    out.write(bytes)
                     out.flush()
-                    offset += count
+                    offset += bytes.size
                 }
             } catch (_: Exception) {
                 // The player will reconnect on a failed range; do not expose internal file paths.
@@ -298,6 +316,7 @@ class LocalStreamServer(
         clients.clear()
         try { workers?.shutdownNow() } catch (_: Exception) { }
         workers = null
+        runCatching { streamCache.close() }
         port = 0
         acceptThread = null
     }
@@ -317,6 +336,6 @@ class LocalStreamServer(
         private const val MAX_HEADER_LINE_BYTES = 8 * 1024
         private const val MAX_HEADER_BYTES = 16 * 1024
         private const val CLIENT_IDLE_TIMEOUT_MS = 35_000
-        private const val STREAM_CHUNK_BYTES = 256 * 1024
+        private const val STREAM_CHUNK_BYTES = StreamDiskCache.DEFAULT_SEGMENT_BYTES.toLong()
     }
 }

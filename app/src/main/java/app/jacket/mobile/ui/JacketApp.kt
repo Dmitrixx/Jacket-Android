@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -945,6 +946,8 @@ private fun DetailScreen(
     val indexerErrors by viewModel.indexerErrors.collectAsState()
     val webSearchProviders by viewModel.webSearchProviders.collectAsState()
     var showWebsiteSearch by rememberSaveable { mutableStateOf(false) }
+    var showSourcesSheet by rememberSaveable { mutableStateOf(false) }
+    var selectedEpisodeForSources by remember { mutableStateOf<app.jacket.mobile.data.MediaEpisode?>(null) }
     var minSeeders by rememberSaveable { mutableStateOf("0") }
     var qualityFilter by rememberSaveable { mutableStateOf("Все") }
     var hdrOnly by rememberSaveable { mutableStateOf(false) }
@@ -1134,12 +1137,16 @@ private fun DetailScreen(
                                                         )
                                                     }
                                                     OutlinedButton(
-                                                        onClick = { viewModel.findSources(item, episode) },
+                                                        onClick = {
+                                                            selectedEpisodeForSources = episode
+                                                            showSourcesSheet = true
+                                                            viewModel.findSources(item, episode)
+                                                        },
                                                         enabled = !searchingSources
                                                     ) {
-                                                        Icon(Icons.Default.Search, contentDescription = null)
+                                                        Icon(Icons.Default.PlayArrow, contentDescription = null)
                                                         Spacer(Modifier.width(6.dp))
-                                                        Text("Найти эту серию")
+                                                        Text("Смотреть серию")
                                                     }
                                                 }
                                             }
@@ -1184,7 +1191,11 @@ private fun DetailScreen(
                     }
 
                     Button(
-                        onClick = { viewModel.findSources(item) },
+                        onClick = {
+                            selectedEpisodeForSources = null
+                            showSourcesSheet = true
+                            viewModel.findSources(item)
+                        },
                         enabled = !searchingSources,
                         modifier = Modifier.fillMaxWidth()
                     ) {
@@ -1192,10 +1203,10 @@ private fun DetailScreen(
                             CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
                             Spacer(Modifier.width(8.dp))
                         } else {
-                            Icon(Icons.Default.Search, contentDescription = null)
+                            Icon(Icons.Default.PlayArrow, contentDescription = null)
                             Spacer(Modifier.width(8.dp))
                         }
-                        Text(if (searchingSources) "Ищем источники…" else "Найти источники")
+                        Text(if (searchingSources) "Ищем источники…" else "Смотреть")
                     }
 
                     OutlinedButton(
@@ -1208,84 +1219,17 @@ private fun DetailScreen(
                     }
                 }
 
-                if (message != null) {
+                if (message != null && !showSourcesSheet) {
                     MessageCard(message.orEmpty(), isError, Modifier.padding(horizontal = 16.dp))
                 }
-
-                if (indexerErrors.isNotEmpty()) {
-                    Column(
-                        modifier = Modifier.padding(horizontal = 16.dp),
-                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                if (sources.isNotEmpty() || indexerErrors.isNotEmpty()) {
+                    OutlinedButton(
+                        onClick = { showSourcesSheet = true },
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp)
                     ) {
-                        Text("Источники с ошибками", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                        indexerErrors.forEach { failure ->
-                            MessageCard("${failure.indexerName}: ${failure.message}", true)
-                        }
-                    }
-                }
-
-                if (sources.isNotEmpty()) {
-                    Column(
-                        modifier = Modifier.padding(horizontal = 16.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        Text(
-                            "Доступные раздачи • ${filteredSources.size} из ${sources.size}",
-                            style = MaterialTheme.typography.titleLarge,
-                            fontWeight = FontWeight.Bold
-                        )
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            OutlinedTextField(
-                                value = minSeeders,
-                                onValueChange = { value -> minSeeders = value.filter(Char::isDigit).take(5) },
-                                modifier = Modifier.weight(1f),
-                                label = { Text("Мин. сидов") },
-                                singleLine = true,
-                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
-                            )
-                            OutlinedButton(onClick = {
-                                qualityFilter = when (qualityFilter) {
-                                    "Все" -> "720p"
-                                    "720p" -> "1080p"
-                                    "1080p" -> "2160p"
-                                    else -> "Все"
-                                }
-                            }) { Text(qualityFilter) }
-                        }
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            OutlinedButton(onClick = { hdrOnly = !hdrOnly }) { Text(if (hdrOnly) "✓ HDR / DV" else "HDR / DV") }
-                            OutlinedButton(onClick = {
-                                magnetOnly = !magnetOnly
-                                if (magnetOnly) torrentOnly = false
-                            }) { Text(if (magnetOnly) "✓ Magnet" else "Magnet") }
-                            OutlinedButton(onClick = {
-                                torrentOnly = !torrentOnly
-                                if (torrentOnly) magnetOnly = false
-                            }) { Text(if (torrentOnly) "✓ .torrent" else ".torrent") }
-                        }
-                    }
-
-                    if (filteredSources.isEmpty()) {
-                        MessageCard("По этим фильтрам раздачи не найдены. Ослабьте фильтры или сбросьте их.", false, Modifier.padding(horizontal = 16.dp))
-                    } else {
-                        Column(
-                            modifier = Modifier.padding(horizontal = 16.dp),
-                            verticalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            filteredSources.forEach { source ->
-                                SourceCard(
-                                    source = source,
-                                    onPlay = { url -> onPlay(source.title, url) },
-                                    onMagnet = { magnet -> TorrentDownloadService.add(context, magnet, source.title) },
-                                    onTorrent = { url -> TorrentDownloadService.addTorrentUrl(context, url, source.title, source.indexerId) },
-                                    onPage = { url -> openExternal(context, url) }
-                                )
-                            }
-                        }
+                        Icon(Icons.Default.PlayArrow, contentDescription = null)
+                        Spacer(Modifier.width(8.dp))
+                        Text("Выбрать источник • ${sources.size}")
                     }
                 }
 
@@ -1370,6 +1314,174 @@ private fun DetailScreen(
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
+            }
+        }
+    }
+
+    if (showSourcesSheet) {
+        ModalBottomSheet(
+            onDismissRequest = { showSourcesSheet = false },
+            dragHandle = {
+                Column(
+                    Modifier.fillMaxWidth().padding(top = 10.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(5.dp)
+                ) {
+                    Text("ИСТОЧНИКИ ВИДЕО", style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold, letterSpacing = 1.2.sp)
+                }
+            }
+        ) {
+            Column(
+                modifier = Modifier.fillMaxWidth()
+                    .heightIn(max = if (isTv) 760.dp else 680.dp)
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = 20.dp)
+                    .padding(bottom = 28.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                        Text("Где смотреть", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Black)
+                        Text(
+                            details?.item?.title.orEmpty(),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 2
+                        )
+                    }
+                    IconButton(
+                        onClick = {
+                            details?.item?.let { viewModel.findSources(it, selectedEpisodeForSources) }
+                        },
+                        enabled = !searchingSources
+                    ) {
+                        Icon(Icons.Default.Refresh, contentDescription = "Обновить источники")
+                    }
+                }
+
+                if (searchingSources) {
+                    Row(
+                        Modifier.fillMaxWidth().padding(vertical = 8.dp),
+                        horizontalArrangement = Arrangement.Center,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
+                        Spacer(Modifier.width(12.dp))
+                        Text("Ищем доступные источники…")
+                    }
+                }
+
+                if (message != null) {
+                    MessageCard(message.orEmpty(), isError)
+                }
+
+                if (indexerErrors.isNotEmpty()) {
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text("Некоторые источники недоступны", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                        indexerErrors.forEach { failure ->
+                            MessageCard("${failure.indexerName}: ${failure.message}", true)
+                        }
+                    }
+                }
+
+                if (sources.isEmpty() && !searchingSources) {
+                    MessageCard(
+                        "Пока нет результатов. Добавьте RSS/Atom или Torznab-источники в настройках либо откройте поиск на сайтах.",
+                        false
+                    )
+                }
+
+                if (sources.isNotEmpty()) {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(
+                            "Найдено раздач: ${filteredSources.size} из ${sources.size}",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Row(
+                            Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            OutlinedTextField(
+                                value = minSeeders,
+                                onValueChange = { value -> minSeeders = value.filter(Char::isDigit).take(5) },
+                                modifier = Modifier.weight(1f),
+                                label = { Text("Мин. сидов") },
+                                singleLine = true,
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
+                            )
+                            OutlinedButton(onClick = {
+                                qualityFilter = when (qualityFilter) {
+                                    "Все" -> "720p"
+                                    "720p" -> "1080p"
+                                    "1080p" -> "2160p"
+                                    else -> "Все"
+                                }
+                            }) { Text(qualityFilter) }
+                        }
+                        Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                            OutlinedButton(onClick = { hdrOnly = !hdrOnly }) {
+                                Text(if (hdrOnly) "✓ HDR / DV" else "HDR / DV")
+                            }
+                            OutlinedButton(onClick = {
+                                magnetOnly = !magnetOnly
+                                if (magnetOnly) torrentOnly = false
+                            }) { Text(if (magnetOnly) "✓ Magnet" else "Magnet") }
+                            OutlinedButton(onClick = {
+                                torrentOnly = !torrentOnly
+                                if (torrentOnly) magnetOnly = false
+                            }) { Text(if (torrentOnly) "✓ .torrent" else ".torrent") }
+                        }
+                    }
+
+                    if (filteredSources.isEmpty()) {
+                        MessageCard(
+                            "По выбранным фильтрам ничего нет. Сбросьте фильтры или уменьшите минимум сидов.",
+                            false
+                        )
+                    } else {
+                        Text("Выберите подходящий релиз", style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.SemiBold)
+                        filteredSources.forEach { source ->
+                            SourceCard(
+                                source = source,
+                                onPlay = { url ->
+                                    showSourcesSheet = false
+                                    onPlay(source.title, url)
+                                },
+                                onMagnet = { magnet ->
+                                    TorrentDownloadService.add(context, magnet, source.title)
+                                    Toast.makeText(context, "Добавлено в загрузки", Toast.LENGTH_SHORT).show()
+                                },
+                                onTorrent = { url ->
+                                    TorrentDownloadService.addTorrentUrl(context, url, source.title, source.indexerId)
+                                    Toast.makeText(context, "Добавлено в загрузки", Toast.LENGTH_SHORT).show()
+                                },
+                                onPage = { url -> openExternal(context, url) }
+                            )
+                        }
+                    }
+                }
+
+                OutlinedButton(
+                    onClick = {
+                        showSourcesSheet = false
+                        showWebsiteSearch = true
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Icon(Icons.Default.OpenInNew, contentDescription = null)
+                    Spacer(Modifier.width(8.dp))
+                    Text("Искать на сайтах")
+                }
+
+                Text(
+                    "Ссылки на сайты открываются во внешнем браузере. Автоматическое воспроизведение доступно только для источников, которые предоставляют поддерживаемую прямую медиассылку.",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
         }
     }
@@ -2683,7 +2795,7 @@ private fun SettingsScreen(
                         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
                     ) {
                         Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Text("JACKET 2.4", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Black)
+                            Text("JACKET 2.6", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Black)
                             Text("Единое приложение для Android, планшетов и Android TV.",
                                 color = MaterialTheme.colorScheme.onSurfaceVariant)
                             Text("Есть Filmix-привязка по коду и настройки HDRezka. RSS / Atom и Torznab обрабатываются внутри приложения; трекер-пресеты открываются в браузере.")

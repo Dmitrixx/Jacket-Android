@@ -45,6 +45,7 @@ class TorrentDownloadService : Service() {
     private val commandMutex = Mutex()
     private val playbackActive = AtomicBoolean(false)
     private var streamServer: LocalStreamServer? = null
+    private var streamingTorrentId: String? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -128,6 +129,9 @@ class TorrentDownloadService : Service() {
             if (TorrentQueueStore(applicationContext).isPaused(id)) {
                 TorrentEngine.resume(applicationContext, id)
             }
+            if (streamingTorrentId != null && streamingTorrentId != id) {
+                TorrentEngine.clearStreamPriorities(streamingTorrentId!!)
+            }
             selectFileWhenReady(id, fileIndex)
             val server = streamServer ?: LocalStreamServer(
                 metadata = TorrentEngine::target,
@@ -138,12 +142,14 @@ class TorrentDownloadService : Service() {
                         TorrentEngine.reportError(hash, error.message ?: "Ошибка локального видеопотока")
                         throw error
                     }
-                }
+                },
+                cacheDirectory = File(applicationContext.cacheDir, "torrent-stream")
             ).also {
                 it.start()
                 streamServer = it
                 TorrentEngine.setLocalStreamPort(it.port)
             }
+            streamingTorrentId = id
             val item = TorrentEngine.target(id, fileIndex)
             val subtitles = TorrentEngine.subtitleTargets(id, fileIndex).map { subtitle ->
                 val language = subtitle.name.substringAfterLast('/').substringBeforeLast('.')
@@ -198,6 +204,8 @@ class TorrentDownloadService : Service() {
         playbackActive.set(false)
         TorrentPlaybackBus.publish(null)
         withContext(Dispatchers.IO) {
+            streamingTorrentId?.let(TorrentEngine::clearStreamPriorities)
+            streamingTorrentId = null
             streamServer?.close()
             streamServer = null
             TorrentEngine.setLocalStreamPort(null)
