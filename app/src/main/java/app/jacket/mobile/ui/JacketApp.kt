@@ -1025,6 +1025,9 @@ private fun DetailScreen(
     val context = LocalContext.current
     val indexerErrors by viewModel.indexerErrors.collectAsState()
     val webSearchProviders by viewModel.webSearchProviders.collectAsState()
+    val filmixToken by viewModel.filmixToken.collectAsState()
+    val hdRezkaSettings by viewModel.hdRezkaSettings.collectAsState()
+    val customIndexers by viewModel.customIndexers.collectAsState()
     var showWebsiteSearch by rememberSaveable { mutableStateOf(false) }
     var showSourcesSheet by rememberSaveable { mutableStateOf(false) }
     var selectedEpisodeForSources by remember { mutableStateOf<app.jacket.mobile.data.MediaEpisode?>(null) }
@@ -1036,8 +1039,9 @@ private fun DetailScreen(
     val minSeedersValue = minSeeders.toIntOrNull()?.coerceAtLeast(0) ?: 0
     val filteredSources = sources.filter { source ->
         val release = ReleaseHeuristics.classify(source.title)
-        (source.seeders ?: 0) >= minSeedersValue &&
-            (qualityFilter == "Все" || release.quality == qualityFilter) &&
+        (source.sourceType != app.jacket.mobile.data.MediaSourceType.TORRENT ||
+            (source.seeders ?: 0) >= minSeedersValue) &&
+            (qualityFilter == "Все" || (source.qualityLabel ?: release.quality) == qualityFilter) &&
             (!hdrOnly || release.hdr || release.dolbyVision) &&
             (!magnetOnly || source.magnetUri != null) &&
             (!torrentOnly || source.downloadUrl != null)
@@ -1222,7 +1226,7 @@ private fun DetailScreen(
                                                             selectedEpisodeForSources = episode
                                                             showSourcesSheet = true
                                                             if (activeInAppTrackers.isNotEmpty()) {
-                                                                viewModel.findSourcesOnAllTrackers(item, episode)
+                                                                viewModel.findSources(item, episode)
                                                             } else {
                                                                 viewModel.findSources(item, episode)
                                                             }
@@ -1244,7 +1248,7 @@ private fun DetailScreen(
 
                     if (details!!.streamUrl != null) {
                         Button(
-                            onClick = { onPlay(item.title, details!!.streamUrl!!) },
+                            onClick = { onPlay(item.title, details!!.streamUrl!!, emptyMap(), emptyList()) },
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             Icon(Icons.Default.PlayArrow, contentDescription = null)
@@ -1280,7 +1284,7 @@ private fun DetailScreen(
                             selectedEpisodeForSources = null
                             showSourcesSheet = true
                             if (activeInAppTrackers.isNotEmpty()) {
-                                viewModel.findSourcesOnAllTrackers(item)
+                                viewModel.findSources(item)
                             } else {
                                 viewModel.findSources(item)
                             }
@@ -1295,7 +1299,7 @@ private fun DetailScreen(
                             Icon(Icons.Default.Search, contentDescription = null)
                             Spacer(Modifier.width(8.dp))
                         }
-                        Text(if (searchingSources) "Ищем раздачи…" else "Поиск торрентов")
+                        Text(if (searchingSources) "Ищем источники…" else "Поиск источников")
                     }
 
                     OutlinedButton(
@@ -1443,7 +1447,7 @@ private fun DetailScreen(
                         onClick = {
                             details?.item?.let {
                                 if (activeInAppTrackers.isNotEmpty()) {
-                                    viewModel.findSourcesOnAllTrackers(it, selectedEpisodeForSources)
+                                    viewModel.findSources(it, selectedEpisodeForSources)
                                 } else {
                                     viewModel.findSources(it, selectedEpisodeForSources)
                                 }
@@ -1455,33 +1459,33 @@ private fun DetailScreen(
                     }
                 }
 
-                if (activeInAppTrackers.isNotEmpty()) {
-                    OutlinedButton(
-                        onClick = {
-                            details?.item?.let {
-                                viewModel.findSourcesOnAllTrackers(it, selectedEpisodeForSources)
-                            }
-                        },
-                        enabled = !searchingSources,
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Icon(Icons.Default.Search, contentDescription = null)
-                        Spacer(Modifier.width(8.dp))
-                        Text("Искать на всех встроенных трекерах • ${activeInAppTrackers.size}")
-                    }
-                } else {
+                val filmixConfigured = filmixToken.isNotBlank()
+                val hdRezkaConfigured = hdRezkaSettings.mirror.isNotBlank()
+                val configuredSources = customIndexers.count { it.enabled } +
+                    activeInAppTrackers.size +
+                    (if (filmixConfigured) 1 else 0) +
+                    (if (hdRezkaConfigured) 1 else 0)
+                Text(
+                    "Индексаторы: ${customIndexers.count { it.enabled }} • трекеры: ${activeInAppTrackers.size} • " +
+                        "Filmix: ${if (filmixConfigured) "подключён" else "не настроен"} • " +
+                        "HDRezka: ${if (hdRezkaConfigured) "настроена" else "не настроена"}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Button(
+                    onClick = { details?.item?.let { viewModel.findSources(it, selectedEpisodeForSources) } },
+                    enabled = !searchingSources,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Icon(Icons.Default.Search, contentDescription = null)
+                    Spacer(Modifier.width(8.dp))
+                    Text("Искать на всех источниках")
+                }
+                if (configuredSources == 0) {
                     MessageCard(
-                        "Встроенные трекеры не добавлены или отключены. Добавьте и включите их, чтобы искать раздачи прямо в карточке фильма.",
+                        "Источники ещё не настроены. Добавьте торрент-индексатор или настройте Filmix / HDRezka.",
                         false
                     )
-                    OutlinedButton(
-                        onClick = { viewModel.restoreDefaultTrackerShortcuts() },
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Icon(Icons.Default.Add, contentDescription = null)
-                        Spacer(Modifier.width(8.dp))
-                        Text("Добавить и включить трекеры")
-                    }
                 }
 
                 if (searchingSources) {
@@ -1519,7 +1523,7 @@ private fun DetailScreen(
                 if (sources.isNotEmpty()) {
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text(
-                            "Найдено раздач: ${filteredSources.size} из ${sources.size}",
+                            "Найдено источников: ${filteredSources.size} из ${sources.size}",
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.Bold
                         )
@@ -1633,14 +1637,22 @@ private fun SourceCard(
     onPage: (String) -> Unit
 ) {
     val release = ReleaseHeuristics.classify(source.title)
-    val qualityLabel = when (release.quality?.lowercase()) {
+    val sourceBadge = when (source.sourceType) {
+        app.jacket.mobile.data.MediaSourceType.TORRENT -> "ТОРРЕНТ"
+        app.jacket.mobile.data.MediaSourceType.FILMIX -> "FILMIX"
+        app.jacket.mobile.data.MediaSourceType.HDREZKA -> "HDREZKA"
+        app.jacket.mobile.data.MediaSourceType.LICENSED_DIRECT -> "DIRECT"
+    }
+    val resolvedQuality = source.qualityLabel ?: release.quality
+    val qualityLabel = when (resolvedQuality?.lowercase()) {
         "2160p" -> "4K"
         "1080p" -> "FHD"
         "720p" -> "HD"
-        else -> release.quality
+        else -> resolvedQuality
     }
     val badges = listOfNotNull(
         qualityLabel,
+        source.translationName,
         release.resolutionDimensions,
         release.audioChannels,
         release.videoCodec,
@@ -1668,7 +1680,7 @@ private fun SourceCard(
         Column(Modifier.padding(15.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(7.dp)) {
                 Surface(color = MaterialTheme.colorScheme.primary.copy(alpha = 0.14f), shape = RoundedCornerShape(8.dp)) {
-                    Text("ТОРРЕНТ", modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
+                    Text(sourceBadge, modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
                         style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary,
                         fontWeight = FontWeight.Bold)
                 }
@@ -1722,6 +1734,11 @@ private fun SourceCard(
                         Icon(Icons.Default.Download, contentDescription = null)
                         Spacer(Modifier.width(6.dp))
                         Text("Загрузить")
+                    }
+                    source.requiresSubscription && source.pageUrl != null -> OutlinedButton(onClick = { onPage(source.pageUrl) }) {
+                        Icon(Icons.Default.OpenInNew, contentDescription = null)
+                        Spacer(Modifier.width(6.dp))
+                        Text("Нужна подписка")
                     }
                     source.pageUrl != null -> OutlinedButton(onClick = { onPage(source.pageUrl) }) {
                         Icon(Icons.Default.OpenInNew, contentDescription = null)
