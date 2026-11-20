@@ -105,8 +105,8 @@ object JackettIndexerClient {
         val parsed = JackettUrl.parseTemplate(base.searchUrlTemplate)
             ?: throw IllegalArgumentException("Некорректный URL Jackett")
         return base.copy(
-            id = "${base.id}:$indexerId",
-            name = indexerId,
+            id = base.id,
+            name = "Jackett · $indexerId",
             searchUrlTemplate = JackettUrl.searchTemplate(parsed.baseUrl, indexerId),
             protocol = IndexerProtocol.JACKETT,
             enabled = base.enabled
