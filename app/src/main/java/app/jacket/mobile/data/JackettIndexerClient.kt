@@ -111,9 +111,12 @@ object JackettIndexerClient {
         )
     }
 
-    internal fun parseIndexers(xml: String): List<JackettIndexerEntry> {
+    internal fun parseIndexers(xml: String): List<JackettIndexerEntry> =
+        parseIndexers(xml, XmlPullParserFactory.newInstance().newPullParser())
+
+    /** Parser injection keeps the catalogue parser deterministic in JVM tests. */
+    internal fun parseIndexers(xml: String, parser: XmlPullParser): List<JackettIndexerEntry> {
         require(xml.length <= MAX_RESPONSE_BYTES) { "Ответ каталога Jackett слишком большой" }
-        val parser = XmlPullParserFactory.newInstance().newPullParser()
         parser.setFeature(XmlPullParser.FEATURE_PROCESS_NAMESPACES, false)
         runCatching { parser.setFeature(XmlPullParser.FEATURE_PROCESS_DOCDECL, false) }
         parser.setInput(xml.reader())
