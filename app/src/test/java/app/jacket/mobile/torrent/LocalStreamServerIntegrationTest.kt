@@ -104,6 +104,39 @@ class LocalStreamServerIntegrationTest {
     }
 
     @Test
+    fun reportsRetryableHttpErrorWhenFirstRangeIsNotReady() {
+        val hash = "abcdef0123456789abcdef0123456789abcdef01"
+        val server = LocalStreamServer(
+            metadata = { id, index ->
+                assertEquals(hash, id)
+                assertEquals(0, index)
+                TorrentStreamTarget(id, index, "sample.mp4", 10L, "/unused", 0f)
+            },
+            awaitRange = { _, _, _, _ ->
+                throw java.net.SocketTimeoutException("internal storage path must not leak")
+            }
+        )
+        try {
+            server.start()
+            val connection = (URL(server.url(hash, 0)).openConnection() as HttpURLConnection).apply {
+                connectTimeout = 3_000
+                readTimeout = 3_000
+                setRequestProperty("Range", "bytes=0-3")
+            }
+            try {
+                assertEquals(503, connection.responseCode)
+                assertEquals("2", connection.getHeaderField("Retry-After"))
+                val body = connection.errorStream.bufferedReader().use { it.readText() }
+                assertEquals("Service Unavailable", body)
+            } finally {
+                connection.disconnect()
+            }
+        } finally {
+            server.close()
+        }
+    }
+
+    @Test
     fun rejectsOversizedRequestLineBeforeReadingUnboundedInput() {
         val server = LocalStreamServer(
             metadata = { _, _ -> error("Metadata must not be requested for an oversized request") },

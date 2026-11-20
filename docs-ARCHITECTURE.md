@@ -67,6 +67,7 @@ The registry intentionally does not include tracker-specific HTML parsers or sol
 - This is deadline-based piece scheduling, not a hard guarantee that every peer will deliver pieces in strict order: peer availability and network conditions still apply. It does, however, prioritize the currently requested playback position ahead of the forward buffer.
 - `LocalStreamServer` listens only on `127.0.0.1`, probes ports 8090–8099, and validates Host and route.
 - Range responses are constructed by a pure `RangeResponseBuilder`; malformed and unsatisfiable ranges are rejected.
+- Before committing a successful `200` / `206` response, the loopback server waits for and reads the first requested byte segment. If that first segment is temporarily unavailable, it returns `503 Service Unavailable` with `Retry-After: 2`, allowing Media3 to retry rather than treating a truncated success response as playable media.
 - The server waits for the exact requested byte interval's pieces to be hash-checked and written to disk before reading that interval. It never requires the whole file to finish first.
 - `StreamDiskCache` stores recent byte intervals in a 32 MiB LRU disk ring (maximum 256 KiB per segment). A seek that overlaps a cached interval can read the cached suffix; old slots are evicted as new segments arrive.
 - Cache reads allocate at most one segment per active HTTP worker. The cache file is temporary and deleted when the local server closes.
