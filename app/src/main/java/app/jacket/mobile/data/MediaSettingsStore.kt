@@ -102,8 +102,7 @@ class MediaSettingsStore(context: Context) {
                     freeleechOnly = item.optBoolean("freeleechOnly", false),
                     sortBy = item.optString("sortBy", "created"),
                     sortOrder = item.optString("sortOrder", "desc"),
-                    enabled = item.optBoolean("enabled", true),
-                    cookie = decrypt(item.optString("cookieEnc"))
+                    enabled = item.optBoolean("enabled", true)
                 )
                 if (config.id.isNotBlank() && config.name.isNotBlank() && isValidTemplate(config.searchUrlTemplate)) {
                     add(config)

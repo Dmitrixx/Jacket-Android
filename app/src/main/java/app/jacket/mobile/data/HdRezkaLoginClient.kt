@@ -26,6 +26,7 @@ object HdRezkaLoginClient {
     private const val DEFAULT_REDIRECT = "https://standby-rezka.tv/"
     private const val MAX_RESPONSE_BYTES = 128 * 1024
     private const val MAX_REDIRECTS = 6
+    private val REDIRECT_CODES = setOf(301, 302, 303, 307, 308)
 
     fun validateMirror(value: String): String {
         val clean = value.trim().ifBlank { DEFAULT_REDIRECT }.trimEnd('/') + "/"
