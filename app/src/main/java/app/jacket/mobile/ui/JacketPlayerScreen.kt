@@ -41,8 +41,10 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
@@ -89,6 +91,8 @@ fun JacketPlayerScreen(
     var playWhenReady by remember(streamUrl) { mutableStateOf(true) }
     var playerHasFocus by remember(streamUrl) { mutableStateOf(false) }
     var playbackError by remember(streamUrl) { mutableStateOf<String?>(null) }
+    val playbackSpeeds = remember { listOf(0.5f, 0.75f, 1f, 1.25f, 1.5f, 2f) }
+    var playbackSpeedIndex by rememberSaveable(streamUrl) { mutableIntStateOf(2) }
     val player = remember(streamUrl, subtitles) {
         val subtitleConfigurations = subtitles.map { subtitle ->
             MediaItem.SubtitleConfiguration.Builder(Uri.parse(subtitle.url))
@@ -290,6 +294,19 @@ fun JacketPlayerScreen(
                     }
                 ) {
                     Icon(Icons.Default.FastForward, contentDescription = "Вперёд на 10 секунд")
+                }
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
+                horizontalArrangement = Arrangement.Center
+            ) {
+                OutlinedButton(
+                    onClick = {
+                        playbackSpeedIndex = (playbackSpeedIndex + 1) % playbackSpeeds.size
+                        player.setPlaybackSpeed(playbackSpeeds[playbackSpeedIndex])
+                    }
+                ) {
+                    Text("Скорость ${playbackSpeeds[playbackSpeedIndex]}×")
                 }
             }
             Row(
