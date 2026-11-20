@@ -600,14 +600,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     "Проверка «$indexerId» прошла успешно."
                 } else {
                     val reason = entryError ?: testFailure?.message ?: "неизвестная ошибка"
-                    "Проверка «$indexerId» не пройдена: ${reason.replace(Regex("[\\\\r\\\\n\\\\t]+"), " ").take(200)}"
+                    "Проверка «$indexerId» не пройдена: ${reason.replace(Regex("[\\r\\n\\t]+"), " ").take(200)}"
                 }
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (refreshError: Exception) {
                 val reason = testFailure?.message ?: refreshError.message ?: "ошибка сервера"
                 _jackettCatalogStatus.value =
-                    "Не удалось обновить статус «$indexerId»: ${reason.replace(Regex("[\\\\r\\\\n\\\\t]+"), " ").take(200)}"
+                    "Не удалось обновить статус «$indexerId»: ${reason.replace(Regex("[\\r\\n\\t]+"), " ").take(200)}"
             } finally {
                 _testingJackettIndexerId.value = null
             }
