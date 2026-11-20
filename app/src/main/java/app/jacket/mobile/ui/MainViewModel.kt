@@ -28,6 +28,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runInterruptible
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withContext
@@ -315,7 +316,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             _indexerErrors.value = emptyList()
             clearMessage()
             try {
-                val results = withContext(Dispatchers.IO) {
+                val results = runInterruptible(Dispatchers.IO) {
                     if (provider.id == "tracker-archive") {
                         catalog.archiveSources(query.trim())
                     } else {
@@ -358,7 +359,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             _indexerErrors.value = emptyList()
             clearMessage()
             try {
-                val outcome = withContext(Dispatchers.IO) {
+                val outcome = runInterruptible(Dispatchers.IO) {
                     TrackerSearchClient.searchAll(providers, query.trim()) { partial ->
                         if (sourceSearchEpoch.isCurrent(searchEpoch)) {
                             _sourceResults.value = partial.results
@@ -728,7 +729,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             _indexerErrors.value = emptyList()
             clearMessage()
             try {
-                val results = withContext(Dispatchers.IO) { indexers.searchOne(config, query) }
+                val results = runInterruptible(Dispatchers.IO) { indexers.searchOne(config, query) }
                 _sourceResults.value = results
                 _message.value = if (results.isEmpty()) "Пробный поиск: результатов нет" else "Пробный поиск: ${results.size} результатов"
             } catch (cancelled: CancellationException) {
