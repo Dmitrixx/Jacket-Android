@@ -94,6 +94,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
@@ -111,6 +112,7 @@ import app.jacket.mobile.data.MediaKind
 import app.jacket.mobile.data.MediaSection
 import app.jacket.mobile.data.SourceResult
 import app.jacket.mobile.data.WebSearchProvider
+import app.jacket.mobile.data.TrackerSearchClient
 import app.jacket.mobile.data.WebSearchUrlBuilder
 import app.jacket.mobile.data.formatBytes
 import app.jacket.mobile.torrent.TorrentDownloadService
@@ -144,7 +146,7 @@ fun JacketApp(viewModel: MainViewModel) {
     val context = LocalContext.current
     val torrentPlayback by TorrentPlaybackBus.active.collectAsState()
     val details by viewModel.selectedDetails.collectAsState()
-    val isTv = (context.resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_TYPE_MASK) == android.content.res.Configuration.UI_MODE_TYPE_TELEVISION
+    val isTv = (LocalConfiguration.current.uiMode and android.content.res.Configuration.UI_MODE_TYPE_MASK) == android.content.res.Configuration.UI_MODE_TYPE_TELEVISION
     val loading by viewModel.isLoading.collectAsState()
 
     LaunchedEffect(torrentPlayback) {
@@ -465,12 +467,14 @@ private fun HomeScreen(
 ) {
     val sections by viewModel.homeSections.collectAsState()
     val loading by viewModel.isLoading.collectAsState()
+    val trackerResults by viewModel.sourceResults.collectAsState()
+    val searchingTrackers by viewModel.isSearchingSources.collectAsState()
     val message by viewModel.message.collectAsState()
     val isError by viewModel.isError.collectAsState()
     val context = LocalContext.current
     val playbackStore = remember(context) { PlaybackSessionStore(context) }
     val playbackSessions by playbackStore.sessions.collectAsState()
-    val isTv = (context.resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_TYPE_MASK) ==
+    val isTv = (LocalConfiguration.current.uiMode and android.content.res.Configuration.UI_MODE_TYPE_MASK) ==
         android.content.res.Configuration.UI_MODE_TYPE_TELEVISION
 
     LazyColumn(
@@ -540,7 +544,7 @@ private fun HomeScreen(
 @Composable
 private fun HeroCard(item: CatalogItem, onClick: () -> Unit) {
     val context = LocalContext.current
-    val isTv = (context.resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_TYPE_MASK) ==
+    val isTv = (LocalConfiguration.current.uiMode and android.content.res.Configuration.UI_MODE_TYPE_MASK) ==
         android.content.res.Configuration.UI_MODE_TYPE_TELEVISION
     var focused by remember { mutableStateOf(false) }
     val scale by animateFloatAsState(if (isTv && focused) 1.018f else 1f, label = "hero-focus")
@@ -689,7 +693,7 @@ private fun MediaShelf(
 @Composable
 private fun MediaCard(item: CatalogItem, onClick: () -> Unit, modifier: Modifier = Modifier) {
     val context = LocalContext.current
-    val isTv = (context.resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_TYPE_MASK) ==
+    val isTv = (LocalConfiguration.current.uiMode and android.content.res.Configuration.UI_MODE_TYPE_MASK) ==
         android.content.res.Configuration.UI_MODE_TYPE_TELEVISION
     var focused by remember { mutableStateOf(false) }
     val scale by animateFloatAsState(if (isTv && focused) 1.045f else 1f, label = "poster-focus")
@@ -731,7 +735,7 @@ private fun CatalogGridScreen(
     modifier: Modifier,
     onOpen: (CatalogItem) -> Unit
 ) {
-    val isTv = (LocalContext.current.resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_TYPE_MASK) == android.content.res.Configuration.UI_MODE_TYPE_TELEVISION
+    val isTv = (LocalConfiguration.current.uiMode and android.content.res.Configuration.UI_MODE_TYPE_MASK) == android.content.res.Configuration.UI_MODE_TYPE_TELEVISION
     Column(modifier.fillMaxSize()) {
         Text(
             title,
@@ -766,11 +770,13 @@ private fun SearchScreen(
     onOpen: (CatalogItem) -> Unit
 ) {
     val context = LocalContext.current
-    val isTv = (context.resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_TYPE_MASK) == android.content.res.Configuration.UI_MODE_TYPE_TELEVISION
+    val isTv = (LocalConfiguration.current.uiMode and android.content.res.Configuration.UI_MODE_TYPE_MASK) == android.content.res.Configuration.UI_MODE_TYPE_TELEVISION
     var query by rememberSaveable { mutableStateOf("") }
     val webProviders by viewModel.webSearchProviders.collectAsState()
     val items by viewModel.items.collectAsState()
     val loading by viewModel.isLoading.collectAsState()
+    val trackerResults by viewModel.sourceResults.collectAsState()
+    val searchingTrackers by viewModel.isSearchingSources.collectAsState()
     val message by viewModel.message.collectAsState()
     val isError by viewModel.isError.collectAsState()
 
@@ -820,9 +826,19 @@ private fun SearchScreen(
                 ) {
                     items(activeWebProviders, key = { "search-${it.id}" }) { provider ->
                         OutlinedButton(
-                            onClick = { openWebsiteSearch(context, provider, query.trim()) }
+                            onClick = {
+                                if (TrackerSearchClient.supports(provider.id) || provider.id == "tracker-archive") {
+                                    viewModel.searchTracker(provider, query.trim())
+                                } else {
+                                    openWebsiteSearch(context, provider, query.trim())
+                                }
+                            }
                         ) {
-                            Icon(Icons.Default.OpenInNew, contentDescription = null)
+                            Icon(
+                                if (TrackerSearchClient.supports(provider.id) || provider.id == "tracker-archive") Icons.Default.Search
+                                else Icons.Default.OpenInNew,
+                                contentDescription = null
+                            )
                             Spacer(Modifier.width(6.dp))
                             Text(provider.name, maxLines = 1)
                         }
@@ -833,10 +849,48 @@ private fun SearchScreen(
         if (message != null) {
             MessageCard(message.orEmpty(), isError, Modifier.padding(horizontal = 16.dp, vertical = 8.dp))
         }
-        if (loading && items.isEmpty()) {
-            LoadingState()
-        } else if (items.isNotEmpty()) {
-            LazyVerticalGrid(
+        when {
+            searchingTrackers -> {
+                Row(
+                    Modifier.fillMaxWidth().padding(16.dp),
+                    horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+                    Spacer(Modifier.width(10.dp))
+                    Text("Загружаем и разбираем раздачи…")
+                }
+            }
+            trackerResults.isNotEmpty() -> LazyColumn(
+                modifier = Modifier.weight(1f),
+                contentPadding = PaddingValues(16.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                item {
+                    Text(
+                        "Результаты трекера • ${trackerResults.size}",
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+                items(trackerResults, key = { it.id }) { source ->
+                    SourceCard(
+                        source = source,
+                        onPlay = { openExternal(context, it) },
+                        onMagnet = { magnet ->
+                            TorrentDownloadService.add(context, magnet, source.title)
+                            Toast.makeText(context, "Добавлено в загрузки", Toast.LENGTH_SHORT).show()
+                        },
+                        onTorrent = { url ->
+                            TorrentDownloadService.addTorrentUrl(context, url, source.title, source.indexerId)
+                            Toast.makeText(context, "Торрент добавлен в очередь", Toast.LENGTH_SHORT).show()
+                        },
+                        onPage = { openExternal(context, it) }
+                    )
+                }
+            }
+            loading && items.isEmpty() -> LoadingState()
+            items.isNotEmpty() -> LazyVerticalGrid(
                 columns = if (isTv) GridCells.Adaptive(minSize = 190.dp) else GridCells.Fixed(2),
                 modifier = Modifier.fillMaxSize(),
                 contentPadding = PaddingValues(16.dp),
@@ -847,9 +901,8 @@ private fun SearchScreen(
                     MediaCard(item, onClick = { onOpen(item) }, modifier = Modifier.fillMaxWidth())
                 }
             }
-        } else {
-            Text(
-                "Поиск выполняется по каталогу. Для расширения поиска добавьте RSS/Atom или Torznab-индексаторы в настройках.",
+            else -> Text(
+                "Поиск выполняется по каталогу. Нажмите на RuTracker, NNM-Club, Rutor или другой встроенный трекер, чтобы увидеть список раздач прямо здесь.",
                 modifier = Modifier.padding(16.dp),
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 style = MaterialTheme.typography.bodyMedium
@@ -870,7 +923,7 @@ private fun LibraryScreen(
     val context = LocalContext.current
     val playbackStore = remember(context) { PlaybackSessionStore(context) }
     val playbackSessions by playbackStore.sessions.collectAsState()
-    val isTv = (context.resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_TYPE_MASK) ==
+    val isTv = (LocalConfiguration.current.uiMode and android.content.res.Configuration.UI_MODE_TYPE_MASK) ==
         android.content.res.Configuration.UI_MODE_TYPE_TELEVISION
 
     LazyColumn(
@@ -962,7 +1015,7 @@ private fun DetailScreen(
             (!magnetOnly || source.magnetUri != null) &&
             (!torrentOnly || source.downloadUrl != null)
     }
-    val isTv = (context.resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_TYPE_MASK) == android.content.res.Configuration.UI_MODE_TYPE_TELEVISION
+    val isTv = (LocalConfiguration.current.uiMode and android.content.res.Configuration.UI_MODE_TYPE_MASK) == android.content.res.Configuration.UI_MODE_TYPE_TELEVISION
 
     Scaffold(
         topBar = {
@@ -1828,6 +1881,7 @@ private fun SettingsScreen(
     var webEditingId by rememberSaveable { mutableStateOf("") }
     var webName by rememberSaveable { mutableStateOf("") }
     var webUrlTemplate by rememberSaveable { mutableStateOf("") }
+    var webCookie by rememberSaveable { mutableStateOf("") }
 
     var hdMirror by remember(hdRezkaSettings.mirror) {
         mutableStateOf(hdRezkaSettings.mirror.ifBlank { "https://standby-rezka.tv" })
@@ -2377,6 +2431,20 @@ private fun SettingsScreen(
                                     modifier = Modifier.weight(1f)
                                 ) { Text("Открыть зеркало") }
                             }
+                            OutlinedButton(
+                                onClick = { viewModel.checkHdRezkaMirror(hdMirror) },
+                                modifier = Modifier.fillMaxWidth(),
+                                enabled = !isHdRezkaBusy && hdMirror.isNotBlank()
+                            ) {
+                                Icon(Icons.Default.Refresh, contentDescription = null)
+                                Spacer(Modifier.width(8.dp))
+                                Text("Проверить зеркало")
+                            }
+                            Text(
+                                "Проверка откроет зеркало без отправки логина и пароля. Если зеркало перенаправляет на другой домен, Jacket обновит адрес.",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
                             Text(
                                 "Если сайт требует CAPTCHA или Cloudflare, автоматический вход остановится. Jacket не обходит защиту; в таком случае используй Cookie из своего браузера.",
                                 style = MaterialTheme.typography.labelSmall,
@@ -2396,7 +2464,7 @@ private fun SettingsScreen(
                             fontWeight = FontWeight.Bold
                         )
                         Text(
-                            "В списке уже есть популярные сайты поиска. Они открываются во внешнем браузере; RSS / Atom и Torznab-индексаторы работают отдельно и показывают результаты внутри Jacket.",
+                            "Встроенные поддерживаемые трекеры показывают раздачи списком прямо в Jacket. Остальные сайты можно добавить как внешние поисковые ссылки.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -2425,19 +2493,35 @@ private fun SettingsScreen(
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
                             minLines = 2
                         )
+                        OutlinedTextField(
+                            value = webCookie,
+                            onValueChange = { webCookie = it.replace(Regex("[\\r\\n]"), "").take(8192) },
+                            modifier = Modifier.fillMaxWidth(),
+                            label = { Text("Cookie трекера (необязательно)") },
+                            placeholder = { Text("Cookie после обычного входа в браузере") },
+                            visualTransformation = PasswordVisualTransformation(),
+                            minLines = 2
+                        )
+                        Text(
+                            "Cookie хранится в зашифрованном виде на устройстве и отправляется только исходному домену трекера. Не передавайте её другим людям.",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
                         Button(
                             onClick = {
                                 val saved = viewModel.saveWebSearchProvider(
                                     WebSearchProvider(
                                         id = webEditingId,
                                         name = webName,
-                                        searchUrlTemplate = webUrlTemplate
+                                        searchUrlTemplate = webUrlTemplate,
+                                        cookie = webCookie
                                     )
                                 )
                                 if (saved) {
                                     webEditingId = ""
                                     webName = ""
                                     webUrlTemplate = ""
+                                    webCookie = ""
                                     Toast.makeText(context, "Сайт поиска сохранён", Toast.LENGTH_SHORT).show()
                                 } else {
                                     Toast.makeText(context, "Проверьте название и HTTPS-шаблон с {query}", Toast.LENGTH_LONG).show()
@@ -2455,6 +2539,7 @@ private fun SettingsScreen(
                                     webEditingId = ""
                                     webName = ""
                                     webUrlTemplate = ""
+                                    webCookie = ""
                                 },
                                 modifier = Modifier.fillMaxWidth()
                             ) { Text("Отменить редактирование") }
@@ -2476,7 +2561,10 @@ private fun SettingsScreen(
                                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                                     Text(provider.name, fontWeight = FontWeight.SemiBold)
                                     Text(
-                                        if (provider.enabled) "Включён • поиск в браузере" else "Отключён",
+                                        if (provider.enabled) {
+                                            if (TrackerSearchClient.supports(provider.id)) "Включён • результаты внутри Jacket"
+                                            else "Включён • внешний поиск"
+                                        } else "Отключён",
                                         style = MaterialTheme.typography.labelSmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
@@ -2498,6 +2586,7 @@ private fun SettingsScreen(
                                         webEditingId = provider.id
                                         webName = provider.name
                                         webUrlTemplate = provider.searchUrlTemplate
+                                        webCookie = provider.cookie
                                     }
                                 ) { Text("Изменить") }
                                 OutlinedButton(onClick = { viewModel.removeWebSearchProvider(provider.id) }) {
@@ -2821,7 +2910,7 @@ private fun SettingsMenuRow(
     icon: @Composable () -> Unit
 ) {
     val context = LocalContext.current
-    val isTv = (context.resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_TYPE_MASK) ==
+    val isTv = (LocalConfiguration.current.uiMode and android.content.res.Configuration.UI_MODE_TYPE_MASK) ==
         android.content.res.Configuration.UI_MODE_TYPE_TELEVISION
     var focused by remember { mutableStateOf(false) }
     val scale by animateFloatAsState(

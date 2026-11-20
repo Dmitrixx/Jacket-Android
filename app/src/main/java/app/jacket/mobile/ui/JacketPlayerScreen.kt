@@ -72,7 +72,8 @@ import kotlinx.coroutines.delay
 
 private const val PLAYER_SEEK_STEP_MS = 10_000L
 
-@OptIn(ExperimentalMaterial3Api::class, androidx.media3.common.util.UnstableApi::class)
+@OptIn(ExperimentalMaterial3Api::class)
+@androidx.annotation.OptIn(markerClass = [androidx.media3.common.util.UnstableApi::class])
 @Composable
 fun JacketPlayerScreen(
     title: String,

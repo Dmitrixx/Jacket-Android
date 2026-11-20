@@ -14,6 +14,16 @@ class HdRezkaLoginClientTest {
         HdRezkaLoginClient.validateMirror("http://hdrezka.example")
     }
 
+    @Test
+    fun usesSafeMethodForPostRedirects() {
+        assertEquals("GET", HdRezkaLoginClient.loginRedirectMethod(301))
+        assertEquals("GET", HdRezkaLoginClient.loginRedirectMethod(302))
+        assertEquals("GET", HdRezkaLoginClient.loginRedirectMethod(303))
+        assertEquals(null, HdRezkaLoginClient.loginRedirectMethod(307))
+        assertEquals(null, HdRezkaLoginClient.loginRedirectMethod(308))
+        assertEquals("", HdRezkaLoginClient.loginRedirectMethod(200))
+    }
+
     @Test(expected = IllegalArgumentException::class)
     fun rejectsUnrelatedHost() {
         HdRezkaLoginClient.validateMirror("https://example.com")
