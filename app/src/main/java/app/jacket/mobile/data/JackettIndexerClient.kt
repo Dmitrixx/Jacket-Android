@@ -72,7 +72,7 @@ object JackettIndexerClient {
     private const val CONNECT_TIMEOUT_MS = 8_000
     private const val READ_TIMEOUT_MS = 12_000
     private const val USER_AGENT = "JacketAndroid/2.6 (Jackett native indexer manager)"
-    private val INDEXER_ID_PATTERN = Regex("[a-zA-Z0-9._:-]{1,100}")
+    private val INDEXER_ID_PATTERN = Regex("[a-zA-Z0-9][a-zA-Z0-9._:-]{0,99}")
 
     fun fetch(config: IndexerConfig): List<JackettIndexerEntry> {
         validateJackettConfig(config)
