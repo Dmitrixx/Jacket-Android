@@ -1885,12 +1885,17 @@ private fun SettingsScreen(
     onBack: () -> Unit
 ) {
     var selectedSettingsSection by rememberSaveable { mutableStateOf("home") }
+    var jackettQuery by rememberSaveable { mutableStateOf("") }
     val currentToken by viewModel.tmdbToken.collectAsState()
     val indexers by viewModel.customIndexers.collectAsState()
     val webSearchProviders by viewModel.webSearchProviders.collectAsState()
     val statuses by viewModel.indexerStatuses.collectAsState()
     val sourceResults by viewModel.sourceResults.collectAsState()
     val searchingSources by viewModel.isSearchingSources.collectAsState()
+    val jackettIndexers by viewModel.jackettIndexers.collectAsState()
+    val loadingJackettIndexers by viewModel.isLoadingJackettIndexers.collectAsState()
+    val jackettCatalogStatus by viewModel.jackettCatalogStatus.collectAsState()
+    val savedJackett = indexers.firstOrNull { it.protocol == IndexerProtocol.JACKETT }
     val filmixToken by viewModel.filmixToken.collectAsState()
     val filmixCode by viewModel.filmixCode.collectAsState()
     val filmixStatus by viewModel.filmixStatus.collectAsState()
@@ -1899,6 +1904,16 @@ private fun SettingsScreen(
     val hdRezkaStatus by viewModel.hdRezkaStatus.collectAsState()
     val isHdRezkaBusy by viewModel.isHdRezkaBusy.collectAsState()
     val context = LocalContext.current
+    LaunchedEffect(
+        selectedSettingsSection,
+        savedJackett?.id,
+        savedJackett?.searchUrlTemplate,
+        savedJackett?.apiKey
+    ) {
+        if (selectedSettingsSection == "indexers" && savedJackett != null) {
+            viewModel.refreshJackettIndexers()
+        }
+    }
     var token by remember(currentToken) { mutableStateOf(currentToken) }
     val savedRates = remember(context) { TorrentEngine.rateLimits(context) }
     var downloadLimit by rememberSaveable { mutableStateOf(savedRates.first.toString()) }
@@ -2674,7 +2689,6 @@ private fun SettingsScreen(
             }
 
             item {
-                val savedJackett = indexers.firstOrNull { it.protocol == IndexerProtocol.JACKETT }
                 JackettSetupCard(
                     saved = savedJackett,
                     status = savedJackett?.let { statuses[it.id] },
@@ -2682,6 +2696,121 @@ private fun SettingsScreen(
                     onTest = { savedJackett?.let { viewModel.testIndexer(it.id) } },
                     onRemove = { savedJackett?.let { viewModel.removeIndexer(it.id) } }
                 )
+            }
+
+            item {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                            Text("Каталог индексаторов Jackett", style = MaterialTheme.typography.titleLarge,
+                                fontWeight = FontWeight.Bold)
+                            Text(
+                                "Публичные и приватные источники из вашего сервера. Настроенные трекеры можно искать здесь; раздачи добавляются во встроенную очередь Jacket.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        IconButton(
+                            onClick = { viewModel.refreshJackettIndexers() },
+                            enabled = savedJackett != null && !loadingJackettIndexers
+                        ) {
+                            Icon(Icons.Default.Refresh, contentDescription = "Обновить каталог Jackett")
+                        }
+                    }
+                    OutlinedTextField(
+                        value = jackettQuery,
+                        onValueChange = { jackettQuery = it },
+                        modifier = Modifier.fillMaxWidth(),
+                        label = { Text("Название фильма, сериала или раздачи") },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                        keyboardActions = KeyboardActions(
+                            onSearch = {
+                                jackettIndexers.firstOrNull { it.configured }?.let {
+                                    viewModel.searchJackettIndexer(it.id, jackettQuery)
+                                }
+                            }
+                        )
+                    )
+                    if (loadingJackettIndexers) {
+                        LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                    }
+                    jackettCatalogStatus?.let { MessageCard(it, isError = it.startsWith("Ошибка")) }
+                    if (savedJackett == null) {
+                        MessageCard("Подключите Jackett выше, чтобы загрузить каталог трекеров.", false)
+                    }
+                }
+            }
+
+            items(jackettIndexers, key = { "jackett-${it.id}" }) { entry ->
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+                ) {
+                    Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                                Text(entry.name, fontWeight = FontWeight.Bold)
+                                Text(entry.id, style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                            MetadataPill(
+                                if (entry.isPrivate) "PRIVATE" else entry.type?.uppercase() ?: "PUBLIC",
+                                accent = entry.configured
+                            )
+                        }
+                        Text(
+                            if (entry.configured) "Настроен на сервере" else "Не настроен на сервере",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = if (entry.configured) MaterialTheme.colorScheme.primary
+                                else MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        if (entry.description.isNotBlank()) {
+                            Text(entry.description, style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 3)
+                        }
+                        val details = listOfNotNull(
+                            entry.language?.takeIf(String::isNotBlank),
+                            entry.categoryNames.takeIf { it.isNotEmpty() }?.take(4)?.joinToString(", ")
+                        )
+                        if (details.isNotEmpty()) {
+                            Text(details.joinToString(" • "), style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically) {
+                            if (entry.configured) {
+                                Button(
+                                    onClick = { viewModel.searchJackettIndexer(entry.id, jackettQuery) },
+                                    enabled = jackettQuery.isNotBlank() && !searchingSources
+                                ) {
+                                    Icon(Icons.Default.Search, contentDescription = null)
+                                    Spacer(Modifier.width(6.dp))
+                                    Text("Искать")
+                                }
+                            } else {
+                                Text(
+                                    "Сначала сохраните логин/пароль этого трекера в панели Jackett, затем обновите каталог.",
+                                    modifier = Modifier.weight(1f),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            entry.siteLink?.let { link ->
+                                OutlinedButton(onClick = { openExternal(context, link) }) {
+                                    Icon(Icons.Default.OpenInNew, contentDescription = null)
+                                    Spacer(Modifier.width(5.dp))
+                                    Text("Сайт")
+                                }
+                            }
+                        }
+                    }
+                }
             }
 
             item {
@@ -2918,8 +3047,14 @@ private fun SettingsScreen(
                     SourceCard(
                         source = source,
                         onPlay = { },
-                        onMagnet = { magnet -> TorrentDownloadService.add(context, magnet, source.title) },
-                        onTorrent = { url -> openExternal(context, url) },
+                        onMagnet = { magnet ->
+                            TorrentDownloadService.add(context, magnet, source.title)
+                            Toast.makeText(context, "Добавлено в загрузки", Toast.LENGTH_SHORT).show()
+                        },
+                        onTorrent = { url ->
+                            TorrentDownloadService.addTorrentUrl(context, url, source.title, source.indexerId)
+                            Toast.makeText(context, "Торрент добавлен во встроенную очередь", Toast.LENGTH_SHORT).show()
+                        },
                         onPage = { url -> openExternal(context, url) }
                     )
                 }
