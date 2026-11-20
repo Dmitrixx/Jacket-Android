@@ -2,8 +2,8 @@
 
 ## Next
 
-- Add a native Jackett `t=indexers` catalogue with configured/public/private/language/category metadata and per-configured-indexer Torznab search.
-- Keep torrent release results inside Jacket and enqueue direct `.torrent` links from the indexer cabinet instead of opening the download URL in a browser.
+- Add Jackett's native REST indexer catalogue (`GET /api/v2.0/indexers`) and dynamic per-indexer setup forms through its authenticated config API; the API key remains for Torznab search while an optional encrypted dashboard Cookie authorizes setup.
+- Keep torrent release results inside Jacket and enqueue direct `.torrent` links from the indexer cabinet instead of opening the download URL in a browser. Private tracker setup forms now support site URL, username/password, freeleech, sorting, order, categories, tags and dynamic Jackett field types.
 - Expand release cards with feed publication dates, resolution dimensions, audio channels, language/subtitle markers and title-derived bitrate tags.
 - Add a ten-provider source registry in the requested priority order, while marking only HDRezka and Filmix as integrated and the remaining providers as unconnected pending a verified adapter.
 - Bound the HDRezka login response inspection to a small preview, remove the default restricted-domain suggestion, and stop relying on an undocumented Filmix HTTPS fallback.
