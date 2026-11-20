@@ -14,6 +14,7 @@ import app.jacket.mobile.data.IndexerRegistry
 import app.jacket.mobile.data.JackettUrl
 import app.jacket.mobile.data.JackettIndexerClient
 import app.jacket.mobile.data.JackettIndexerEntry
+import app.jacket.mobile.data.JackettConfigField
 import app.jacket.mobile.data.MediaCatalogClient
 import app.jacket.mobile.data.MediaDetails
 import app.jacket.mobile.data.MediaSection
@@ -42,6 +43,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private var catalogJob: Job? = null
     private var sourcesJob: Job? = null
     private var jackettCatalogJob: Job? = null
+    private var jackettConfigJob: Job? = null
     private var indexerTestJob: Job? = null
     private var episodeJob: Job? = null
     private var filmixPairingJob: Job? = null
@@ -125,6 +127,21 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _jackettCatalogStatus = MutableStateFlow<String?>(null)
     val jackettCatalogStatus: StateFlow<String?> = _jackettCatalogStatus.asStateFlow()
+
+    private val _jackettConfigIndexerId = MutableStateFlow<String?>(null)
+    val jackettConfigIndexerId: StateFlow<String?> = _jackettConfigIndexerId.asStateFlow()
+
+    private val _jackettConfigFields = MutableStateFlow<List<JackettConfigField>>(emptyList())
+    val jackettConfigFields: StateFlow<List<JackettConfigField>> = _jackettConfigFields.asStateFlow()
+
+    private val _isLoadingJackettConfig = MutableStateFlow(false)
+    val isLoadingJackettConfig: StateFlow<Boolean> = _isLoadingJackettConfig.asStateFlow()
+
+    private val _isSavingJackettConfig = MutableStateFlow(false)
+    val isSavingJackettConfig: StateFlow<Boolean> = _isSavingJackettConfig.asStateFlow()
+
+    private val _jackettConfigStatus = MutableStateFlow<String?>(null)
+    val jackettConfigStatus: StateFlow<String?> = _jackettConfigStatus.asStateFlow()
 
 
     private val _isLoading = MutableStateFlow(false)
@@ -471,14 +488,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /** Optional connection to the user's own Jackett server. Nothing is bundled in the APK. */
-    fun saveJackett(address: String, apiKey: String, indexerFilter: String) {
+    fun saveJackett(
+        address: String,
+        apiKey: String,
+        indexerFilter: String,
+        dashboardCookie: String = ""
+    ) {
         val base = JackettUrl.normalizeBase(address)
         if (base == null) {
             showError("Некорректный адрес Jackett. HTTP разрешён только для локального адреса.")
             return
         }
         if (apiKey.isBlank()) {
-            showError("Введите API-ключ из панели Jackett")
+            showError("Введите API-ключ Jackett для поиска Torznab")
             return
         }
         val existing = _customIndexers.value.firstOrNull {
@@ -489,12 +511,21 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             name = "Jackett",
             searchUrlTemplate = JackettUrl.searchTemplate(base, indexerFilter),
             protocol = app.jacket.mobile.data.IndexerProtocol.JACKETT,
-            apiKey = apiKey.trim()
+            apiKey = apiKey.trim(),
+            cookie = dashboardCookie.trim()
         )
         if (saveIndexer(config)) {
             _customIndexers.value.firstOrNull {
                 it.protocol == app.jacket.mobile.data.IndexerProtocol.JACKETT
-            }?.let { testIndexer(it.id) }
+            }?.let {
+                testIndexer(it.id)
+                _jackettCatalogStatus.value = if (dashboardCookie.isBlank()) {
+                    "Поиск Torznab подключён. Чтобы настраивать приватные индексаторы в приложении, добавьте Cookie авторизованной панели."
+                } else {
+                    "Подключено. Загружается каталог индексаторов."
+                }
+                refreshJackettIndexers()
+            }
         }
     }
     /** Loads Jackett's native t=indexers catalogue into the in-app settings screen. */
@@ -528,6 +559,101 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         ?: "Не удалось загрузить каталог Jackett."
             } finally {
                 _isLoadingJackettIndexers.value = false
+            }
+        }
+    }
+
+    /** Loads Jackett's dynamic setup fields for one public or private indexer. */
+    fun loadJackettIndexerConfig(indexerId: String) {
+        val config = _customIndexers.value.firstOrNull {
+            it.protocol == app.jacket.mobile.data.IndexerProtocol.JACKETT
+        } ?: run {
+            _jackettConfigStatus.value = "Сначала подключите Jackett."
+            return
+        }
+        jackettConfigJob?.cancel()
+        _jackettConfigIndexerId.value = indexerId
+        _jackettConfigFields.value = emptyList()
+        jackettConfigJob = viewModelScope.launch {
+            _isLoadingJackettConfig.value = true
+            _jackettConfigStatus.value = "Загружаем поля настройки…"
+            try {
+                val fields = withContext(Dispatchers.IO) {
+                    JackettIndexerClient.fetchIndexerConfig(config, indexerId)
+                }
+                _jackettConfigFields.value = fields
+                _jackettConfigStatus.value = if (fields.isEmpty()) {
+                    "Для этого индексатора Jackett не вернул настраиваемых полей."
+                } else {
+                    "Полей настройки: ${fields.count { it.type !in setOf("displayinfo", "displayimage") }}."
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                _jackettConfigStatus.value =
+                    error.message?.replace(Regex("[\\r\\n\\t]+"), " ")?.take(240)
+                        ?: "Не удалось получить настройки индексатора."
+            } finally {
+                _isLoadingJackettConfig.value = false
+            }
+        }
+    }
+
+    fun updateJackettConfigField(fieldId: String, value: String) {
+        _jackettConfigFields.value = _jackettConfigFields.value.map { field ->
+            if (field.id == fieldId) field.copy(value = value) else field
+        }
+    }
+
+    fun updateJackettConfigValues(fieldId: String, values: List<String>) {
+        _jackettConfigFields.value = _jackettConfigFields.value.map { field ->
+            if (field.id == fieldId) field.copy(values = values.distinct()) else field
+        }
+    }
+
+    fun closeJackettIndexerConfig() {
+        jackettConfigJob?.cancel()
+        jackettConfigJob = null
+        _jackettConfigIndexerId.value = null
+        _jackettConfigFields.value = emptyList()
+        _jackettConfigStatus.value = null
+        _isLoadingJackettConfig.value = false
+        _isSavingJackettConfig.value = false
+    }
+
+    fun saveJackettIndexerConfig() {
+        val indexerId = _jackettConfigIndexerId.value ?: return
+        val config = _customIndexers.value.firstOrNull {
+            it.protocol == app.jacket.mobile.data.IndexerProtocol.JACKETT
+        } ?: run {
+            _jackettConfigStatus.value = "Сначала подключите Jackett."
+            return
+        }
+        val fields = _jackettConfigFields.value
+        if (fields.isEmpty()) {
+            _jackettConfigStatus.value = "Нет полей настройки для сохранения."
+            return
+        }
+        jackettConfigJob?.cancel()
+        jackettConfigJob = viewModelScope.launch {
+            _isSavingJackettConfig.value = true
+            _jackettConfigStatus.value = "Сохраняем настройки в Jackett…"
+            try {
+                withContext(Dispatchers.IO) {
+                    JackettIndexerClient.updateIndexerConfig(config, indexerId, fields)
+                }
+                _jackettConfigStatus.value = "Настройки сохранены. Обновляем статус индексатора…"
+                _jackettConfigIndexerId.value = null
+                _jackettConfigFields.value = emptyList()
+                refreshJackettIndexers()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                _jackettConfigStatus.value =
+                    error.message?.replace(Regex("[\\r\\n\\t]+"), " ")?.take(240)
+                        ?: "Не удалось сохранить настройки индексатора."
+            } finally {
+                _isSavingJackettConfig.value = false
             }
         }
     }
