@@ -1456,7 +1456,7 @@ private fun DetailScreen(
                     }
                 } else {
                     MessageCard(
-                        "Встроенные трекеры пока не добавлены. Добавьте их один раз, чтобы искать раздачи прямо в карточках фильмов.",
+                        "Встроенные трекеры не добавлены или отключены. Добавьте и включите их, чтобы искать раздачи прямо в карточке фильма.",
                         false
                     )
                     OutlinedButton(
@@ -1465,7 +1465,7 @@ private fun DetailScreen(
                     ) {
                         Icon(Icons.Default.Add, contentDescription = null)
                         Spacer(Modifier.width(8.dp))
-                        Text("Добавить список трекеров")
+                        Text("Добавить и включить трекеры")
                     }
                 }
 
