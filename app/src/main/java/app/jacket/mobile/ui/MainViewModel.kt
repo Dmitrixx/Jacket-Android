@@ -522,9 +522,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 _jackettCatalogStatus.value = if (dashboardCookie.isBlank()) {
                     "Поиск Torznab подключён. Чтобы настраивать приватные индексаторы в приложении, добавьте Cookie авторизованной панели."
                 } else {
-                    "Подключено. Загружается каталог индексаторов."
+                    "Подключено. Каталог обновится автоматически."
                 }
-                refreshJackettIndexers()
             }
         }
     }
