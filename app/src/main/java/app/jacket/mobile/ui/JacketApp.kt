@@ -188,7 +188,7 @@ fun JacketApp(viewModel: MainViewModel) {
     }
 
     if (playerUrl != null) {
-        screenStateHolder.SaveableStateProvider("playerUrl != null") {
+        screenStateHolder.SaveableStateProvider("player") {
             JacketPlayerScreen(
                 title = playerTitle,
                 streamUrl = playerUrl.orEmpty(),
@@ -202,7 +202,7 @@ fun JacketApp(viewModel: MainViewModel) {
     }
 
     if (showSettings) {
-        screenStateHolder.SaveableStateProvider("showSettings") {
+        screenStateHolder.SaveableStateProvider("settings") {
             SettingsScreen(
                 viewModel = viewModel,
                 onBack = { showSettings = false }
@@ -212,14 +212,14 @@ fun JacketApp(viewModel: MainViewModel) {
     }
 
     if (showDownloads) {
-        screenStateHolder.SaveableStateProvider("showDownloads") {
+        screenStateHolder.SaveableStateProvider("downloads") {
             DownloadsScreen(onBack = { showDownloads = false })
         }
         return
     }
 
     if (details != null) {
-        screenStateHolder.SaveableStateProvider("details != null") {
+        screenStateHolder.SaveableStateProvider("details") {
             DetailScreen(
                 viewModel = viewModel,
                 onBack = viewModel::closeDetails,
