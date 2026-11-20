@@ -44,6 +44,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private var sourcesJob: Job? = null
     private var jackettCatalogJob: Job? = null
     private var jackettConfigJob: Job? = null
+    private var jackettTestJob: Job? = null
     private var indexerTestJob: Job? = null
     private var episodeJob: Job? = null
     private var filmixPairingJob: Job? = null
@@ -127,6 +128,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _jackettCatalogStatus = MutableStateFlow<String?>(null)
     val jackettCatalogStatus: StateFlow<String?> = _jackettCatalogStatus.asStateFlow()
+
+    private val _testingJackettIndexerId = MutableStateFlow<String?>(null)
+    val testingJackettIndexerId: StateFlow<String?> = _testingJackettIndexerId.asStateFlow()
 
     private val _jackettConfigIndexerId = MutableStateFlow<String?>(null)
     val jackettConfigIndexerId: StateFlow<String?> = _jackettConfigIndexerId.asStateFlow()
@@ -558,6 +562,54 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         ?: "Не удалось загрузить каталог Jackett."
             } finally {
                 _isLoadingJackettIndexers.value = false
+            }
+        }
+    }
+
+    /** Runs the server-side tracker test and refreshes its reported last_error status. */
+    fun testJackettIndexer(indexerId: String) {
+        val config = _customIndexers.value.firstOrNull {
+            it.protocol == app.jacket.mobile.data.IndexerProtocol.JACKETT
+        } ?: run {
+            _jackettCatalogStatus.value = "Сначала подключите Jackett."
+            return
+        }
+        if (_testingJackettIndexerId.value != null) return
+        jackettTestJob?.cancel()
+        jackettTestJob = viewModelScope.launch {
+            _testingJackettIndexerId.value = indexerId
+            _jackettCatalogStatus.value = "Проверяем «$indexerId» на сервере Jackett…"
+            var testFailure: Exception? = null
+            try {
+                withContext(Dispatchers.IO) {
+                    JackettIndexerClient.testIndexer(config, indexerId)
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                testFailure = error
+            }
+
+            try {
+                val entries = withContext(Dispatchers.IO) {
+                    JackettIndexerClient.fetch(config)
+                }
+                _jackettIndexers.value = entries
+                val entryError = entries.firstOrNull { it.id == indexerId }?.lastError
+                _jackettCatalogStatus.value = if (testFailure == null) {
+                    "Проверка «$indexerId» прошла успешно."
+                } else {
+                    val reason = entryError ?: testFailure?.message ?: "неизвестная ошибка"
+                    "Проверка «$indexerId» не пройдена: ${reason.replace(Regex("[\\\\r\\\\n\\\\t]+"), " ").take(200)}"
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (refreshError: Exception) {
+                val reason = testFailure?.message ?: refreshError.message ?: "ошибка сервера"
+                _jackettCatalogStatus.value =
+                    "Не удалось обновить статус «$indexerId»: ${reason.replace(Regex("[\\\\r\\\\n\\\\t]+"), " ").take(200)}"
+            } finally {
+                _testingJackettIndexerId.value = null
             }
         }
     }
