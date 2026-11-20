@@ -1633,7 +1633,6 @@ private fun SourceCard(
         .distinct()
     val facts = listOfNotNull(
         source.publishedDate?.let(::formatReleaseDate),
-        source.tracker?.takeIf { it.isNotBlank() },
         source.seeders?.let { "Раздают: $it" },
         source.leechers?.let { "Качают: $it" },
         source.sizeBytes?.let(::formatBytes),
