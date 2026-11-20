@@ -13,7 +13,7 @@ class FilmixDeviceAuthTest {
             osVersion = "Android 12",
             appVersion = "2.4.0"
         )
-        assertTrue(url.startsWith("https://api.filmix.tv/api/v2/token_request?"))
+        assertTrue(url.startsWith("https://filmixapp.cyou/api/v2/token_request?"))
         assertTrue(url.contains("user_dev_id=0123456789abcdef"))
         assertTrue(url.contains("user_dev_name=Jacket%20Phone"))
         assertTrue(url.contains("user_dev_vendor=Xiaomi"))
@@ -27,6 +27,31 @@ class FilmixDeviceAuthTest {
             "Hostname filmixapp.cyou not verified: certificate subject api.filmix.tv"
         )
         assertTrue(FilmixDeviceAuth.userFriendlyError(error).contains("HTTPS-сертификата"))
+    }
+
+    @Test
+    fun buildsCheckUpdateUrlWithTheSameDeviceFingerprint() {
+        val url = FilmixDeviceAuth.buildCheckUpdateUrl(
+            "https://filmixapp.cyou/api/v2",
+            "0123456789abcdef",
+            "Jacket Phone",
+            "Xiaomi",
+            "Android 12",
+            "2.4.0"
+        )
+        assertTrue(url.startsWith("https://filmixapp.cyou/api/v2/check_update?"))
+        assertTrue(url.contains("user_dev_id=0123456789abcdef"))
+        assertTrue(url.contains("user_dev_name=Jacket%20Phone"))
+    }
+
+    @Test
+    fun recognizesFilmixUpdateResponses() {
+        assertTrue(FilmixDeviceAuth.isRecognizedCheckUpdateResponse("""{"version":"2.6.0"}"""))
+    }
+
+    @Test
+    fun onlyUsesHttpsApiCandidates() {
+        assertTrue(FilmixDeviceAuth.apiBaseCandidates().all { it.startsWith("https://") })
     }
 
     @Test(expected = IllegalArgumentException::class)
