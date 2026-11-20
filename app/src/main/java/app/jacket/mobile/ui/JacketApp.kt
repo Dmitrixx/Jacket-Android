@@ -108,6 +108,8 @@ import app.jacket.mobile.data.HdRezkaSettings
 import app.jacket.mobile.data.IndexerConfig
 import app.jacket.mobile.data.IndexerProtocol
 import app.jacket.mobile.data.ReleaseHeuristics
+import app.jacket.mobile.data.MediaSourceCatalog
+import app.jacket.mobile.data.MediaSourceIntegration
 import app.jacket.mobile.data.MediaKind
 import app.jacket.mobile.data.MediaSection
 import app.jacket.mobile.data.SourceResult
@@ -2659,6 +2661,60 @@ private fun SettingsScreen(
                         )
                     }
                 }
+                item {
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text("Видеосервисы", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                        Text(
+                            "Список приоритетов из ТЗ. Подключённым считается только источник с реальным коннектором; неподтверждённые плагины не имитируются.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+                items(MediaSourceCatalog.sources, key = { "media-${it.id}" }) { source ->
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+                    ) {
+                        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                    Text("${source.priority}. ${source.displayName}", fontWeight = FontWeight.Bold)
+                                    Text(source.id, style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                                MetadataPill(
+                                    if (source.integration == MediaSourceIntegration.IN_APP_CONNECTOR) "В ПРИЛОЖЕНИИ"
+                                    else "НЕ ПОДКЛЮЧЁН",
+                                    accent = source.integration == MediaSourceIntegration.IN_APP_CONNECTOR
+                                )
+                            }
+                            LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                items(source.types) { kind -> MetadataPill(kind.uppercase()) }
+                                if (source.supports4k) item { MetadataPill("4K") }
+                                if (source.authRequired) item { MetadataPill("НУЖНА АВТОРИЗАЦИЯ") }
+                            }
+                            Text(source.notes, style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            if (source.integration == MediaSourceIntegration.IN_APP_CONNECTOR) {
+                                OutlinedButton(
+                                    onClick = { selectedSettingsSection = source.id },
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Text(if (source.id == "filmix") "Настроить Filmix" else "Настроить HDRezka")
+                                }
+                            } else {
+                                Text(
+                                    "Нет проверенного API или совместимого адаптера в текущем проекте.",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                    }
+                }
+
                 items(webSearchProviders, key = { "web-${it.id}" }) { provider ->
                     Card(
                         modifier = Modifier.fillMaxWidth(),
