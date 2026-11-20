@@ -17,6 +17,22 @@ import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 
 /** Local settings. TMDB and all indexer credentials are encrypted with Android Keystore. */
+/**
+ * Explicitly restoring the built-in list also re-enables presets the user had
+ * previously switched off, while preserving custom sites and their settings.
+ */
+internal fun mergeTrackerShortcuts(
+    current: List<WebSearchProvider>,
+    defaults: List<WebSearchProvider>,
+    limit: Int
+): List<WebSearchProvider> {
+    val defaultIds = defaults.mapTo(hashSetOf()) { it.id }
+    val reEnabled = current.map { provider ->
+        if (provider.id in defaultIds) provider.copy(enabled = true) else provider
+    }
+    return (reEnabled + defaults).distinctBy { it.id }.take(limit)
+}
+
 class MediaSettingsStore(context: Context) {
     private val preferences = context.applicationContext.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
 
@@ -207,9 +223,11 @@ class MediaSettingsStore(context: Context) {
 
     @Synchronized
     fun restoreDefaultTrackerShortcuts(): List<WebSearchProvider> {
-        val merged = (webSearchProviders() + DEFAULT_TRACKER_SHORTCUTS)
-            .distinctBy { it.id }
-            .take(MAX_WEB_SEARCH_PROVIDERS)
+        val merged = mergeTrackerShortcuts(
+            webSearchProviders(),
+            DEFAULT_TRACKER_SHORTCUTS,
+            MAX_WEB_SEARCH_PROVIDERS
+        )
         saveWebSearchProviders(merged)
         return readWebSearchProviders()
     }

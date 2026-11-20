@@ -24,7 +24,8 @@ data class HdRezkaLoginResult(
  */
 object HdRezkaLoginClient {
     private const val DEFAULT_REDIRECT = "https://standby-rezka.tv/"
-    private const val MAX_RESPONSE_BYTES = 128 * 1024
+    private const val MAX_RESPONSE_BYTES = 512 * 1024
+    private const val MAX_RESPONSE_PREVIEW_BYTES = 64 * 1024
     private const val MAX_REDIRECTS = 6
     private val REDIRECT_CODES = setOf(301, 302, 303, 307, 308)
 
@@ -58,7 +59,9 @@ object HdRezkaLoginClient {
 
         val initialMirror = validateMirror(mirror)
         val cookies = CookieManager(null, CookiePolicy.ACCEPT_ALL)
-        val bootstrap = requestFollowingGetRedirects("$initialMirror/", cookies)
+        // The landing page is only needed for redirects and Set-Cookie headers.
+        // Avoid buffering its often-large HTML during login.
+        val bootstrap = requestFollowingGetRedirects("$initialMirror/", cookies, captureBody = false)
         val activeBase = validateMirror(originOf(bootstrap.finalUrl))
 
         val form = listOf(
@@ -104,7 +107,12 @@ object HdRezkaLoginClient {
     fun probeMirror(mirror: String): String {
         val initialMirror = validateMirror(mirror)
         val cookies = CookieManager(null, CookiePolicy.ACCEPT_ALL)
-        val response = requestFollowingGetRedirects("$initialMirror/", cookies)
+        val response = requestFollowingGetRedirects(
+            "$initialMirror/",
+            cookies,
+            captureBody = true,
+            previewOnly = true
+        )
         if (containsChallenge(response.body)) {
             throw IOException("Зеркало доступно, но требует браузерную проверку CAPTCHA/Cloudflare.")
         }
@@ -192,10 +200,18 @@ object HdRezkaLoginClient {
 
     private fun containsChallenge(body: String): Boolean = containsBrowserChallenge(body)
 
-    private fun requestFollowingGetRedirects(startUrl: String, cookies: CookieManager): HttpResult {
+    private fun requestFollowingGetRedirects(
+        startUrl: String,
+        cookies: CookieManager,
+        captureBody: Boolean = true,
+        previewOnly: Boolean = false
+    ): HttpResult {
         var currentUrl = startUrl
         repeat(MAX_REDIRECTS + 1) {
-            val response = request(currentUrl, "GET", null, cookies, currentUrl)
+            val response = request(
+                currentUrl, "GET", null, cookies, currentUrl,
+                captureBody = captureBody, previewOnly = previewOnly
+            )
             if (response.status in setOf(301, 302, 303, 307, 308)) {
                 val location = response.location
                     ?: throw IOException("HDRezka вернула перенаправление без адреса")
@@ -218,7 +234,9 @@ object HdRezkaLoginClient {
         method: String,
         body: String?,
         cookies: CookieManager,
-        referer: String
+        referer: String,
+        captureBody: Boolean = true,
+        previewOnly: Boolean = false
     ): HttpResult {
         val uri = URI(url)
         validateMirror(originOf(url))
@@ -251,20 +269,21 @@ object HdRezkaLoginClient {
                 .filter { it.key != null }
                 .associate { it.key!! to it.value.orEmpty() }
             cookies.put(uri, responseHeaders)
+            // Redirect and mirror-bootstrap bodies are not needed to resolve the
+            // active host. Skipping them avoids buffering the full HDRezka homepage.
+            val shouldReadBody = captureBody && status !in REDIRECT_CODES
             val stream = if (status in 200..299) connection.inputStream else connection.errorStream
-            val bytes = stream?.use { input ->
-                val output = ByteArrayOutputStream()
-                val buffer = ByteArray(8192)
-                var size = 0
-                while (true) {
-                    val count = input.read(buffer)
-                    if (count < 0) break
-                    size += count
-                    if (size > MAX_RESPONSE_BYTES) throw IOException("Ответ HDRezka слишком большой")
-                    output.write(buffer, 0, count)
-                }
-                output.toByteArray()
-            } ?: ByteArray(0)
+            val bytes = if (!shouldReadBody) {
+                ByteArray(0)
+            } else {
+                stream?.use { input ->
+                    if (previewOnly) {
+                        readResponsePreview(input, MAX_RESPONSE_PREVIEW_BYTES)
+                    } else {
+                        readResponseBody(input, MAX_RESPONSE_BYTES)
+                    }
+                } ?: ByteArray(0)
+            }
             return HttpResult(
                 status = status,
                 finalUrl = connection.url.toString(),
@@ -273,6 +292,32 @@ object HdRezkaLoginClient {
             )
         } finally {
             connection.disconnect()
+        }
+    }
+
+    internal fun readResponsePreview(input: java.io.InputStream, maxBytes: Int): ByteArray {
+        require(maxBytes > 0)
+        val output = ByteArrayOutputStream()
+        val buffer = ByteArray(8_192)
+        while (output.size() < maxBytes) {
+            val count = input.read(buffer, 0, minOf(buffer.size, maxBytes - output.size()))
+            if (count < 0) break
+            if (count > 0) output.write(buffer, 0, count)
+        }
+        return output.toByteArray()
+    }
+
+    private fun readResponseBody(input: java.io.InputStream, maxBytes: Int): ByteArray {
+        input.use { source ->
+            val output = ByteArrayOutputStream()
+            val buffer = ByteArray(8_192)
+            while (true) {
+                val count = source.read(buffer)
+                if (count < 0) break
+                if (output.size() + count > maxBytes) throw IOException("Ответ HDRezka слишком большой")
+                output.write(buffer, 0, count)
+            }
+            return output.toByteArray()
         }
     }
 
