@@ -91,6 +91,12 @@ object JackettIndexerClient {
         return parseIndexerConfig(body)
     }
 
+    /** Runs Jackett's own tracker test endpoint and lets it update last_error. */
+    fun testIndexer(config: IndexerConfig, indexerId: String) {
+        validateJackettConfig(config)
+        execute(config, buildIndexerTestUrl(baseUrl(config), indexerId), "POST")
+    }
+
     /** Saves the dynamic controls and lets Jackett test the indexer when its config requires it. */
     fun updateIndexerConfig(
         config: IndexerConfig,
@@ -120,6 +126,14 @@ object JackettIndexerClient {
         }
         return buildIndexersUrl(baseUrl) + "/" +
             URLEncoder.encode(indexerId, Charsets.UTF_8.name()) + "/config"
+    }
+
+    internal fun buildIndexerTestUrl(baseUrl: String, indexerId: String): String {
+        require(INDEXER_ID_PATTERN.matches(indexerId)) {
+            "Jackett вернул некорректный идентификатор индексатора"
+        }
+        return buildIndexersUrl(baseUrl) + "/" +
+            URLEncoder.encode(indexerId, Charsets.UTF_8.name()) + "/test"
     }
 
     /** Converts one catalogue row into the existing in-app Torznab search configuration. */
