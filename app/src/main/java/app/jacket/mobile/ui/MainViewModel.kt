@@ -364,6 +364,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    /** Builds a release query from a catalog item and searches every enabled built-in tracker. */
+    fun findSourcesOnAllTrackers(item: CatalogItem, episode: MediaEpisode? = null) {
+        val year = item.year.takeIf { it.matches(Regex("\\d{4}")) }
+        val query = if (episode != null) {
+            listOf(item.title, episode.releaseCode, episode.name).joinToString(" ")
+        } else {
+            listOfNotNull(item.title, year).joinToString(" ")
+        }
+        searchAllTrackers(query)
+    }
+
     /** Manual search from the indexer dashboard; queries all enabled user indexers in parallel order. */
     fun searchIndexers(query: String) {
         if (query.isBlank()) {

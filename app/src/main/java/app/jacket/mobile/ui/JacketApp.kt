@@ -1028,6 +1028,7 @@ private fun DetailScreen(
             (!torrentOnly || source.downloadUrl != null)
     }
     val isTv = (LocalConfiguration.current.uiMode and android.content.res.Configuration.UI_MODE_TYPE_MASK) == android.content.res.Configuration.UI_MODE_TYPE_TELEVISION
+    val activeInAppTrackers = webSearchProviders.filter { it.enabled && TrackerSearchClient.supports(it.id) }
 
     Scaffold(
         topBar = {
@@ -1425,6 +1426,22 @@ private fun DetailScreen(
                     }
                 }
 
+                if (activeInAppTrackers.isNotEmpty()) {
+                    OutlinedButton(
+                        onClick = {
+                            details?.item?.let {
+                                viewModel.findSourcesOnAllTrackers(it, selectedEpisodeForSources)
+                            }
+                        },
+                        enabled = !searchingSources,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Icon(Icons.Default.Search, contentDescription = null)
+                        Spacer(Modifier.width(8.dp))
+                        Text("Искать на всех встроенных трекерах • ${activeInAppTrackers.size}")
+                    }
+                }
+
                 if (searchingSources) {
                     Row(
                         Modifier.fillMaxWidth().padding(vertical = 8.dp),
@@ -1452,7 +1469,7 @@ private fun DetailScreen(
 
                 if (sources.isEmpty() && !searchingSources) {
                     MessageCard(
-                        "Пока нет результатов. Добавьте RSS/Atom или Torznab-источники в настройках либо откройте поиск на сайтах.",
+                        "Пока нет результатов. Добавьте RSS/Atom или Torznab-источники либо запустите поиск на встроенных трекерах выше.",
                         false
                     )
                 }

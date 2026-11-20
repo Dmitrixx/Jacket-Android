@@ -56,6 +56,28 @@ class TrackerSearchClientTest {
     }
 
     @Test
+    fun parsesResultLinksFromEveryBuiltInTrackerAdapter() {
+        val samples = listOf(
+            Triple("tracker-rutracker", "https://rutracker.org/forum/tracker.php", """<a class="tLink" href="/forum/viewtopic.php?t=1">Rutracker release</a>"""),
+            Triple("tracker-nnmclub", "https://nnmclub.to/forum/tracker.php", """<a href="/forum/viewtopic.php?t=2">NNM release</a>"""),
+            Triple("tracker-rutor", "https://rutor.info/search/film", """<a class="detLink" href="/torrent/3">Rutor release</a>"""),
+            Triple("tracker-kinozal", "https://kinozal.tv/browse.php", """<a href="/details.php?id=4">Kinozal release</a>"""),
+            Triple("tracker-1337x", "https://1337x.to/search/film/1/", """<a href="/torrent/example/5">1337x release</a>"""),
+            Triple("tracker-tpb", "https://thepiratebay.org/search.php", """<a href="/torrent/6">TPB release</a>""")
+        )
+
+        samples.forEach { (providerId, baseUrl, anchorHtml) ->
+            val parsed = TrackerSearchClient.parseListing(
+                "<html><body><table><tr><td>$anchorHtml</td></tr></table></body></html>",
+                baseUrl,
+                providerId
+            )
+            assertTrue("No row parsed for $providerId", parsed.isNotEmpty())
+            assertTrue("Wrong result title for $providerId", parsed.single().title.isNotBlank())
+        }
+    }
+
+    @Test
     fun mergesTrackerResultsByInfoHashAndPrefersMoreSeeders() {
         val hash = "0123456789abcdef0123456789abcdef01234567"
         val lower = SourceResult(
