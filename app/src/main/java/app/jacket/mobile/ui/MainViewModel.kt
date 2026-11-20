@@ -359,7 +359,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         runCatching { TrackerSearchClient.searchAll(builtInTrackers, query) }
                             .onSuccess { outcome ->
                                 results += outcome.results
-                                failures.addAll(outcome.failures)
+                                failures.addAll(
+                                outcome.failures.mapIndexed { index, message ->
+                                    IndexerFailure(
+                                        indexerId = "built-in-tracker-$index",
+                                        indexerName = "Встроенные трекеры",
+                                        message = message
+                                    )
+                                }
+                            )
                             }
                             .onFailure { error ->
                                 failures += IndexerFailure("built-in-trackers", "Встроенные трекеры", safeProviderMessage(error))
