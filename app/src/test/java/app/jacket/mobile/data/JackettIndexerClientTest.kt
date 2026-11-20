@@ -77,7 +77,7 @@ class JackettIndexerClientTest {
               {
                 "id":"local",
                 "name":"Local test",
-                "site_link":"http://127.0.0.1/admin",
+                "site_link":"http://example.com/admin",
                 "type":"public",
                 "configured":true
               },
