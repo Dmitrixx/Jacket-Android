@@ -59,10 +59,8 @@ object JackettIndexerClient {
             setRequestProperty("User-Agent", USER_AGENT)
             if (config.username.isNotBlank() || config.password.isNotBlank()) {
                 val credentials = "${config.username}:${config.password}"
-                val encoded = android.util.Base64.encodeToString(
-                    credentials.toByteArray(Charsets.UTF_8),
-                    android.util.Base64.NO_WRAP
-                )
+                val encoded = java.util.Base64.getEncoder()
+                    .encodeToString(credentials.toByteArray(Charsets.UTF_8))
                 setRequestProperty("Authorization", "Basic $encoded")
             }
             if (config.cookie.isNotBlank()) setRequestProperty("Cookie", config.cookie.take(4096))
