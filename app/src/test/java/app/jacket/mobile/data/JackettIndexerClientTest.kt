@@ -101,7 +101,7 @@ class JackettIndexerClientTest {
             [
               {"id":"sitelink","name":"Site Link","type":"inputstring","value":"https://tracker.example/"},
               {"id":"username","name":"Username","type":"inputstring","value":"user"},
-              {"id":"password","name":"Password","type":"password","value":"|||%%PREVJACKPASSWD%%%"},
+              {"id":"password","name":"Password","type":"password","value":"|||%%PREVJACKPASSWD%%|||"},
               {"id":"freeleech","name":"Search freeleech only","type":"inputbool","value":true},
               {"id":"sort","name":"Sort requested from site","type":"inputselect","value":"created","options":{"created":"Created","seeders":"Seeders"}},
               {"id":"categories","name":"Categories","type":"inputcheckbox","values":["2000"],"options":{"2000":"Movies","5000":"TV"}},
