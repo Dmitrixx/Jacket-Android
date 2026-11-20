@@ -42,10 +42,12 @@ data class JackettConfigField(
     val delimiters: String? = null,
     val pattern: String? = null,
     val whitelist: List<String> = emptyList(),
-    val blacklist: List<String> = emptyList()
+    val blacklist: List<String> = emptyList(),
+    /** Original server value, retained so an unchanged masked password stays untouched. */
+    val originalValue: String = value
 ) {
     val isPreviousPassword: Boolean
-        get() = value == PASSWORD_REPLACEMENT
+        get() = originalValue == PASSWORD_REPLACEMENT && value.isBlank()
 
     companion object {
         const val PASSWORD_REPLACEMENT = "|||%%PREVJACKPASSWD%%|||"
@@ -201,14 +203,16 @@ object JackettIndexerClient {
                         options[key] = optionsObject.optString(key).take(300)
                     }
                 }
+                val fieldValue = item.opt("value")?.let { value ->
+                    if (value == JSONObject.NULL) "" else value.toString()
+                }.orEmpty().take(8_192)
                 add(
                     JackettConfigField(
                         id = id,
                         type = type,
                         name = item.optString("name").ifBlank { id }.take(160),
-                        value = item.opt("value")?.let { value ->
-                            if (value == JSONObject.NULL) "" else value.toString()
-                        }.orEmpty().take(8_192),
+                        value = fieldValue,
+                        originalValue = fieldValue,
                         values = values.take(300),
                         options = options,
                         separator = item.optString("separator").takeIf(String::isNotBlank)?.take(4),
@@ -237,7 +241,19 @@ object JackettIndexerClient {
                     item.put("values", JSONArray(safeValues))
                 }
                 "inputbool" -> item.put("value", field.value.equals("true", ignoreCase = true))
-                "inputstring", "password", "inputselect", "inputtags", "hiddendata" ->
+                "password" -> {
+                    // Jackett's password marker means "leave the stored secret unchanged".
+                    // The UI keeps that intent even after a user types and then clears the field.
+                    val passwordValue = if (
+                        field.value.isBlank() && field.originalValue == JackettConfigField.PASSWORD_REPLACEMENT
+                    ) {
+                        JackettConfigField.PASSWORD_REPLACEMENT
+                    } else {
+                        field.value
+                    }
+                    item.put("value", passwordValue.take(8_192))
+                }
+                "inputstring", "inputselect", "inputtags", "hiddendata" ->
                     item.put("value", field.value.take(8_192))
                 // Jackett's own dashboard includes an id-only entry for display-only controls.
                 "displayinfo", "displayimage" -> Unit
