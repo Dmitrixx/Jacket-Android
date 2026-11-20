@@ -18,7 +18,21 @@ class HdRezkaLoginClientTest {
     }
 
     @Test
-    fun identifiesAnubisBrowserChallenge() {
+    fun identifiesAnubisBrowserChallenge() {    @Test
+    fun recognizesOnlyACompleteDleAuthenticationCookiePair() {
+        assertTrue(HdRezkaLoginClient.hasAuthenticatedCookie(
+            "dle_user_id=12345; dle_password=secret-value; other=value"
+        ))
+        assertTrue(HdRezkaLoginClient.hasAuthenticatedCookie(
+            "DLE_USER_ID=42; DLE_PASSWORD=abc123"
+        ))
+        assertFalse(HdRezkaLoginClient.hasAuthenticatedCookie("session=opaque-token"))
+        assertFalse(HdRezkaLoginClient.hasAuthenticatedCookie("dle_user_id=123; dle_password="))
+        assertFalse(HdRezkaLoginClient.hasAuthenticatedCookie("dle_user_id=0; dle_password=secret"))
+        assertFalse(HdRezkaLoginClient.hasAuthenticatedCookie("dle_user_id=1; dle_password=x\\r\\nInjected: yes"))
+    }
+
+
         val html = """
             <html><head><title>О нет!</title></head>
             <body>Доступ запрещён: код ошибки. Защищено Anubis.</body></html>

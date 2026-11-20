@@ -23,6 +23,24 @@ data class HdRezkaLoginResult(
  * their own session cookie obtained through the normal browser login.
  */
 object HdRezkaLoginClient {
+    /**
+     * Checks the shape of the standard DLE authentication cookie pair only.
+     * This does not prove that the remote server still accepts the session.
+     */
+    fun hasAuthenticatedCookie(cookieHeader: String): Boolean {
+        if (cookieHeader.isBlank() || cookieHeader.length > 8_192 ||
+            cookieHeader.any { it == '\\r' || it == '\\n' }
+        ) return false
+        val values = cookieHeader.split(';').mapNotNull { part ->
+            val pair = part.trim().split('=', limit = 2)
+            pair.takeIf { it.size == 2 && it[0].isNotBlank() }
+                ?.let { it[0].trim().lowercase() to it[1].trim() }
+        }.toMap()
+        val userId = values["dle_user_id"].orEmpty()
+        val password = values["dle_password"].orEmpty()
+        return userId.isNotBlank() && userId != "0" && password.isNotBlank()
+    }
+
     private const val MAX_RESPONSE_BYTES = 512 * 1024
     private const val MAX_RESPONSE_PREVIEW_BYTES = 64 * 1024
     private const val MAX_REDIRECTS = 6
@@ -92,14 +110,8 @@ object HdRezkaLoginClient {
         val cookieHeader = cookies.get(URI("$confirmedBase/"), emptyMap())
             .entries.firstOrNull { it.key.equals("Cookie", true) }
             ?.value.orEmpty().joinToString("; ")
-        val cookieValues = cookieHeader.split(';').mapNotNull { part ->
-            val pair = part.trim().split('=', limit = 2)
-            pair.takeIf { it.size == 2 }?.let { it[0].lowercase() to it[1] }
-        }.toMap()
-        val userId = cookieValues["dle_user_id"].orEmpty()
-        val sessionPassword = cookieValues["dle_password"].orEmpty()
-        if (userId.isBlank() || userId == "0" || sessionPassword.isBlank()) {
-            throw IOException("HDRezka не подтвердила вход. Проверьте логин и пароль.")
+        if (!hasAuthenticatedCookie(cookieHeader)) {
+            throw IOException("HDRezka не подтвердила вход: сервер не выдал dle_user_id и dle_password.")
         }
         return HdRezkaLoginResult(confirmedBase, cookieHeader)
     }

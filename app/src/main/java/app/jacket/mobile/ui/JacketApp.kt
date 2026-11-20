@@ -1943,6 +1943,7 @@ private fun SettingsScreen(
     val savingJackettConfig by viewModel.isSavingJackettConfig.collectAsState()
     val jackettConfigStatus by viewModel.jackettConfigStatus.collectAsState()
     val filmixToken by viewModel.filmixToken.collectAsState()
+    val filmixApiBase by viewModel.filmixApiBase.collectAsState()
     val filmixCode by viewModel.filmixCode.collectAsState()
     val filmixStatus by viewModel.filmixStatus.collectAsState()
     val isFilmixPairing by viewModel.isFilmixPairing.collectAsState()
@@ -2171,7 +2172,7 @@ private fun SettingsScreen(
                     SettingsMenuRow(
                         title = "HDRezka",
                         subtitle = "Зеркало, вход по логину и паролю, сессия",
-                        badge = if (hdRezkaSettings.connected) "В сети" else "Настроить",
+                        badge = if (hdRezkaSettings.connected) "Cookie сохранена" else "Настроить",
                         onClick = { selectedSettingsSection = "hdrezka" },
                         icon = { Icon(Icons.Default.Movie, contentDescription = null) }
                     )
@@ -2345,6 +2346,36 @@ private fun SettingsScreen(
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
+                            Text("API-сервер", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                if (filmixApiBase == FilmixDeviceAuth.DEFAULT_API_BASE) {
+                                    Button(onClick = {}, enabled = false, modifier = Modifier.weight(1f)) {
+                                        Text("Основной")
+                                    }
+                                } else {
+                                    OutlinedButton(
+                                        onClick = { viewModel.selectFilmixApiBase(FilmixDeviceAuth.DEFAULT_API_BASE) },
+                                        enabled = !isFilmixPairing,
+                                        modifier = Modifier.weight(1f)
+                                    ) { Text("Основной") }
+                                }
+                                if (filmixApiBase == FilmixDeviceAuth.ALTERNATE_API_BASE) {
+                                    Button(onClick = {}, enabled = false, modifier = Modifier.weight(1f)) {
+                                        Text("Альтернативный")
+                                    }
+                                } else {
+                                    OutlinedButton(
+                                        onClick = { viewModel.selectFilmixApiBase(FilmixDeviceAuth.ALTERNATE_API_BASE) },
+                                        enabled = !isFilmixPairing,
+                                        modifier = Modifier.weight(1f)
+                                    ) { Text("Альтернативный") }
+                                }
+                            }
+                            Text(
+                                "Выбран: ${filmixApiBase.substringAfter("://").substringBefore('/')}. Автопереключения нет; TLS-проверка остаётся включённой.",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
                             Surface(
                                 modifier = Modifier.fillMaxWidth(),
                                 shape = RoundedCornerShape(18.dp),
@@ -2412,7 +2443,7 @@ private fun SettingsScreen(
                                 }
                             }
                             Text(
-                                "Токен устройства хранится в зашифрованном виде через Android Keystore. Пароль Filmix приложению не нужен. Доступ к сервису может быть ограничен провайдером или законодательством региона.",
+                                "Токен устройства хранится в зашифрованном виде через Android Keystore. Пароль Filmix приложению не нужен. Сейчас реализована привязка устройства; каталог и воспроизведение Filmix ещё не подключены.",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -2442,7 +2473,7 @@ private fun SettingsScreen(
                             Text("HDRezka", style = MaterialTheme.typography.headlineSmall,
                                 fontWeight = FontWeight.Bold)
                             Text(
-                                "Доступность HDRezka зависит от страны и сети. Приложение не подбирает обходные зеркала и не отключает проверку HTTPS. После обычного входа на доступном источнике Jacket может сохранить Cookie-сессию локально в зашифрованном виде.",
+                                "Доступность HDRezka зависит от страны и сети. Приложение не подбирает обходные зеркала и не отключает проверку HTTPS. После обычного входа на доступном источнике Jacket может сохранить Cookie-сессию локально в зашифрованном виде. Поиск каталога и воспроизведение HDRezka пока не подключены.",
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -2511,6 +2542,13 @@ private fun SettingsScreen(
                                 visualTransformation = PasswordVisualTransformation(),
                                 minLines = 2
                             )
+                            if (hdCookie.isNotBlank() && !HdRezkaLoginClient.hasAuthenticatedCookie(hdCookie)) {
+                                Text(
+                                    "Cookie не распознана: для DLE-сессии нужны dle_user_id (не 0) и dle_password. Это проверка формата, не срока действия.",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.error
+                                )
+                            }
                             Text(
                                 "Ручной вариант — вставь Cookie после обычного входа в браузере. Не отправляй её никому: она даёт доступ к аккаунту.",
                                 style = MaterialTheme.typography.labelSmall,

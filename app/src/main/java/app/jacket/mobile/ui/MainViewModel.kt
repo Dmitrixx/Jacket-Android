@@ -62,6 +62,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _filmixToken = MutableStateFlow(settings.filmixToken())
     val filmixToken: StateFlow<String> = _filmixToken.asStateFlow()
 
+    private val _filmixApiBase = MutableStateFlow(settings.filmixApiBase())
+    val filmixApiBase: StateFlow<String> = _filmixApiBase.asStateFlow()
+
     private val _filmixCode = MutableStateFlow<String?>(null)
     val filmixCode: StateFlow<String?> = _filmixCode.asStateFlow()
 
@@ -77,7 +80,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val hdRezkaSettings: StateFlow<HdRezkaSettings> = _hdRezkaSettings.asStateFlow()
 
     private val _hdRezkaStatus = MutableStateFlow(
-        if (_hdRezkaSettings.value.connected) "Сессия HDRezka сохранена" else "Не авторизовано"
+        if (_hdRezkaSettings.value.connected) "Cookie-сессия сохранена; серверная проверка не выполнялась" else "Не авторизовано"
     )
     val hdRezkaStatus: StateFlow<String> = _hdRezkaStatus.asStateFlow()
 
@@ -790,8 +793,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             _filmixStatus.value = "Запрашиваем код у Filmix…"
             try {
                 val deviceId = settings.filmixDeviceId()
+                val selectedApi = settings.filmixApiBase()
                 val pending = withContext(Dispatchers.IO) {
-                    FilmixDeviceAuth.requestCode(deviceId)
+                    FilmixDeviceAuth.requestCode(deviceId, selectedApi)
                 }
                 _filmixCode.value = pending.code
                 _filmixStatus.value = "Введите код на странице устройств Filmix. Проверяем подтверждение автоматически."
@@ -831,6 +835,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun selectFilmixApiBase(value: String) {
+        if (_isFilmixPairing.value) return
+        runCatching { settings.saveFilmixApiBase(value) }
+            .onSuccess { normalized ->
+                _filmixApiBase.value = normalized
+                val host = normalized.substringAfter("://").substringBefore('/')
+                _filmixStatus.value = "Выбран API-сервер $host. TLS будет проверен перед выдачей кода."
+            }
+            .onFailure { _filmixStatus.value = it.message ?: "Не удалось сохранить API Filmix" }
+    }
+
     fun cancelFilmixPairing() {
         filmixPairingJob?.cancel()
         filmixPairingJob = null
@@ -848,10 +863,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun saveHdRezkaSettings(config: HdRezkaSettings) {
         try {
-            val saved = config.copy(connected = config.cookie.isNotBlank())
+            val sessionCookieValid = HdRezkaLoginClient.hasAuthenticatedCookie(config.cookie)
+            val saved = config.copy(connected = sessionCookieValid)
             settings.saveHdRezkaSettings(saved)
             _hdRezkaSettings.value = settings.hdRezkaSettings()
-            _hdRezkaStatus.value = if (saved.connected) "Cookie-сессия сохранена" else "Данные сохранены; вход не выполнен"
+            _hdRezkaStatus.value = when {
+                sessionCookieValid -> "Cookie содержит пару авторизации DLE. Срок действия сессии сервером не проверен."
+                config.cookie.isNotBlank() -> "Cookie сохранена, но не распознана как сессия: нужны dle_user_id и dle_password."
+                else -> "Данные сохранены; вход не выполнен."
+            }
         } catch (error: Exception) {
             _hdRezkaStatus.value = error.message ?: "Не удалось сохранить настройки HDRezka"
         }
@@ -874,7 +894,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 )
                 settings.saveHdRezkaSettings(saved)
                 _hdRezkaSettings.value = settings.hdRezkaSettings()
-                _hdRezkaStatus.value = "Авторизация подтверждена. Cookie-сессия сохранена."
+                _hdRezkaStatus.value = "HDRezka подтвердила вход. Cookie-сессия сохранена."
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Exception) {

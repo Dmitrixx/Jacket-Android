@@ -2,6 +2,9 @@
 
 ## Next
 
+- Filmix device pairing now lets the user explicitly choose the default API or the alternate HTTPS API published by Filmix support. The selected host is probed before a device-specific request; there is no automatic host fallback and TLS verification remains enabled. TLS hostname, expiry and trust-chain failures receive distinct diagnostics.
+- HDRezka no longer labels any non-empty Cookie string as an authenticated session. A saved session must contain both DLE auth cookie fields; the UI clarifies that this is a format check, not a live server validation. The catalogue/stream adapter remains unimplemented.
+
 - Recover fast-resume checkpoints through `AtomicFile.openRead()`, which restores the last committed backup after an interrupted write. Serialize checkpoint reads, writes and deletes, reject oversized snapshots, and remove stale AtomicFile backups when a task is deleted or its checkpoint is invalid.
 
 - Persist torrent queue and pause-state mutations synchronously before acknowledging service commands, reducing the window where a force-stop can lose a newly added or paused task.

@@ -26,10 +26,46 @@ class FilmixDeviceAuthTest {
     }
 
     @Test
-    fun onlyUsesHttpsApiCandidatesAndOfficialActivationPage() {
+    fun offersOnlyExplicitHttpsApiEndpointsAndOfficialActivationPage() {
         assertTrue(FilmixDeviceAuth.apiBaseCandidates().all { it.startsWith("https://") })
-        assertEquals(listOf(FilmixDeviceAuth.DEFAULT_API_BASE), FilmixDeviceAuth.apiBaseCandidates())
+        assertEquals(
+            listOf(FilmixDeviceAuth.DEFAULT_API_BASE, FilmixDeviceAuth.ALTERNATE_API_BASE),
+            FilmixDeviceAuth.apiBaseCandidates()
+        )
+        assertEquals(
+            FilmixDeviceAuth.ALTERNATE_API_BASE,
+            FilmixDeviceAuth.normalizeApiBase("https://fxapp.biz/")
+        )
         assertTrue(FilmixDeviceAuth.ACTIVATION_URL.startsWith("https://filmix.my/"))
+    }
+
+    @Test(expected = IllegalArgumentException::class)
+    fun rejectsCleartextFilmixApi() {
+        FilmixDeviceAuth.normalizeApiBase("http://fxapp.biz/api/v2")
+    }
+
+    @Test(expected = IllegalArgumentException::class)
+    fun rejectsUnknownFilmixApiHost() {
+        FilmixDeviceAuth.normalizeApiBase("https://unknown.example/api/v2")
+    }
+
+    @Test(expected = IllegalArgumentException::class)
+    fun rejectsUnexpectedApiPath() {
+        FilmixDeviceAuth.normalizeApiBase("https://fxapp.biz/custom")
+    }
+
+    @Test
+    fun alternateApiUsesSameDeviceFingerprintAndV2Routes() {
+        val url = FilmixDeviceAuth.buildTokenRequestUrl(
+            FilmixDeviceAuth.ALTERNATE_API_BASE,
+            "0123456789abcdef"
+        )
+        assertTrue(url.startsWith("https://fxapp.biz/api/v2/token_request?"))
+        assertTrue(url.contains("user_dev_id=0123456789abcdef"))
+        assertTrue(
+            FilmixDeviceAuth.buildCheckUpdateUrl(FilmixDeviceAuth.ALTERNATE_API_BASE)
+                .startsWith("https://fxapp.biz/api/v2/check_update?")
+        )
     }
 
     @Test
@@ -55,7 +91,14 @@ class FilmixDeviceAuthTest {
         val error = javax.net.ssl.SSLPeerUnverifiedException(
             "Hostname filmixapp.cyou not verified: certificate subject api.filmix.tv"
         )
-        assertTrue(FilmixDeviceAuth.userFriendlyError(error).contains("HTTPS-сертификата"))
+        val message = FilmixDeviceAuth.userFriendlyError(
+            java.io.IOException(
+                "Filmix API недоступен по HTTPS (filmixapp.cyou: TLS: сертификат не соответствует имени домена)",
+                error
+            )
+        )
+        assertTrue(message.contains("TLS: сертификат не соответствует имени домена"))
+        assertFalse(message.contains("certificate subject"))
     }
 
     @Test(expected = IllegalArgumentException::class)
