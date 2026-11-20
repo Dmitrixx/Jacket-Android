@@ -111,6 +111,7 @@ import app.jacket.mobile.data.MediaKind
 import app.jacket.mobile.data.MediaSection
 import app.jacket.mobile.data.SourceResult
 import app.jacket.mobile.data.WebSearchProvider
+import app.jacket.mobile.data.TrackerSearchClient
 import app.jacket.mobile.data.WebSearchUrlBuilder
 import app.jacket.mobile.data.formatBytes
 import app.jacket.mobile.torrent.TorrentDownloadService
@@ -465,6 +466,8 @@ private fun HomeScreen(
 ) {
     val sections by viewModel.homeSections.collectAsState()
     val loading by viewModel.isLoading.collectAsState()
+    val trackerResults by viewModel.sourceResults.collectAsState()
+    val searchingTrackers by viewModel.isSearchingSources.collectAsState()
     val message by viewModel.message.collectAsState()
     val isError by viewModel.isError.collectAsState()
     val context = LocalContext.current
@@ -820,9 +823,19 @@ private fun SearchScreen(
                 ) {
                     items(activeWebProviders, key = { "search-${it.id}" }) { provider ->
                         OutlinedButton(
-                            onClick = { openWebsiteSearch(context, provider, query.trim()) }
+                            onClick = {
+                                if (TrackerSearchClient.supports(provider.id)) {
+                                    viewModel.searchTracker(provider, query.trim())
+                                } else {
+                                    openWebsiteSearch(context, provider, query.trim())
+                                }
+                            }
                         ) {
-                            Icon(Icons.Default.OpenInNew, contentDescription = null)
+                            Icon(
+                                if (TrackerSearchClient.supports(provider.id)) Icons.Default.Search
+                                else Icons.Default.OpenInNew,
+                                contentDescription = null
+                            )
                             Spacer(Modifier.width(6.dp))
                             Text(provider.name, maxLines = 1)
                         }
@@ -833,10 +846,48 @@ private fun SearchScreen(
         if (message != null) {
             MessageCard(message.orEmpty(), isError, Modifier.padding(horizontal = 16.dp, vertical = 8.dp))
         }
-        if (loading && items.isEmpty()) {
-            LoadingState()
-        } else if (items.isNotEmpty()) {
-            LazyVerticalGrid(
+        when {
+            searchingTrackers -> {
+                Row(
+                    Modifier.fillMaxWidth().padding(16.dp),
+                    horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+                    Spacer(Modifier.width(10.dp))
+                    Text("Загружаем и разбираем раздачи…")
+                }
+            }
+            trackerResults.isNotEmpty() -> LazyColumn(
+                modifier = Modifier.weight(1f),
+                contentPadding = PaddingValues(16.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                item {
+                    Text(
+                        "Результаты трекера • ${trackerResults.size}",
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+                items(trackerResults, key = { it.id }) { source ->
+                    SourceCard(
+                        source = source,
+                        onPlay = { openExternal(context, it) },
+                        onMagnet = { magnet ->
+                            TorrentDownloadService.add(context, magnet, source.title)
+                            Toast.makeText(context, "Добавлено в загрузки", Toast.LENGTH_SHORT).show()
+                        },
+                        onTorrent = { url ->
+                            TorrentDownloadService.addTorrentUrl(context, url, source.title, source.indexerId)
+                            Toast.makeText(context, "Торрент добавлен в очередь", Toast.LENGTH_SHORT).show()
+                        },
+                        onPage = { openExternal(context, it) }
+                    )
+                }
+            }
+            loading && items.isEmpty() -> LoadingState()
+            items.isNotEmpty() -> LazyVerticalGrid(
                 columns = if (isTv) GridCells.Adaptive(minSize = 190.dp) else GridCells.Fixed(2),
                 modifier = Modifier.fillMaxSize(),
                 contentPadding = PaddingValues(16.dp),
@@ -847,9 +898,8 @@ private fun SearchScreen(
                     MediaCard(item, onClick = { onOpen(item) }, modifier = Modifier.fillMaxWidth())
                 }
             }
-        } else {
-            Text(
-                "Поиск выполняется по каталогу. Для расширения поиска добавьте RSS/Atom или Torznab-индексаторы в настройках.",
+            else -> Text(
+                "Поиск выполняется по каталогу. Нажмите на RuTracker, NNM-Club, Rutor или другой встроенный трекер, чтобы увидеть список раздач прямо здесь.",
                 modifier = Modifier.padding(16.dp),
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 style = MaterialTheme.typography.bodyMedium
@@ -1828,6 +1878,7 @@ private fun SettingsScreen(
     var webEditingId by rememberSaveable { mutableStateOf("") }
     var webName by rememberSaveable { mutableStateOf("") }
     var webUrlTemplate by rememberSaveable { mutableStateOf("") }
+    var webCookie by rememberSaveable { mutableStateOf("") }
 
     var hdMirror by remember(hdRezkaSettings.mirror) {
         mutableStateOf(hdRezkaSettings.mirror.ifBlank { "https://standby-rezka.tv" })
@@ -2410,7 +2461,7 @@ private fun SettingsScreen(
                             fontWeight = FontWeight.Bold
                         )
                         Text(
-                            "В списке уже есть популярные сайты поиска. Они открываются во внешнем браузере; RSS / Atom и Torznab-индексаторы работают отдельно и показывают результаты внутри Jacket.",
+                            "Встроенные поддерживаемые трекеры показывают раздачи списком прямо в Jacket. Остальные сайты можно добавить как внешние поисковые ссылки."
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -2439,19 +2490,35 @@ private fun SettingsScreen(
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
                             minLines = 2
                         )
+                        OutlinedTextField(
+                            value = webCookie,
+                            onValueChange = { webCookie = it.replace(Regex("[\\r\\n]"), "").take(8192) },
+                            modifier = Modifier.fillMaxWidth(),
+                            label = { Text("Cookie трекера (необязательно)") },
+                            placeholder = { Text("Cookie после обычного входа в браузере") },
+                            visualTransformation = PasswordVisualTransformation(),
+                            minLines = 2
+                        )
+                        Text(
+                            "Cookie хранится в зашифрованном виде на устройстве и отправляется только исходному домену трекера. Не передавайте её другим людям.",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
                         Button(
                             onClick = {
                                 val saved = viewModel.saveWebSearchProvider(
                                     WebSearchProvider(
                                         id = webEditingId,
                                         name = webName,
-                                        searchUrlTemplate = webUrlTemplate
+                                        searchUrlTemplate = webUrlTemplate,
+                                        cookie = webCookie
                                     )
                                 )
                                 if (saved) {
                                     webEditingId = ""
                                     webName = ""
                                     webUrlTemplate = ""
+                                    webCookie = ""
                                     Toast.makeText(context, "Сайт поиска сохранён", Toast.LENGTH_SHORT).show()
                                 } else {
                                     Toast.makeText(context, "Проверьте название и HTTPS-шаблон с {query}", Toast.LENGTH_LONG).show()
@@ -2469,6 +2536,7 @@ private fun SettingsScreen(
                                     webEditingId = ""
                                     webName = ""
                                     webUrlTemplate = ""
+                                    webCookie = ""
                                 },
                                 modifier = Modifier.fillMaxWidth()
                             ) { Text("Отменить редактирование") }
@@ -2490,7 +2558,10 @@ private fun SettingsScreen(
                                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                                     Text(provider.name, fontWeight = FontWeight.SemiBold)
                                     Text(
-                                        if (provider.enabled) "Включён • поиск в браузере" else "Отключён",
+                                        if (provider.enabled) {
+                                            if (TrackerSearchClient.supports(provider.id)) "Включён • результаты внутри Jacket"
+                                            else "Включён • внешний поиск"
+                                        } else "Отключён",
                                         style = MaterialTheme.typography.labelSmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
@@ -2512,6 +2583,7 @@ private fun SettingsScreen(
                                         webEditingId = provider.id
                                         webName = provider.name
                                         webUrlTemplate = provider.searchUrlTemplate
+                                        webCookie = provider.cookie
                                     }
                                 ) { Text("Изменить") }
                                 OutlinedButton(onClick = { viewModel.removeWebSearchProvider(provider.id) }) {
