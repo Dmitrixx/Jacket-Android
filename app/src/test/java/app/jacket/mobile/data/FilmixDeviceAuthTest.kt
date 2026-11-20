@@ -1,5 +1,6 @@
 package app.jacket.mobile.data
 
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -27,7 +28,7 @@ class FilmixDeviceAuthTest {
     @Test
     fun onlyUsesHttpsApiCandidatesAndOfficialActivationPage() {
         assertTrue(FilmixDeviceAuth.apiBaseCandidates().all { it.startsWith("https://") })
-        assertTrue(FilmixDeviceAuth.apiBaseCandidates().contains("https://filmixapp.cyou/api/v2"))
+        assertEquals(listOf(FilmixDeviceAuth.DEFAULT_API_BASE), FilmixDeviceAuth.apiBaseCandidates())
         assertTrue(FilmixDeviceAuth.ACTIVATION_URL.startsWith("https://filmix.my/"))
     }
 
@@ -41,11 +42,11 @@ class FilmixDeviceAuthTest {
     fun reportsPerHostFailureDetailsWithoutLeakingRequestParameters() {
         val message = FilmixDeviceAuth.userFriendlyError(
             java.io.IOException(
-                "Filmix API недоступен по HTTPS (filmixapp.cyou: HTTP 405 на /check_update; api.filmix.tv: ошибка TLS-сертификата)."
+                "Filmix API недоступен по HTTPS (filmixapp.cyou: HTTP 405 на /check_update)."
             )
         )
         assertTrue(message.contains("filmixapp.cyou: HTTP 405"))
-        assertTrue(message.contains("api.filmix.tv: ошибка TLS"))
+        assertFalse(message.contains("api.filmix.tv"))
         assertFalse(message.contains("user_dev_id="))
     }
 
