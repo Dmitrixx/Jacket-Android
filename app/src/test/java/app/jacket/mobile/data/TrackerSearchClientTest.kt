@@ -56,6 +56,39 @@ class TrackerSearchClientTest {
     }
 
     @Test
+    fun mergesTrackerResultsByInfoHashAndPrefersMoreSeeders() {
+        val hash = "0123456789abcdef0123456789abcdef01234567"
+        val lower = SourceResult(
+            id = "rutor:1",
+            title = "Release from Rutor",
+            providerName = "Built-in",
+            magnetUri = "magnet:?xt=urn:btih:$hash&dn=Movie",
+            seeders = 12,
+            indexerId = "tracker-rutor"
+        )
+        val higher = lower.copy(
+            id = "rutracker:2",
+            title = "Same release from RuTracker",
+            seeders = 54,
+            indexerId = "tracker-rutracker"
+        )
+        val different = SourceResult(
+            id = "kinozal:3",
+            title = "Different release",
+            providerName = "Built-in",
+            magnetUri = "magnet:?xt=urn:btih:abcdef0123456789abcdef0123456789abcdef01&dn=Other",
+            seeders = 30,
+            indexerId = "tracker-kinozal"
+        )
+
+        val merged = TrackerSearchClient.mergeResults(listOf(listOf(lower, different), listOf(higher)))
+
+        assertEquals(2, merged.size)
+        assertEquals("Same release from RuTracker", merged.first().title)
+        assertEquals(54, merged.first().seeders)
+    }
+
+    @Test
     fun genericCaptchaWordDoesNotTriggerChallengeDetection() {
         val html = """
             <html><head><title>Search results</title></head>

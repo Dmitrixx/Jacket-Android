@@ -812,6 +812,7 @@ private fun SearchScreen(
             }
         }
         val activeWebProviders = webProviders.filter { it.enabled }
+        val activeTrackers = activeWebProviders.filter { TrackerSearchClient.supports(it.id) }
         if (query.trim().length >= 2 && activeWebProviders.isNotEmpty()) {
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Text(
@@ -842,6 +843,17 @@ private fun SearchScreen(
                             Spacer(Modifier.width(6.dp))
                             Text(provider.name, maxLines = 1)
                         }
+                    }
+                }
+                if (activeTrackers.size > 1) {
+                    Button(
+                        onClick = { viewModel.searchAllTrackers(query.trim()) },
+                        enabled = !searchingTrackers,
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp)
+                    ) {
+                        Icon(Icons.Default.Search, contentDescription = null)
+                        Spacer(Modifier.width(8.dp))
+                        Text("Искать на всех трекерах • ${activeTrackers.size}")
                     }
                 }
             }

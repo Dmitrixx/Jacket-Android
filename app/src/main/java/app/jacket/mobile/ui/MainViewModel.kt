@@ -321,6 +321,49 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    /** Searches every enabled built-in tracker and combines the releases into one list. */
+    fun searchAllTrackers(query: String) {
+        if (query.isBlank()) {
+            showError("Введите название для поиска")
+            return
+        }
+        val providers = _webSearchProviders.value.filter {
+            it.enabled && TrackerSearchClient.supports(it.id)
+        }
+        if (providers.isEmpty()) {
+            showError("Включите хотя бы один встроенный трекер в настройках сайтов")
+            return
+        }
+        sourcesJob?.cancel()
+        sourcesJob = viewModelScope.launch {
+            _isSearchingSources.value = true
+            _sourceResults.value = emptyList()
+            _indexerErrors.value = emptyList()
+            clearMessage()
+            try {
+                val outcome = withContext(Dispatchers.IO) {
+                    TrackerSearchClient.searchAll(providers, query.trim())
+                }
+                _sourceResults.value = outcome.results
+                val summary = if (outcome.results.isEmpty()) {
+                    "На включённых трекерах не найдено раздач с прямыми magnet или .torrent ссылками."
+                } else {
+                    "Найдено раздач: ${outcome.results.size} • трекеров ответило: ${providers.size - outcome.failures.size}/${providers.size}."
+                }
+                _message.value = if (outcome.failures.isEmpty()) summary else {
+                    "$summary Ошибок: ${outcome.failures.size}."
+                }
+                _isError.value = outcome.results.isEmpty() && outcome.failures.isNotEmpty()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                showError(error.message ?: "Не удалось выполнить поиск по трекерам")
+            } finally {
+                _isSearchingSources.value = false
+            }
+        }
+    }
+
     /** Manual search from the indexer dashboard; queries all enabled user indexers in parallel order. */
     fun searchIndexers(query: String) {
         if (query.isBlank()) {
