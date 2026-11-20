@@ -349,7 +349,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     runCatching { indexers.searchDetailed(query, customIndexers, includeArchive = true) }
                         .onSuccess { outcome ->
                             results += outcome.results
-                            failures += outcome.failures
+                            failures.addAll(outcome.failures)
                         }
                         .onFailure { error ->
                             failures += IndexerFailure("indexers", "Торрент-индексаторы", safeProviderMessage(error))
@@ -359,7 +359,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         runCatching { TrackerSearchClient.searchAll(builtInTrackers, query) }
                             .onSuccess { outcome ->
                                 results += outcome.results
-                                failures += outcome.failures
+                                failures.addAll(outcome.failures)
                             }
                             .onFailure { error ->
                                 failures += IndexerFailure("built-in-trackers", "Встроенные трекеры", safeProviderMessage(error))
