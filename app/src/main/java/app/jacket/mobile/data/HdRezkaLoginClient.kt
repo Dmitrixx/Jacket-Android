@@ -23,14 +23,15 @@ data class HdRezkaLoginResult(
  * their own session cookie obtained through the normal browser login.
  */
 object HdRezkaLoginClient {
-    private const val DEFAULT_REDIRECT = "https://standby-rezka.tv/"
     private const val MAX_RESPONSE_BYTES = 512 * 1024
     private const val MAX_RESPONSE_PREVIEW_BYTES = 64 * 1024
     private const val MAX_REDIRECTS = 6
     private val REDIRECT_CODES = setOf(301, 302, 303, 307, 308)
 
     fun validateMirror(value: String): String {
-        val clean = value.trim().ifBlank { DEFAULT_REDIRECT }.trimEnd('/') + "/"
+        val supplied = value.trim()
+        require(supplied.isNotBlank()) { "Укажите адрес источника HDRezka" }
+        val clean = supplied.trimEnd('/') + "/"
         val uri = runCatching { URI(clean) }
             .getOrElse { throw IllegalArgumentException("Некорректный адрес зеркала HDRezka", it) }
         require(uri.scheme.equals("https", true)) { "Зеркало должно использовать HTTPS" }
