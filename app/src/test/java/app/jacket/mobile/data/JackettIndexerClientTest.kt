@@ -24,6 +24,14 @@ class JackettIndexerClientTest {
     }
 
     @Test
+    fun buildsNativeIndexerTestEndpointWithoutLosingReverseProxyPath() {
+        assertEquals(
+            "https://seedbox.example/proxy/Jackett/api/v2.0/indexers/rutracker/test",
+            JackettIndexerClient.buildIndexerTestUrl("https://seedbox.example/proxy/Jackett", "rutracker")
+        )
+    }
+
+    @Test
     fun parsesPublicPrivateAndConfiguredIndexerRowsFromJackettRestJson() {
         val json = """
             [
