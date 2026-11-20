@@ -2,6 +2,8 @@
 
 ## Next
 
+- Recover fast-resume checkpoints through `AtomicFile.openRead()`, which restores the last committed backup after an interrupted write. Serialize checkpoint reads, writes and deletes, reject oversized snapshots, and remove stale AtomicFile backups when a task is deleted or its checkpoint is invalid.
+
 - Persist torrent queue and pause-state mutations synchronously before acknowledging service commands, reducing the window where a force-stop can lose a newly added or paused task.
 
 - Preserve Jackett's masked previous-password marker when a private tracker password field is left unchanged or edited and cleared; add regression tests for both preserve and replace paths.

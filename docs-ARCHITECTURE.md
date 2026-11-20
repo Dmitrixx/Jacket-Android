@@ -86,7 +86,7 @@ The registry intentionally does not include tracker-specific HTML parsers or sol
 
 - Queue serialization uses `TorrentQueueCodec`, independent from the native library. Older JSON queue records are migrated.
 - Queue metadata includes ID, title, magnet or private `.torrent` path, and selected file index. Queue and pause-state mutations use synchronous SharedPreferences commits on the service IO dispatcher before native session mutations are acknowledged.
-- Native fast-resume data is written under `filesDir/torrent-resume` using `AtomicFile`.
+- Native fast-resume data is written under `filesDir/torrent-resume` using `AtomicFile`. Restore uses `AtomicFile.openRead()` (not direct `File.readBytes()`) so an interrupted write rolls back to the last committed backup. Checkpoint reads, writes and deletes are serialized on the engine monitor; oversized or invalid snapshots are removed together with stale backups, then the durable queue falls back to the saved metainfo or magnet URI.
 - Resume data is requested periodically (about every 30 seconds) and after pause; queue entries provide a re-add fallback if resume data is not yet present.
 - The service restores queued items on startup and retries pending tasks. Playback positions are persisted locally at short intervals and keyed by torrent hash/file or URL hash.
 - “Remove from queue” does not delete downloaded files. File deletion is explicit and path-checked.
