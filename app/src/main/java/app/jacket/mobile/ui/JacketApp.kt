@@ -123,6 +123,10 @@ import app.jacket.mobile.torrent.PlaybackSession
 import app.jacket.mobile.torrent.PlaybackSessionStore
 import app.jacket.mobile.torrent.TorrentQueueStore
 import java.io.File
+import java.time.OffsetDateTime
+import java.time.ZonedDateTime
+import java.time.format.DateTimeFormatter
+import java.util.Locale
 
 private const val TAB_HOME = 0
 private const val TAB_MOVIES = 1
@@ -1606,28 +1610,43 @@ private fun SourceCard(
     onPage: (String) -> Unit
 ) {
     val release = ReleaseHeuristics.classify(source.title)
+    val qualityLabel = when (release.quality?.lowercase()) {
+        "2160p" -> "4K"
+        "1080p" -> "FHD"
+        "720p" -> "HD"
+        else -> release.quality
+    }
     val badges = listOfNotNull(
-        release.quality,
+        qualityLabel,
+        release.resolutionDimensions,
+        release.audioChannels,
         release.videoCodec,
         if (release.hdr) "HDR" else null,
-        if (release.dolbyVision) "Dolby Vision" else null
-    ).plus(release.audioTags).plus(release.sourceTags).distinct()
+        if (release.dolbyVision) "Dolby Vision" else null,
+        release.bitrate
+    ).plus(release.audioTags)
+        .plus(release.audioLanguages.map { "♪ $it" })
+        .plus(release.subtitleLanguages.map { "▣ $it SUB" })
+        .plus(release.sourceTags)
+        .distinct()
     val facts = listOfNotNull(
-        source.category,
+        source.publishedDate?.let(::formatReleaseDate),
+        source.tracker?.takeIf { it.isNotBlank() },
+        source.seeders?.let { "Раздают: $it" },
+        source.leechers?.let { "Качают: $it" },
         source.sizeBytes?.let(::formatBytes),
-        source.seeders?.let { "↑ $it сидов" },
-        source.leechers?.let { "↓ $it пиров" }
+        source.category?.takeIf { it.isNotBlank() && !it.all(Char::isDigit) }
     )
     Card(
         modifier = Modifier.fillMaxWidth(),
-        shape = MaterialTheme.shapes.large,
+        shape = RoundedCornerShape(18.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
         elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
     ) {
-        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
+        Column(Modifier.padding(15.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(7.dp)) {
                 Surface(color = MaterialTheme.colorScheme.primary.copy(alpha = 0.14f), shape = RoundedCornerShape(8.dp)) {
-                    Text("РАЗДАЧА", modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
+                    Text("ТОРРЕНТ", modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
                         style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary,
                         fontWeight = FontWeight.Bold)
                 }
@@ -1637,23 +1656,32 @@ private fun SourceCard(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1
                 )
-                if (!source.tracker.isNullOrBlank()) {
+                if (!source.tracker.isNullOrBlank() && source.providerName.isNotBlank()) {
                     Text(
                         "через ${source.providerName}",
                         style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1
                     )
                 }
             }
-            Text(source.title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, maxLines = 3)
+            Text(
+                source.title,
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+                maxLines = 4
+            )
             if (badges.isNotEmpty()) {
                 LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     items(badges) { badge -> MetadataPill(badge, accent = true) }
                 }
             }
             if (facts.isNotEmpty()) {
-                Text(facts.joinToString("  •  "), style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(
+                    facts.joinToString("  •  "),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically) {
@@ -1688,6 +1716,15 @@ private fun SourceCard(
             }
         }
     }
+}
+
+private fun formatReleaseDate(value: String): String {
+    val date = runCatching {
+        ZonedDateTime.parse(value, DateTimeFormatter.RFC_1123_DATE_TIME).toLocalDate()
+    }.recoverCatching {
+        OffsetDateTime.parse(value).toLocalDate()
+    }.getOrNull() ?: return value.take(32)
+    return DateTimeFormatter.ofPattern("d MMMM", Locale("ru")).format(date)
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
