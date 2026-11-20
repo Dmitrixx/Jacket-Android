@@ -4,6 +4,7 @@
 
 - Preserve Jackett's masked previous-password marker when a private tracker password field is left unchanged or edited and cleared; add regression tests for both preserve and replace paths.
 - Add a native per-tracker Test action using Jackett's REST endpoint, refresh the server-reported last-error state, and redact API keys, cookies and configured credentials from diagnostics.
+- Reject dot-segment indexer identifiers before building Jackett REST paths.
 
 - Add Jackett's native REST indexer catalogue (`GET /api/v2.0/indexers`) and dynamic per-indexer setup forms through its authenticated config API; the API key remains for Torznab search while an optional encrypted dashboard Cookie authorizes setup.
 - Keep torrent release results inside Jacket and enqueue direct `.torrent` links from the indexer cabinet instead of opening the download URL in a browser. Private tracker setup forms now support site URL, username/password, freeleech, sorting, order, categories, tags and dynamic Jackett field types.
