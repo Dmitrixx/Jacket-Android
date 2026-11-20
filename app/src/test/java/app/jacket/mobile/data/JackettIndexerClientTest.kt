@@ -211,9 +211,12 @@ class JackettIndexerClientTest {
             """[{"id":"password","name":"Password","type":"password","value":"${JackettConfigField.PASSWORD_REPLACEMENT}"}]"""
         )
         val parsed = fields.single()
+        assertEquals("", parsed.value)
         assertTrue(parsed.isPreviousPassword)
 
-        val clearedAfterEditing = parsed.copy(value = "")
+        val edited = parsed.copy(value = "new-secret")
+        assertEquals("new-secret", edited.value)
+        val clearedAfterEditing = edited.copy(value = "")
         assertTrue(clearedAfterEditing.isPreviousPassword)
 
         val payload = JackettIndexerClient.buildConfigPayload(listOf(clearedAfterEditing))
