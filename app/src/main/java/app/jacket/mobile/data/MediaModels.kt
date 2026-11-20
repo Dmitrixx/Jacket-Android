@@ -100,7 +100,8 @@ data class SourceResult(
     val pageUrl: String? = null,
     val category: String? = null,
     val indexerId: String? = null,
-    val tracker: String? = null
+    val tracker: String? = null,
+    val publishedDate: String? = null
 )
 
 fun CatalogItem.toJson(): JSONObject = JSONObject()
@@ -154,7 +155,12 @@ data class ReleaseMetadata(
     val dolbyVision: Boolean,
     val videoCodec: String?,
     val audioTags: List<String>,
-    val sourceTags: List<String>
+    val sourceTags: List<String>,
+    val resolutionDimensions: String? = null,
+    val audioChannels: String? = null,
+    val audioLanguages: List<String> = emptyList(),
+    val subtitleLanguages: List<String> = emptyList(),
+    val bitrate: String? = null
 )
 
 
