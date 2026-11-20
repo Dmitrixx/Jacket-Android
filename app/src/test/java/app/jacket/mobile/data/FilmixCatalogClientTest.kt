@@ -61,6 +61,26 @@ class FilmixCatalogClientTest {
     }
 
     @Test
+    fun updatesOnlyLivehashPathSegmentWithoutChangingOtherUrlParts() {
+        val url = "https://cdn.example/s/old-hash/path/video.mp4?token=other"
+        assertEquals(
+            "https://cdn.example/s/new_hash-42/path/video.mp4?token=other",
+            FilmixCatalogClient.replaceLivehash(url, "new_hash-42")
+        )
+    }
+
+    @Test
+    fun extractsLivehashFromFilmixPlayerLinks() {
+        val post = JSONObject().put(
+            "player_links",
+            JSONObject().put("movie", JSONArray().put(
+                JSONObject().put("link", "https://cdn.example/s/active123/video_[1080,720].mp4")
+            ))
+        )
+        assertEquals("active123", FilmixCatalogClient.extractLivehash(post))
+    }
+
+    @Test
     fun appliesAccountQualityLimits() {
         assertEquals(720, FilmixCatalogClient.maxQualityFromProfile(JSONObject()))
         assertEquals(1080, FilmixCatalogClient.maxQualityFromProfile(JSONObject().put("is_pro", true)))

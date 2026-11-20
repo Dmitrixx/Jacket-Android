@@ -36,6 +36,12 @@ object FilmixCatalogClient {
     private const val MAX_TRANSLATIONS = 12
     private const val MAX_EPISODES_PER_SEASON = 100
     private const val USER_AGENT = "JacketAndroid/2.7 (Filmix v2 client)"
+    private const val LIVEHASH_POST_ID = 171042
+    private const val LIVEHASH_TTL_MS = 2 * 60 * 60 * 1000L
+    private val livehashPattern = Regex("/s/([^/]+)/")
+    @Volatile private var cachedLivehash: String? = null
+    @Volatile private var livehashExpiresAt = 0L
+    private val livehashLock = Any()
     private val qualityListPattern = Regex("_\\[([0-9,]+)]\\.mp4", RegexOption.IGNORE_CASE)
     private val qualityPlaceholderPattern = Regex("_%s\\.mp4", RegexOption.IGNORE_CASE)
     private val episodeCodePattern = Regex("(?i)S(\\d{1,2})E(\\d{1,3})")
@@ -70,7 +76,7 @@ object FilmixCatalogClient {
         if (entries.isEmpty()) return emptyList()
 
         val maxQuality = loadMaxQuality(safeBase, safeDeviceId, token)
-        return buildList {
+        val parsed = buildList {
             entries.forEach { entry ->
                 val post = runCatching {
                     getJson(buildApiUrl(safeBase, "post/${entry.id}", safeDeviceId, token))
@@ -85,6 +91,15 @@ object FilmixCatalogClient {
                 )
             }
         }.distinctBy { it.id }.take(80)
+
+        // Some Filmix CDN URLs contain a rotating /s/{livehash}/ prefix. Refresh
+        // it from the public reference post only when a selected result needs it.
+        if (parsed.none { livehashPattern.containsMatchIn(it.streamUrl.orEmpty()) }) return parsed
+        val livehash = getLivehash(safeBase, safeDeviceId, token) ?: return parsed
+        return parsed.map { source ->
+            val url = source.streamUrl ?: return@map source
+            source.copy(streamUrl = replaceLivehash(url, livehash))
+        }
     }
 
     internal fun buildApiUrl(
@@ -94,6 +109,31 @@ object FilmixCatalogClient {
         token: String,
         query: Map<String, String> = emptyMap()
     ): String = FilmixDeviceAuth.buildAuthenticatedApiUrl(apiBase, endpoint, deviceId, token, query)
+
+    internal fun replaceLivehash(url: String, livehash: String): String {
+        require(livehash.matches(Regex("[A-Za-z0-9_-]{1,128}"))) { "Некорректный Filmix livehash" }
+        return livehashPattern.replace(url, "/s/$livehash/")
+    }
+
+    internal fun extractLivehash(post: JSONObject): String? =
+        livehashPattern.find(post.toString())?.groupValues?.getOrNull(1)
+            ?.takeIf { it.matches(Regex("[A-Za-z0-9_-]{1,128}")) }
+
+    private fun getLivehash(apiBase: String, deviceId: String, token: String): String? {
+        val now = System.currentTimeMillis()
+        cachedLivehash?.takeIf { now < livehashExpiresAt }?.let { return it }
+        synchronized(livehashLock) {
+            val lockedNow = System.currentTimeMillis()
+            cachedLivehash?.takeIf { lockedNow < livehashExpiresAt }?.let { return it }
+            val post = runCatching {
+                getJson(buildApiUrl(apiBase, "post/$LIVEHASH_POST_ID", deviceId, token))
+            }.getOrNull() ?: return null
+            val fresh = extractLivehash(post) ?: return null
+            cachedLivehash = fresh
+            livehashExpiresAt = System.currentTimeMillis() + LIVEHASH_TTL_MS
+            return fresh
+        }
+    }
 
     internal fun parseSearchEntries(json: JSONObject): List<FilmixSearchEntry> {
         val array = when {
