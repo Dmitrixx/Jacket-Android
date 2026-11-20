@@ -2402,7 +2402,7 @@ private fun SettingsScreen(
                                 }
                             }
                             Text(
-                                "Токен устройства хранится в зашифрованном виде через Android Keystore. Пароль Filmix приложению не нужен.",
+                                "Токен устройства хранится в зашифрованном виде через Android Keystore. Пароль Filmix приложению не нужен. Доступ к сервису может быть ограничен провайдером или законодательством региона.",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -2432,7 +2432,7 @@ private fun SettingsScreen(
                             Text("HDRezka", style = MaterialTheme.typography.headlineSmall,
                                 fontWeight = FontWeight.Bold)
                             Text(
-                                "Укажи рабочее HTTPS-зеркало и данные своего аккаунта. После успешного входа Jacket сохранит Cookie-сессию локально в зашифрованном виде.",
+                                "Доступность HDRezka зависит от страны и сети. Приложение не подбирает обходные зеркала и не отключает проверку HTTPS. После обычного входа на доступном источнике Jacket может сохранить Cookie-сессию локально в зашифрованном виде.",
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -2441,7 +2441,7 @@ private fun SettingsScreen(
                                 onValueChange = { hdMirror = it },
                                 modifier = Modifier.fillMaxWidth(),
                                 label = { Text("Зеркало HDRezka") },
-                                placeholder = { Text("https://standby-rezka.tv") },
+                                placeholder = { Text("https://домен-источника") },
                                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
                                 singleLine = true
                             )
