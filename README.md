@@ -12,15 +12,19 @@ The project is under active development. CI verifies JVM unit tests and APK asse
 - **Search** — catalog search with a short debounce; configurable website-search shortcuts open the matching query in the external browser.
 - **Series details** — TMDB seasons and episode lists; an episode search adds its `SxxExx` code to the indexer query.
 - **My library** — favorites and recently opened cards.
-- **Sources** — manual search, indexer management, connectivity tests, source errors and quality filters.
+- **Sources** — native Jackett indexer catalogue, per-tracker search for configured indexers, direct RSS/Torznab connectors, rich release cards and in-app `.torrent` queue actions. Unsupported video services are shown as not connected until a verified adapter exists.
 - **Downloads** — magnet and `.torrent` tasks, file list, selected-file priorities, pause/resume, speed and progress.
 - **Player** — Media3 / ExoPlayer, seek controls, audio/subtitle track selection, downloaded sidecar subtitles, external-player handoff, progressive video, HLS and DASH playback.
 - **Settings** — LAMPA-inspired control center for Filmix device-code pairing, HDRezka account/session, built-in tracker shortcuts, torrent indexers, catalog metadata and network limits.
 
+## Video source catalogue
+
+The built-in source registry preserves the requested priority order for HDRezka, Filmix, ColdFilm, Baskino, Kinogo, VideoCDN, Collaps, Kinobase, CDNMovies and Lordfilm. At this stage, only the HDRezka login/session flow and Filmix device-code flow have app-side connectors. The remaining entries are explicitly marked as not connected; no undocumented scraping endpoints or pretend integrations are added.
+
 ## Filmix and HDRezka accounts
 
-- **Filmix** uses a device-code flow: Jacket requests a short-lived code, the user confirms it on the Filmix device page, and the app polls for activation. The permanent device token is encrypted using Android Keystore. No Filmix password is requested.
-- **HDRezka** has HTTPS mirror, email/login, password and manual Cookie-session fields. The app attempts the normal site sign-in and saves returned cookies encrypted using Android Keystore. If a mirror presents CAPTCHA, Cloudflare or an interactive browser challenge, Jacket stops and does not attempt to bypass it; a session cookie can be entered manually after signing in through the user's regular browser.
+- **Filmix** uses a device-code flow against the documented HTTPS API host: Jacket requests a short-lived code, the user confirms it on the Filmix device page, and the app polls for activation. The permanent device token is encrypted using Android Keystore. No Filmix password is requested. Undocumented hosts and cleartext HTTP fallback are not used.
+- **HDRezka** has an explicit HTTPS source field, email/login, password and manual Cookie-session fields. Login responses are inspected through a bounded preview so large HTML pages do not cause a false oversized-response error. The app does not choose or rotate mirrors automatically, and it stops on CAPTCHA, Cloudflare or interactive challenges.
 - Credentials and cookies stay on the device and are not included in diagnostics or tracker exports.
 
 These account screens manage authentication state. They do not claim universal playback support for arbitrary protected HTML player pages; direct media playback continues to require a source-published direct URL or a supported feed.
