@@ -94,6 +94,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
@@ -145,7 +146,7 @@ fun JacketApp(viewModel: MainViewModel) {
     val context = LocalContext.current
     val torrentPlayback by TorrentPlaybackBus.active.collectAsState()
     val details by viewModel.selectedDetails.collectAsState()
-    val isTv = (context.resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_TYPE_MASK) == android.content.res.Configuration.UI_MODE_TYPE_TELEVISION
+    val isTv = (LocalConfiguration.current.uiMode and android.content.res.Configuration.UI_MODE_TYPE_MASK) == android.content.res.Configuration.UI_MODE_TYPE_TELEVISION
     val loading by viewModel.isLoading.collectAsState()
 
     LaunchedEffect(torrentPlayback) {
@@ -473,7 +474,7 @@ private fun HomeScreen(
     val context = LocalContext.current
     val playbackStore = remember(context) { PlaybackSessionStore(context) }
     val playbackSessions by playbackStore.sessions.collectAsState()
-    val isTv = (context.resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_TYPE_MASK) ==
+    val isTv = (LocalConfiguration.current.uiMode and android.content.res.Configuration.UI_MODE_TYPE_MASK) ==
         android.content.res.Configuration.UI_MODE_TYPE_TELEVISION
 
     LazyColumn(
@@ -543,7 +544,7 @@ private fun HomeScreen(
 @Composable
 private fun HeroCard(item: CatalogItem, onClick: () -> Unit) {
     val context = LocalContext.current
-    val isTv = (context.resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_TYPE_MASK) ==
+    val isTv = (LocalConfiguration.current.uiMode and android.content.res.Configuration.UI_MODE_TYPE_MASK) ==
         android.content.res.Configuration.UI_MODE_TYPE_TELEVISION
     var focused by remember { mutableStateOf(false) }
     val scale by animateFloatAsState(if (isTv && focused) 1.018f else 1f, label = "hero-focus")
@@ -692,7 +693,7 @@ private fun MediaShelf(
 @Composable
 private fun MediaCard(item: CatalogItem, onClick: () -> Unit, modifier: Modifier = Modifier) {
     val context = LocalContext.current
-    val isTv = (context.resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_TYPE_MASK) ==
+    val isTv = (LocalConfiguration.current.uiMode and android.content.res.Configuration.UI_MODE_TYPE_MASK) ==
         android.content.res.Configuration.UI_MODE_TYPE_TELEVISION
     var focused by remember { mutableStateOf(false) }
     val scale by animateFloatAsState(if (isTv && focused) 1.045f else 1f, label = "poster-focus")
@@ -734,7 +735,7 @@ private fun CatalogGridScreen(
     modifier: Modifier,
     onOpen: (CatalogItem) -> Unit
 ) {
-    val isTv = (LocalContext.current.resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_TYPE_MASK) == android.content.res.Configuration.UI_MODE_TYPE_TELEVISION
+    val isTv = (LocalConfiguration.current.uiMode and android.content.res.Configuration.UI_MODE_TYPE_MASK) == android.content.res.Configuration.UI_MODE_TYPE_TELEVISION
     Column(modifier.fillMaxSize()) {
         Text(
             title,
@@ -769,7 +770,7 @@ private fun SearchScreen(
     onOpen: (CatalogItem) -> Unit
 ) {
     val context = LocalContext.current
-    val isTv = (context.resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_TYPE_MASK) == android.content.res.Configuration.UI_MODE_TYPE_TELEVISION
+    val isTv = (LocalConfiguration.current.uiMode and android.content.res.Configuration.UI_MODE_TYPE_MASK) == android.content.res.Configuration.UI_MODE_TYPE_TELEVISION
     var query by rememberSaveable { mutableStateOf("") }
     val webProviders by viewModel.webSearchProviders.collectAsState()
     val items by viewModel.items.collectAsState()
@@ -922,7 +923,7 @@ private fun LibraryScreen(
     val context = LocalContext.current
     val playbackStore = remember(context) { PlaybackSessionStore(context) }
     val playbackSessions by playbackStore.sessions.collectAsState()
-    val isTv = (context.resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_TYPE_MASK) ==
+    val isTv = (LocalConfiguration.current.uiMode and android.content.res.Configuration.UI_MODE_TYPE_MASK) ==
         android.content.res.Configuration.UI_MODE_TYPE_TELEVISION
 
     LazyColumn(
@@ -1014,7 +1015,7 @@ private fun DetailScreen(
             (!magnetOnly || source.magnetUri != null) &&
             (!torrentOnly || source.downloadUrl != null)
     }
-    val isTv = (context.resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_TYPE_MASK) == android.content.res.Configuration.UI_MODE_TYPE_TELEVISION
+    val isTv = (LocalConfiguration.current.uiMode and android.content.res.Configuration.UI_MODE_TYPE_MASK) == android.content.res.Configuration.UI_MODE_TYPE_TELEVISION
 
     Scaffold(
         topBar = {
@@ -2909,7 +2910,7 @@ private fun SettingsMenuRow(
     icon: @Composable () -> Unit
 ) {
     val context = LocalContext.current
-    val isTv = (context.resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_TYPE_MASK) ==
+    val isTv = (LocalConfiguration.current.uiMode and android.content.res.Configuration.UI_MODE_TYPE_MASK) ==
         android.content.res.Configuration.UI_MODE_TYPE_TELEVISION
     var focused by remember { mutableStateOf(false) }
     val scale by animateFloatAsState(
