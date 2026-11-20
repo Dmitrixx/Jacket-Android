@@ -861,18 +861,20 @@ private fun SearchScreen(
         if (message != null) {
             MessageCard(message.orEmpty(), isError, Modifier.padding(horizontal = 16.dp, vertical = 8.dp))
         }
-        when {
-            searchingTrackers -> {
-                Row(
-                    Modifier.fillMaxWidth().padding(16.dp),
-                    horizontalArrangement = Arrangement.Center,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
-                    Spacer(Modifier.width(10.dp))
-                    Text("Загружаем и разбираем раздачи…")
-                }
+        if (searchingTrackers) {
+            Row(
+                Modifier.fillMaxWidth().padding(16.dp),
+                horizontalArrangement = Arrangement.Center,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+                Spacer(Modifier.width(10.dp))
+                Text(
+                    if (trackerResults.isEmpty()) "Ищем на трекерах…" else "Результаты уже поступают…"
+                )
             }
+        }
+        when {
             trackerResults.isNotEmpty() -> LazyColumn(
                 modifier = Modifier.weight(1f),
                 contentPadding = PaddingValues(16.dp),
@@ -901,6 +903,7 @@ private fun SearchScreen(
                     )
                 }
             }
+            searchingTrackers -> Unit
             loading && items.isEmpty() -> LoadingState()
             items.isNotEmpty() -> LazyVerticalGrid(
                 columns = if (isTv) GridCells.Adaptive(minSize = 190.dp) else GridCells.Fixed(2),
