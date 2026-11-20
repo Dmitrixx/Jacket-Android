@@ -33,10 +33,9 @@ object FilmixDeviceAuth {
     private const val API_DEVICE_OS = "11"
     private const val API_DEVICE_APK = "2.0.9"
 
-    private val API_BASE_CANDIDATES = listOf(
-        DEFAULT_API_BASE,
-        "https://api.filmix.tv/api/v2"
-    )
+    // Keep only the HTTPS API host documented by the reference client.
+    // Do not add undocumented mirrors or downgrade to cleartext HTTP.
+    private val API_BASE_CANDIDATES = listOf(DEFAULT_API_BASE)
     private const val CHECK_UPDATE_DEVICE_ID = "abcdef0123456789"
     private const val MAX_RESPONSE_BYTES = 256 * 1024
     private const val MAX_PROBE_BYTES = 16 * 1024
