@@ -2479,7 +2479,7 @@ private fun SettingsScreen(
                                 }
                             }
                             Text(
-                                "Токен устройства хранится в зашифрованном виде через Android Keystore. Пароль Filmix приложению не нужен. Сейчас реализована привязка устройства; каталог и воспроизведение Filmix ещё не подключены.",
+                                "Токен устройства хранится в зашифрованном виде через Android Keystore. Пароль Filmix приложению не нужен. Поиск Filmix, выбор озвучки и доступного качества подключены к общей карточке источников. Фактическое воспроизведение зависит от доступности CDN и формата ссылки.",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -2509,7 +2509,7 @@ private fun SettingsScreen(
                             Text("HDRezka", style = MaterialTheme.typography.headlineSmall,
                                 fontWeight = FontWeight.Bold)
                             Text(
-                                "Доступность HDRezka зависит от страны и сети. Приложение не подбирает обходные зеркала и не отключает проверку HTTPS. После обычного входа на доступном источнике Jacket может сохранить Cookie-сессию локально в зашифрованном виде. Поиск каталога и воспроизведение HDRezka пока не подключены.",
+                                "HDRezka ищется по указанному HTTPS-зеркалу; результаты, озвучки, доступные качества и поддерживаемые ссылки воспроизведения появляются в общей карточке источников. Cookie хранится зашифрованно и отправляется только на выбранный домен. CAPTCHA/Anubis, зашифрованные #2-манифесты и ограничения региона не обходятся.",
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -3351,7 +3351,7 @@ private fun SettingsScreen(
                             Text("JACKET 2.6", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Black)
                             Text("Единое приложение для Android, планшетов и Android TV.",
                                 color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            Text("Есть Filmix-привязка по коду и настройки HDRezka. RSS / Atom и Torznab обрабатываются внутри приложения; трекер-пресеты открываются в браузере.")
+                            Text("Встроены поиск и поддерживаемое воспроизведение Filmix/HDRezka, а также RSS / Atom и Torznab. Результаты всех подключённых источников объединяются в карточке фильма; трекер-пресеты открываются в браузере.")
                             Text("Jacket не извлекает медиапотоки с произвольных страниц и не обходит ограничения сайта.",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant)
