@@ -1,7 +1,7 @@
 package app.jacket.mobile.data
 
-import org.xmlpull.v1.XmlPullParser
-import org.xmlpull.v1.XmlPullParserFactory
+import org.json.JSONArray
+import org.json.JSONObject
 import java.io.ByteArrayOutputStream
 import java.io.IOException
 import java.net.HttpURLConnection
@@ -9,95 +9,120 @@ import java.net.URL
 import java.net.URLEncoder
 import java.util.Locale
 
-/** A single tracker entry returned by Jackett's Torznab t=indexers endpoint. */
+/** A single indexer entry returned by Jackett's native REST catalogue. */
 data class JackettIndexerEntry(
     val id: String,
     val name: String,
     val description: String = "",
     val siteLink: String? = null,
+    val alternateSiteLinks: List<String> = emptyList(),
     val language: String? = null,
     val type: String? = null,
     val configured: Boolean = false,
     val categoryIds: List<String> = emptyList(),
-    val categoryNames: List<String> = emptyList()
+    val categoryNames: List<String> = emptyList(),
+    val lastError: String? = null
 ) {
     val isPrivate: Boolean
         get() = type.equals("private", ignoreCase = true)
 }
 
 /**
- * Reads the indexer catalogue from the user's own Jackett instance.
+ * One dynamic setup field from Jackett's authenticated indexer configuration endpoint.
+ * Password replacement markers are preserved if the user does not enter a new value.
+ */
+data class JackettConfigField(
+    val id: String,
+    val type: String,
+    val name: String,
+    val value: String = "",
+    val values: List<String> = emptyList(),
+    val options: Map<String, String> = emptyMap(),
+    val separator: String? = null,
+    val delimiters: String? = null,
+    val pattern: String? = null,
+    val whitelist: List<String> = emptyList(),
+    val blacklist: List<String> = emptyList()
+) {
+    val isPreviousPassword: Boolean
+        get() = value == PASSWORD_REPLACEMENT
+
+    companion object {
+        const val PASSWORD_REPLACEMENT = "|||%%PREVJACKPASSWD%%|||"
+    }
+}
+
+/**
+ * Jackett's native REST administration API.
  *
- * This client intentionally uses only the documented Torznab API-key endpoint:
- * it never attempts to log into an arbitrary dashboard, bypass authentication,
- * solve challenges, or configure remote accounts without an explicit session.
+ * The public catalogue and per-indexer setup endpoints are different from Torznab search:
+ * - GET /api/v2.0/indexers returns the public/private/configured/capabilities catalogue.
+ * - GET /api/v2.0/indexers/{id}/config returns dynamic setup controls.
+ * - POST /api/v2.0/indexers/{id}/config saves those controls.
+ *
+ * Management endpoints use the user's authenticated Jackett dashboard session cookie,
+ * stored in IndexerConfig.cookie (encrypted locally). The API key remains for Torznab search.
  */
 object JackettIndexerClient {
     private const val MAX_RESPONSE_BYTES = 2 * 1024 * 1024
+    private const val MAX_CONFIG_FIELDS = 120
+    private const val MAX_CONFIG_BODY_BYTES = 128 * 1024
     private const val CONNECT_TIMEOUT_MS = 8_000
     private const val READ_TIMEOUT_MS = 12_000
-    private const val USER_AGENT = "JacketAndroid/2.6 (Jackett indexer catalogue)"
+    private const val USER_AGENT = "JacketAndroid/2.6 (Jackett native indexer manager)"
+    private val INDEXER_ID_PATTERN = Regex("[a-zA-Z0-9._:-]{1,100}")
 
     fun fetch(config: IndexerConfig): List<JackettIndexerEntry> {
-        require(config.protocol == IndexerProtocol.JACKETT) {
-            "Для каталога индексаторов нужен подключённый Jackett"
-        }
-        require(config.apiKey.isNotBlank()) { "Укажите API-ключ Jackett" }
-        val parsed = JackettUrl.parseTemplate(config.searchUrlTemplate)
-            ?: throw IOException("Не удалось определить адрес сервера Jackett")
-        val requestUrl = buildCatalogUrl(parsed.baseUrl, config.apiKey)
-        if (!LocalNetwork.isAllowedUrl(requestUrl)) {
-            throw IOException("Jackett должен быть доступен по HTTPS или по локальному HTTP")
-        }
-
-        val connection = (URL(requestUrl).openConnection() as HttpURLConnection).apply {
-            requestMethod = "GET"
-            connectTimeout = CONNECT_TIMEOUT_MS
-            readTimeout = READ_TIMEOUT_MS
-            instanceFollowRedirects = false
-            setRequestProperty("Accept", "application/xml, text/xml")
-            setRequestProperty("User-Agent", USER_AGENT)
-            if (config.username.isNotBlank() || config.password.isNotBlank()) {
-                val credentials = "${config.username}:${config.password}"
-                val encoded = java.util.Base64.getEncoder()
-                    .encodeToString(credentials.toByteArray(Charsets.UTF_8))
-                setRequestProperty("Authorization", "Basic $encoded")
-            }
-            if (config.cookie.isNotBlank()) setRequestProperty("Cookie", config.cookie.take(4096))
-        }
-        try {
-            val status = connection.responseCode
-            if (status !in 200..299) {
-                val label = when (status) {
-                    401, 403 -> "Jackett отклонил API-ключ или доступ к серверу"
-                    404 -> "Сервер Jackett не поддерживает каталог t=indexers по этому адресу"
-                    429 -> "Jackett временно ограничил количество запросов"
-                    else -> "Jackett вернул HTTP $status"
-                }
-                throw IOException(label)
-            }
-            val xml = connection.inputStream.use { readLimited(it, MAX_RESPONSE_BYTES) }
-                .toString(Charsets.UTF_8)
-            val entries = parseIndexers(xml)
-            if (entries.isEmpty()) throw IOException("Jackett вернул пустой каталог индексаторов")
-            return entries
-        } finally {
-            connection.disconnect()
-        }
+        validateJackettConfig(config)
+        val url = buildIndexersUrl(baseUrl(config))
+        val body = execute(config, url, "GET").toString(Charsets.UTF_8)
+        val entries = parseIndexersJson(body)
+        if (entries.isEmpty()) throw IOException("Jackett вернул пустой каталог индексаторов")
+        return entries
     }
 
-    /** Creates the standard aggregate endpoint for Jackett's native indexer catalogue. */
-    internal fun buildCatalogUrl(baseUrl: String, apiKey: String): String {
-        require(apiKey.isNotBlank()) { "API-ключ Jackett не указан" }
+    /** Reads the editable controls for one indexer; dashboard Cookie is required when auth is enabled. */
+    fun fetchIndexerConfig(config: IndexerConfig, indexerId: String): List<JackettConfigField> {
+        validateJackettConfig(config)
+        val url = buildIndexerConfigUrl(baseUrl(config), indexerId)
+        val body = execute(config, url, "GET").toString(Charsets.UTF_8)
+        return parseIndexerConfig(body)
+    }
+
+    /** Saves the dynamic controls and lets Jackett test the indexer when its config requires it. */
+    fun updateIndexerConfig(
+        config: IndexerConfig,
+        indexerId: String,
+        fields: List<JackettConfigField>
+    ) {
+        validateJackettConfig(config)
+        require(fields.size <= MAX_CONFIG_FIELDS) { "Слишком много настроек индексатора" }
+        val url = buildIndexerConfigUrl(baseUrl(config), indexerId)
+        val body = buildConfigPayload(fields).toString()
+        require(body.toByteArray(Charsets.UTF_8).size <= MAX_CONFIG_BODY_BYTES) {
+            "Данные настройки индексатора слишком большие"
+        }
+        execute(config, url, "POST", body.toByteArray(Charsets.UTF_8))
+    }
+
+    /** Creates the REST catalogue endpoint used by Jackett's own dashboard. */
+    internal fun buildIndexersUrl(baseUrl: String): String {
         val base = JackettUrl.normalizeBase(baseUrl)
             ?: throw IllegalArgumentException("Некорректный адрес сервера Jackett")
-        val encodedKey = URLEncoder.encode(apiKey.trim(), Charsets.UTF_8.name())
-        return "$base/api/v2.0/indexers/all/results/torznab/api?apikey=$encodedKey&t=indexers"
+        return "$base/api/v2.0/indexers"
     }
 
-    /** Converts one catalogue row into an existing in-app Torznab search configuration. */
+    internal fun buildIndexerConfigUrl(baseUrl: String, indexerId: String): String {
+        require(INDEXER_ID_PATTERN.matches(indexerId)) {
+            "Jackett вернул некорректный идентификатор индексатора"
+        }
+        return buildIndexersUrl(baseUrl) + "/" +
+            URLEncoder.encode(indexerId, Charsets.UTF_8.name()) + "/config"
+    }
+
+    /** Converts one catalogue row into the existing in-app Torznab search configuration. */
     fun searchConfig(base: IndexerConfig, indexerId: String): IndexerConfig {
-        require(indexerId.matches(Regex("[a-zA-Z0-9._:-]{1,100}"))) {
+        require(INDEXER_ID_PATTERN.matches(indexerId)) {
             "Jackett вернул некорректный идентификатор индексатора"
         }
         val parsed = JackettUrl.parseTemplate(base.searchUrlTemplate)
@@ -111,87 +136,44 @@ object JackettIndexerClient {
         )
     }
 
-    internal fun parseIndexers(xml: String): List<JackettIndexerEntry> =
-        parseIndexers(xml, XmlPullParserFactory.newInstance().newPullParser())
-
-    /** Parser injection keeps the catalogue parser deterministic in JVM tests. */
-    internal fun parseIndexers(xml: String, parser: XmlPullParser): List<JackettIndexerEntry> {
-        require(xml.length <= MAX_RESPONSE_BYTES) { "Ответ каталога Jackett слишком большой" }
-        parser.setFeature(XmlPullParser.FEATURE_PROCESS_NAMESPACES, false)
-        runCatching { parser.setFeature(XmlPullParser.FEATURE_PROCESS_DOCDECL, false) }
-        parser.setInput(xml.reader())
-
-        data class MutableEntry(
-            val id: String,
-            val configured: Boolean,
-            var name: String = "",
-            var description: String = "",
-            var link: String? = null,
-            var language: String? = null,
-            var type: String? = null,
-            val categoryIds: MutableList<String> = mutableListOf(),
-            val categoryNames: MutableList<String> = mutableListOf()
-        )
-
+    internal fun parseIndexersJson(json: String): List<JackettIndexerEntry> {
+        require(json.length <= MAX_RESPONSE_BYTES) { "Ответ каталога Jackett слишком большой" }
+        val array = runCatching { JSONArray(json) }
+            .getOrElse { throw IOException("Jackett вернул некорректный JSON каталога", it) }
         val entries = LinkedHashMap<String, JackettIndexerEntry>()
-        var current: MutableEntry? = null
-        var event = parser.eventType
-        while (event != XmlPullParser.END_DOCUMENT) {
-            when (event) {
-                XmlPullParser.START_TAG -> {
-                    val name = parser.name.substringAfter(':').lowercase(Locale.ROOT)
-                    if (name == "indexer") {
-                        val id = parser.getAttributeValue(null, "id").orEmpty().trim()
-                        if (id.matches(Regex("[a-zA-Z0-9._:-]{1,100}"))) {
-                            current = MutableEntry(
-                                id = id,
-                                configured = parser.getAttributeValue(null, "configured")
-                                    ?.equals("true", ignoreCase = true) == true
-                            )
-                        }
-                    } else {
-                        val entry = current
-                        if (entry != null) {
-                            when (name) {
-                                "title" -> entry.name = parser.nextText().trim()
-                                "description" -> entry.description = parser.nextText().trim().take(1200)
-                                "link" -> {
-                                    val value = parser.nextText().trim()
-                                    entry.link = value.takeIf(LocalNetwork::isAllowedUrl)
-                                }
-                                "language" -> entry.language = parser.nextText().trim().takeIf(String::isNotBlank)
-                                "type" -> entry.type = parser.nextText().trim().takeIf(String::isNotBlank)
-                                "category" -> {
-                                    val id = parser.getAttributeValue(null, "id")?.trim().orEmpty()
-                                    val label = parser.getAttributeValue(null, "name")?.trim().orEmpty()
-                                    if (id.isNotBlank()) entry.categoryIds += id
-                                    if (label.isNotBlank()) entry.categoryNames += label
-                                }
-                            }
-                        }
-                    }
+        for (index in 0 until minOf(array.length(), 1_000)) {
+            val item = array.optJSONObject(index) ?: continue
+            val id = item.optString("id").trim()
+            if (!INDEXER_ID_PATTERN.matches(id)) continue
+            val capabilities = item.optJSONArray("caps")
+            val categoryIds = ArrayList<String>()
+            val categoryNames = ArrayList<String>()
+            if (capabilities != null) {
+                for (capIndex in 0 until minOf(capabilities.length(), 500)) {
+                    val capability = capabilities.optJSONObject(capIndex) ?: continue
+                    val categoryId = capability.optString("ID").takeIf(String::isNotBlank)
+                    val categoryName = capability.optString("Name").trim().takeIf(String::isNotBlank)
+                    if (categoryId != null) categoryIds += categoryId
+                    if (categoryName != null) categoryNames += categoryName
                 }
-                XmlPullParser.END_TAG -> if (parser.name.substringAfter(':').equals("indexer", true)) {
-                    val entry = current
-                    if (entry != null) {
-                        val name = entry.name.ifBlank { entry.id }
-                        entries[entry.id] = JackettIndexerEntry(
-                            id = entry.id,
-                            name = name,
-                            description = entry.description,
-                            siteLink = entry.link,
-                            language = entry.language,
-                            type = entry.type,
-                            configured = entry.configured,
-                            categoryIds = entry.categoryIds.distinct().take(100),
-                            categoryNames = entry.categoryNames.distinct().take(100)
-                        )
-                    }
-                    current = null
-                }
-                XmlPullParser.DOCDECL -> throw IOException("XML document type declarations are not supported")
             }
-            event = parser.next()
+            val alternateLinks = item.optJSONArray("alternativesitelinks")?.toStringList().orEmpty()
+                .filter(LocalNetwork::isAllowedUrl).take(20)
+            val siteLink = item.optString("site_link").takeIf(String::isNotBlank)
+                ?.takeIf(LocalNetwork::isAllowedUrl)
+            entries[id] = JackettIndexerEntry(
+                id = id,
+                name = item.optString("name").ifBlank { id }.take(160),
+                description = item.optString("description").take(1200),
+                siteLink = siteLink,
+                alternateSiteLinks = alternateLinks,
+                language = item.optString("language").takeIf(String::isNotBlank),
+                type = item.optString("type").takeIf(String::isNotBlank),
+                configured = item.optBoolean("configured", false),
+                categoryIds = categoryIds.distinct().take(100),
+                categoryNames = categoryNames.distinct().take(100),
+                lastError = item.optString("last_error").takeIf(String::isNotBlank)?.take(240)
+            )
         }
         return entries.values.sortedWith(
             compareBy<JackettIndexerEntry> { !it.configured }
@@ -199,15 +181,149 @@ object JackettIndexerClient {
         )
     }
 
+    internal fun parseIndexerConfig(json: String): List<JackettConfigField> {
+        require(json.length <= MAX_RESPONSE_BYTES) { "Ответ настроек Jackett слишком большой" }
+        val array = runCatching { JSONArray(json) }
+            .getOrElse { throw IOException("Jackett вернул некорректные настройки индексатора", it) }
+        return buildList {
+            for (index in 0 until minOf(array.length(), MAX_CONFIG_FIELDS)) {
+                val item = array.optJSONObject(index) ?: continue
+                val id = item.optString("id").trim()
+                val type = item.optString("type").lowercase(Locale.ROOT)
+                if (id.isBlank() || id.length > 120 || type.isBlank()) continue
+                val values = item.optJSONArray("values")?.toStringList().orEmpty()
+                val optionsObject = item.optJSONObject("options")
+                val options = LinkedHashMap<String, String>()
+                if (optionsObject != null) {
+                    val keys = optionsObject.keys()
+                    while (keys.hasNext() && options.size < 300) {
+                        val key = keys.next()
+                        options[key] = optionsObject.optString(key).take(300)
+                    }
+                }
+                add(
+                    JackettConfigField(
+                        id = id,
+                        type = type,
+                        name = item.optString("name").ifBlank { id }.take(160),
+                        value = item.opt("value")?.let { value ->
+                            if (value == JSONObject.NULL) "" else value.toString()
+                        }.orEmpty().take(8_192),
+                        values = values.take(300),
+                        options = options,
+                        separator = item.optString("separator").takeIf(String::isNotBlank)?.take(4),
+                        delimiters = item.optString("delimiters").takeIf(String::isNotBlank)?.take(200),
+                        pattern = item.optString("pattern").takeIf(String::isNotBlank)?.take(300),
+                        whitelist = item.optString("whitelist").split(',').map(String::trim)
+                            .filter(String::isNotBlank).take(200),
+                        blacklist = item.optString("blacklist").split(',').map(String::trim)
+                            .filter(String::isNotBlank).take(200)
+                    )
+                )
+            }
+        }
+    }
+
+    /** Builds the exact id/value(s) array consumed by Jackett's UpdateConfig controller. */
+    internal fun buildConfigPayload(fields: List<JackettConfigField>): JSONArray {
+        val payload = JSONArray()
+        fields.forEach { field ->
+            require(field.id.isNotBlank() && field.id.length <= 120) { "Некорректное поле настройки" }
+            val item = JSONObject().put("id", field.id)
+            when (field.type) {
+                "inputcheckbox" -> {
+                    val allowed = field.options.keys
+                    val safeValues = field.values.distinct().filter { it in allowed }.take(300)
+                    item.put("values", JSONArray(safeValues))
+                }
+                "inputbool" -> item.put("value", field.value.equals("true", ignoreCase = true))
+                "inputstring", "password", "inputselect", "inputtags", "hiddendata" ->
+                    item.put("value", field.value.take(8_192))
+                // Jackett's own dashboard includes an id-only entry for display-only controls.
+                "displayinfo", "displayimage" -> Unit
+                else -> Unit
+            }
+            payload.put(item)
+        }
+        return payload
+    }
+
+    private fun execute(
+        config: IndexerConfig,
+        url: String,
+        method: String,
+        body: ByteArray? = null
+    ): ByteArray {
+        if (!LocalNetwork.isAllowedUrl(url)) {
+            throw IOException("Jackett должен быть доступен по HTTPS или по локальному HTTP")
+        }
+        val connection = (URL(url).openConnection() as HttpURLConnection).apply {
+            requestMethod = method
+            connectTimeout = CONNECT_TIMEOUT_MS
+            readTimeout = READ_TIMEOUT_MS
+            instanceFollowRedirects = false
+            setRequestProperty("Accept", "application/json")
+            setRequestProperty("User-Agent", USER_AGENT)
+            if (config.cookie.isNotBlank()) setRequestProperty("Cookie", config.cookie.take(8_192))
+            if (config.username.isNotBlank() || config.password.isNotBlank()) {
+                val credentials = "${config.username}:${config.password}"
+                val encoded = java.util.Base64.getEncoder()
+                    .encodeToString(credentials.toByteArray(Charsets.UTF_8))
+                setRequestProperty("Authorization", "Basic $encoded")
+            }
+            if (body != null) {
+                doOutput = true
+                setRequestProperty("Content-Type", "application/json; charset=utf-8")
+                setFixedLengthStreamingMode(body.size)
+            }
+        }
+        try {
+            if (body != null) connection.outputStream.use { it.write(body) }
+            val status = connection.responseCode
+            if (status !in 200..299) {
+                val message = when (status) {
+                    401, 403 -> "Jackett отклонил доступ. Проверьте Cookie авторизованной панели в настройках."
+                    404 -> "Jackett не нашёл REST endpoint /api/v2.0/indexers."
+                    429 -> "Jackett временно ограничил количество запросов."
+                    else -> "Jackett вернул HTTP $status."
+                }
+                throw IOException(message)
+            }
+            if (status == HttpURLConnection.HTTP_NO_CONTENT) return ByteArray(0)
+            val stream = connection.inputStream
+            return stream.use { readLimited(it, MAX_RESPONSE_BYTES) }
+        } finally {
+            connection.disconnect()
+        }
+    }
+
+    private fun validateJackettConfig(config: IndexerConfig) {
+        require(config.protocol == IndexerProtocol.JACKETT) {
+            "Для каталога индексаторов нужен подключённый Jackett"
+        }
+        require(config.apiKey.isNotBlank()) { "Укажите API-ключ Jackett для поиска Torznab" }
+    }
+
+    private fun baseUrl(config: IndexerConfig): String =
+        JackettUrl.parseTemplate(config.searchUrlTemplate)?.baseUrl
+            ?: throw IOException("Не удалось определить адрес сервера Jackett")
+
+    private fun JSONArray.toStringList(): List<String> = buildList {
+        for (i in 0 until minOf(length(), 500)) {
+            val value = optString(i).takeIf(String::isNotBlank) ?: continue
+            add(value.take(300))
+        }
+    }
+
     private fun readLimited(input: java.io.InputStream, maxBytes: Int): ByteArray {
         val output = ByteArrayOutputStream()
-        val buffer = ByteArray(8192)
+        val buffer = ByteArray(8_192)
         var total = 0
         while (true) {
             val count = input.read(buffer)
             if (count < 0) break
             total += count
-            if (total > maxBytes) throw IOException("Ответ каталога Jackett слишком большой")
+            if (total > maxBytes) throw IOException("Ответ Jackett слишком большой")
             output.write(buffer, 0, count)
         }
         return output.toByteArray()
