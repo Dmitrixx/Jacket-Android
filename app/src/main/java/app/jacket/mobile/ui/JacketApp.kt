@@ -2684,9 +2684,9 @@ private fun SettingsScreen(
                                         color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 }
                                 MetadataPill(
-                                    if (source.integration == MediaSourceIntegration.IN_APP_CONNECTOR) "В ПРИЛОЖЕНИИ"
-                                    else "НЕ ПОДКЛЮЧЁН",
-                                    accent = source.integration == MediaSourceIntegration.IN_APP_CONNECTOR
+                                    if (source.integration == MediaSourceIntegration.AUTH_SETTINGS_ONLY) "АВТОРИЗАЦИЯ ЕСТЬ"
+                                    else "АДАПТЕР НЕ ПОДКЛЮЧЁН",
+                                    accent = source.integration == MediaSourceIntegration.AUTH_SETTINGS_ONLY
                                 )
                             }
                             LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -2696,7 +2696,7 @@ private fun SettingsScreen(
                             }
                             Text(source.notes, style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            if (source.integration == MediaSourceIntegration.IN_APP_CONNECTOR) {
+                            if (source.integration == MediaSourceIntegration.AUTH_SETTINGS_ONLY) {
                                 OutlinedButton(
                                     onClick = { selectedSettingsSection = source.id },
                                     modifier = Modifier.fillMaxWidth()
