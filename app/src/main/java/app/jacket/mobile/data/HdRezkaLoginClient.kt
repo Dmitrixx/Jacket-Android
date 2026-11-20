@@ -124,7 +124,7 @@ object HdRezkaLoginClient {
         val chain = generateSequence(error) { it.cause }.take(8).toList()
         return when {
             chain.any { it is javax.net.ssl.SSLException } ->
-                "Ошибка HTTPS-сертификата HDRezka. Попробуйте другое актуальное зеркало."
+                "Ошибка HTTPS-сертификата HDRezka. Сертификаты не обходятся; проверьте доступность разрешённого источника и правильность домена."
             chain.any { it is java.net.UnknownHostException } ->
                 "Не удалось найти домен HDRezka. Проверьте зеркало и DNS/доступ к сайту."
             chain.any { it is java.net.SocketTimeoutException } ->
@@ -160,7 +160,17 @@ object HdRezkaLoginClient {
         var currentBody: String? = body
         var currentReferer = referer
         repeat(MAX_REDIRECTS + 1) {
-            val response = request(currentUrl, method, currentBody, cookies, currentReferer)
+            // The response body is inspected only for anti-bot markers. Do not
+            // download hundreds of kilobytes of a login page just to classify it.
+            val response = request(
+                currentUrl,
+                method,
+                currentBody,
+                cookies,
+                currentReferer,
+                captureBody = true,
+                previewOnly = true
+            )
             if (response.status !in REDIRECT_CODES) return response
 
             val location = response.location
