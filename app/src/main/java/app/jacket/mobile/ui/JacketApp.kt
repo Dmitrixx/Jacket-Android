@@ -3269,6 +3269,10 @@ private fun JackettConfigFieldEditor(
     onValueChange: (String) -> Unit,
     onValuesChange: (List<String>) -> Unit
 ) {
+    // Hidden data fields carry server-side defaults/session state and must be
+    // submitted unchanged, but should never appear as editable controls.
+    if (field.type == "hiddendata") return
+
     val secret = field.type == "password" || field.name.contains("password", ignoreCase = true)
     val shownValue = if (field.isPreviousPassword) "" else field.value
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
