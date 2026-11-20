@@ -79,6 +79,28 @@ class JackettIndexerClientTest {
     }
 
     @Test
+    fun redactsApiKeysAndConfiguredSecretsFromJackettLastError() {
+        val json = """
+            [{
+              "id":"rutracker",
+              "name":"RuTracker",
+              "type":"private",
+              "configured":true,
+              "last_error":"Request failed at https://tracker.example/api?apikey=api-secret&token=session-token"
+            }]
+        """.trimIndent()
+
+        val entry = JackettIndexerClient.parseIndexersJson(
+            json,
+            listOf("api-secret", "session-token")
+        ).single()
+
+        assertFalse(entry.lastError.orEmpty().contains("api-secret"))
+        assertFalse(entry.lastError.orEmpty().contains("session-token"))
+        assertFalse(entry.lastError.orEmpty().contains("tracker.example/api"))
+    }
+
+    @Test
     fun rejectsUnsafeIndexerSiteLinksAndMalformedIdentifiers() {
         val json = """
             [
