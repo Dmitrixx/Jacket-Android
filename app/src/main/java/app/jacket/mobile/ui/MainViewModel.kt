@@ -340,13 +340,28 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             clearMessage()
             try {
                 val outcome = withContext(Dispatchers.IO) {
-                    TrackerSearchClient.searchAll(providers, query.trim())
+                    TrackerSearchClient.searchAll(providers, query.trim()) { partial ->
+                        _sourceResults.value = partial.results
+                        _message.value = buildString {
+                            append("Получено раздач: ${partial.results.size}")
+                            append(" • трекеров ответило: ${partial.completedProviders}/${partial.totalProviders}")
+                            if (partial.failures.isNotEmpty()) append(" • ошибок: ${partial.failures.size}")
+                            if (partial.timedOut) append(" • поиск остановлен по тайм-ауту")
+                            else if (partial.completedProviders < partial.totalProviders) append(" • ищем дальше…")
+                        }
+                        _isError.value = false
+                    }
                 }
                 _sourceResults.value = outcome.results
-                val summary = if (outcome.results.isEmpty()) {
-                    "На включённых трекерах не найдено раздач с прямыми magnet или .torrent ссылками."
-                } else {
-                    "Найдено раздач: ${outcome.results.size} • трекеров ответило: ${providers.size - outcome.failures.size}/${providers.size}."
+                val summary = when {
+                    outcome.results.isEmpty() && outcome.timedOut ->
+                        "Поиск остановлен по тайм-ауту. Попробуйте повторить запрос позже."
+                    outcome.results.isEmpty() ->
+                        "На включённых трекерах не найдено раздач с прямыми magnet или .torrent ссылками."
+                    outcome.timedOut ->
+                        "Найдено раздач: ${outcome.results.size} • часть трекеров не успела ответить за 25 секунд."
+                    else ->
+                        "Найдено раздач: ${outcome.results.size} • трекеров ответило: ${providers.size - outcome.failures.size}/${providers.size}."
                 }
                 _message.value = if (outcome.failures.isEmpty()) summary else {
                     "$summary Ошибок: ${outcome.failures.size}."
