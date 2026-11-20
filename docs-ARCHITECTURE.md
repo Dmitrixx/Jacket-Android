@@ -28,7 +28,7 @@ No external Jackett or TorrServer process is started or packaged.
 
 ## Video source registry
 
-`MediaSourceCatalog` preserves the ten requested provider IDs, priorities, media types, auth requirements and 4K flags. The registry marks only HDRezka and Filmix as app-side connectors; ColdFilm, Baskino, Kinogo, VideoCDN, Collaps, Kinobase, CDNMovies and Lordfilm remain visibly unconnected until a lawful, documented adapter/API is available. Metadata in the registry is not a claim that those services can currently be searched or played.
+`MediaSourceCatalog` preserves the ten requested provider IDs, priorities, media types, auth requirements and 4K flags. HDRezka's URL/Cookie screen and Filmix's device-code flow are available, but the catalogue/stream adapters are not yet complete. All ten providers therefore remain without an active media adapter; the UI distinguishes available authentication settings from an implemented provider search/playback connector. Metadata in the registry is not a claim that those services can currently be searched or played.
 
 ## Catalog flow
 
