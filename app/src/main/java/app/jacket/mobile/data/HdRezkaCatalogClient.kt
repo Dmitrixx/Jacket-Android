@@ -43,8 +43,8 @@ object HdRezkaCatalogClient {
     private val qualityPattern = Regex("\\[([^\\]]+)](https://[^,\\s]+)", RegexOption.IGNORE_CASE)
     private val directUrlPattern = Regex("https://[^\\s,\\]<>\\\"']+", RegexOption.IGNORE_CASE)
     private val episodeCodePattern = Regex("(?i)S(\\d{1,2})E(\\d{1,3})")
-    private val seriesInitPattern = Regex("""initCDNSeriesEvents\\(\\s*(\\d+)\\s*,\\s*(\\d+)\\s*,\\s*(\\d+)\\s*,\\s*(\\d+)""")
-    private val movieInitPattern = Regex("""initCDNMoviesEvents\\(\\s*(\\d+)\\s*,\\s*(\\d+)\\s*,\\s*(\\d+)\\s*,\\s*(\\d+)\\s*,\\s*(\\d+)""")
+    private val seriesInitPattern = Regex("""initCDNSeriesEvents\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)""")
+    private val movieInitPattern = Regex("""initCDNMoviesEvents\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)""")
     private val redirectCodes = setOf(301, 302, 303, 307, 308)
 
     fun searchSources(
@@ -139,7 +139,8 @@ object HdRezkaCatalogClient {
     internal fun parseSearchEntries(html: String, mirror: String): List<HdRezkaSearchEntry> {
         val document = Jsoup.parse(html, mirror)
         return document.select(".b-content__inline_item").mapNotNull { card ->
-            val anchor = card.selectFirst("a.b-content__inline_item-link")
+            val anchor = card.selectFirst(".b-content__inline_item-link a[href]")
+                ?: card.selectFirst("a.b-content__inline_item-link[href]")
                 ?: card.selectFirst("a[href]") ?: return@mapNotNull null
             val page = anchor.absUrl("href").takeIf { it.isNotBlank() && isSameOrigin(it, mirror) }
                 ?: return@mapNotNull null
@@ -418,7 +419,7 @@ object HdRezkaCatalogClient {
                 }
             }
             try {
-                if (currentBody != null) connection.outputStream.use { it.write(currentBody.toByteArray(Charsets.UTF_8)) }
+                if (requestBody != null) connection.outputStream.use { it.write(requestBody.toByteArray(Charsets.UTF_8)) }
                 val status = connection.responseCode
                 if (status in redirectCodes) {
                     val location = connection.getHeaderField("Location")

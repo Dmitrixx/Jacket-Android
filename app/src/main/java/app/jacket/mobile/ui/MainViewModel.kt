@@ -5,7 +5,9 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import app.jacket.mobile.data.CatalogItem
 import app.jacket.mobile.data.FilmixDeviceAuth
+import app.jacket.mobile.data.FilmixCatalogClient
 import app.jacket.mobile.data.FilmixPendingDevice
+import app.jacket.mobile.data.HdRezkaCatalogClient
 import app.jacket.mobile.data.HdRezkaLoginClient
 import app.jacket.mobile.data.HdRezkaSettings
 import app.jacket.mobile.data.IndexerConfig
@@ -309,6 +311,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    /**
+     * Federates the detail-card search across torrent indexers, built-in trackers,
+     * Filmix, HDRezka and license-gated Internet Archive results.
+     */
     fun findSources(item: CatalogItem, episode: MediaEpisode? = null) {
         val year = item.year.takeIf { it.matches(Regex("\\d{4}")) }
         val query = if (episode != null) {
@@ -316,8 +322,121 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         } else {
             listOfNotNull(item.title, year).joinToString(" ")
         }
-        runSourceSearch(query, includeArchive = true)
+        runCombinedSourceSearch(query, item, episode)
     }
+
+    private fun runCombinedSourceSearch(query: String, item: CatalogItem, episode: MediaEpisode?) {
+        sourcesJob?.cancel()
+        sourcesJob = viewModelScope.launch {
+            _isSearchingSources.value = true
+            _sourceResults.value = emptyList()
+            _indexerErrors.value = emptyList()
+            clearMessage()
+            try {
+                val customIndexers = _customIndexers.value
+                val builtInTrackers = _webSearchProviders.value.filter {
+                    it.enabled && TrackerSearchClient.supports(it.id)
+                }
+                val filmixTokenValue = settings.filmixToken()
+                val filmixApiValue = settings.filmixApiBase()
+                val filmixDeviceValue = settings.filmixDeviceId()
+                val rezkaSettings = settings.hdRezkaSettings()
+
+                val combined = withContext(Dispatchers.IO) {
+                    val results = ArrayList<SourceResult>()
+                    val failures = ArrayList<IndexerFailure>()
+
+                    runCatching { indexers.searchDetailed(query, customIndexers, includeArchive = true) }
+                        .onSuccess { outcome ->
+                            results += outcome.results
+                            failures += outcome.failures
+                        }
+                        .onFailure { error ->
+                            failures += IndexerFailure("indexers", "Торрент-индексаторы", safeProviderMessage(error))
+                        }
+
+                    if (builtInTrackers.isNotEmpty()) {
+                        runCatching { TrackerSearchClient.searchAll(builtInTrackers, query) }
+                            .onSuccess { outcome ->
+                                results += outcome.results
+                                failures += outcome.failures
+                            }
+                            .onFailure { error ->
+                                failures += IndexerFailure("built-in-trackers", "Встроенные трекеры", safeProviderMessage(error))
+                            }
+                    }
+
+                    if (filmixTokenValue.isNotBlank()) {
+                        runCatching {
+                            FilmixCatalogClient.searchSources(
+                                apiBase = filmixApiValue,
+                                deviceId = filmixDeviceValue,
+                                token = filmixTokenValue,
+                                query = query,
+                                kind = item.kind,
+                                episodeCode = episode?.releaseCode
+                            )
+                        }.onSuccess { results += it }
+                            .onFailure { error ->
+                                failures += IndexerFailure(
+                                    "filmix", "Filmix", FilmixDeviceAuth.userFriendlyError(error)
+                                )
+                            }
+                    }
+
+                    if (rezkaSettings.mirror.isNotBlank()) {
+                        runCatching {
+                            HdRezkaCatalogClient.searchSources(
+                                settings = rezkaSettings,
+                                query = query,
+                                kind = item.kind,
+                                episodeCode = episode?.releaseCode
+                            )
+                        }.onSuccess { results += it }
+                            .onFailure { error ->
+                                failures += IndexerFailure(
+                                    "hdrezka", "HDRezka", HdRezkaLoginClient.userFriendlyError(error)
+                                )
+                            }
+                    }
+
+                    val orderedResults = results.distinctBy { it.id }.sortedBy { source ->
+                        when (source.sourceType) {
+                            app.jacket.mobile.data.MediaSourceType.HDREZKA -> 0
+                            app.jacket.mobile.data.MediaSourceType.FILMIX -> 1
+                            app.jacket.mobile.data.MediaSourceType.TORRENT -> 2
+                            app.jacket.mobile.data.MediaSourceType.LICENSED_DIRECT -> 3
+                        }
+                    }.take(160)
+                    orderedResults to failures.distinctBy { it.indexerId }
+                }
+
+                _sourceResults.value = combined.first
+                _indexerErrors.value = combined.second
+                _message.value = when {
+                    combined.first.isNotEmpty() && combined.second.isNotEmpty() ->
+                        "Найдено источников: ${combined.first.size}. Недоступны: ${combined.second.size}."
+                    combined.first.isNotEmpty() ->
+                        "Найдено источников: ${combined.first.size}."
+                    combined.second.isNotEmpty() ->
+                        "Источники ответили с ошибками. Проверьте подключение и настройки."
+                    else -> "Ничего не найдено. Проверьте название и подключённые источники."
+                }
+                _isError.value = combined.first.isEmpty() && combined.second.isNotEmpty()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                showError(error.message ?: "Не удалось найти источники")
+            } finally {
+                _isSearchingSources.value = false
+            }
+        }
+    }
+
+    private fun safeProviderMessage(error: Throwable): String =
+        error.message?.replace(Regex("[\\r\\n\\t]+"), " ")?.take(220)
+            ?.ifBlank { "Источник временно недоступен" }
+            ?: "Источник временно недоступен"
 
     /** Fetches and parses releases from one selected tracker inside Jacket. */
     fun searchTracker(provider: WebSearchProvider, query: String) {
@@ -401,13 +520,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     /** Builds a release query from a catalog item and searches every enabled built-in tracker. */
     fun findSourcesOnAllTrackers(item: CatalogItem, episode: MediaEpisode? = null) {
-        val year = item.year.takeIf { it.matches(Regex("\\d{4}")) }
-        val query = if (episode != null) {
-            listOf(item.title, episode.releaseCode, episode.name).joinToString(" ")
-        } else {
-            listOfNotNull(item.title, year).joinToString(" ")
-        }
-        searchAllTrackers(query)
+        findSources(item, episode)
     }
 
     /** Manual search from the indexer dashboard; queries all enabled user indexers in parallel order. */
