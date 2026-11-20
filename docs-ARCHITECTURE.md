@@ -40,6 +40,7 @@ No external Jackett or TorrServer process is started or packaged.
 
 - `IndexerRegistry.searchDetailed` launches enabled sources through a fixed pool of four workers.
 - Every provider failure is isolated as an `IndexerFailure`; other responses are still returned.
+- The UI assigns each source search a monotonically increasing generation. A cancelled older job may finish cleanup later, but it cannot clear the busy state owned by a newer search.
 - RSS/Atom and Torznab/Newznab are parsed into provider-neutral `SourceResult` values.
 - Common Torznab attributes are parsed: `magneturl`, `seeders`, `peers`, `size` / `length`, `category`.
 - Results are deduplicated by magnet, download URL, stream URL, then provider result ID; sorting is seeders descending, then release title.
