@@ -153,9 +153,7 @@ object HdRezkaLoginClient {
         startUrl: String,
         body: String,
         cookies: CookieManager,
-        referer: String,
-        captureBody: Boolean = true,
-        previewOnly: Boolean = false
+        referer: String
     ): HttpResult {
         var currentUrl = startUrl
         var method = "POST"
@@ -236,7 +234,9 @@ object HdRezkaLoginClient {
         method: String,
         body: String?,
         cookies: CookieManager,
-        referer: String
+        referer: String,
+        captureBody: Boolean = true,
+        previewOnly: Boolean = false
     ): HttpResult {
         val uri = URI(url)
         validateMirror(originOf(url))
