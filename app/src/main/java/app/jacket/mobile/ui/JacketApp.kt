@@ -2767,9 +2767,12 @@ private fun SettingsScreen(
                                         color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 }
                                 MetadataPill(
-                                    if (source.integration == MediaSourceIntegration.AUTH_SETTINGS_ONLY) "ЕСТЬ НАСТРОЙКИ"
-                                    else "АДАПТЕР НЕ ПОДКЛЮЧЁН",
-                                    accent = source.integration == MediaSourceIntegration.AUTH_SETTINGS_ONLY
+                                    when (source.integration) {
+                                        MediaSourceIntegration.DIRECT_ADAPTER -> "КОННЕКТОР"
+                                        MediaSourceIntegration.AUTH_SETTINGS_ONLY -> "ЕСТЬ НАСТРОЙКИ"
+                                        MediaSourceIntegration.MEDIA_ADAPTER_MISSING -> "НЕ ПОДКЛЮЧЁН"
+                                    },
+                                    accent = source.integration != MediaSourceIntegration.MEDIA_ADAPTER_MISSING
                                 )
                             }
                             LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -2779,15 +2782,15 @@ private fun SettingsScreen(
                             }
                             Text(source.notes, style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            if (source.integration == MediaSourceIntegration.AUTH_SETTINGS_ONLY) {
-                                OutlinedButton(
+                            when (source.integration) {
+                                MediaSourceIntegration.DIRECT_ADAPTER,
+                                MediaSourceIntegration.AUTH_SETTINGS_ONLY -> OutlinedButton(
                                     onClick = { selectedSettingsSection = source.id },
                                     modifier = Modifier.fillMaxWidth()
                                 ) {
-                                    Text(if (source.id == "filmix") "Настроить Filmix" else "Настроить HDRezka")
+                                    Text(if (source.id == "filmix") "Настройки Filmix" else "Настройки HDRezka")
                                 }
-                            } else {
-                                Text(
+                                MediaSourceIntegration.MEDIA_ADAPTER_MISSING -> Text(
                                     "Нет проверенного API или совместимого адаптера в текущем проекте.",
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
