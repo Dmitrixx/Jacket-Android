@@ -149,6 +149,7 @@ fun JacketApp(viewModel: MainViewModel) {
     var playerProgressKey by rememberSaveable { mutableStateOf<String?>(null) }
     var playerInitialPosition by rememberSaveable { mutableLongStateOf(0L) }
     var playerSubtitles by remember { mutableStateOf(emptyList<app.jacket.mobile.torrent.PlaybackSubtitle>()) }
+    var playerHeaders by remember { mutableStateOf(emptyMap<String, String>()) }
     var isTorrentPlayback by rememberSaveable { mutableStateOf(false) }
 
     val context = LocalContext.current
@@ -164,6 +165,7 @@ fun JacketApp(viewModel: MainViewModel) {
             playerProgressKey = request.progressKey
             playerInitialPosition = request.initialPositionMs
             playerSubtitles = request.subtitles
+            playerHeaders = emptyMap()
             isTorrentPlayback = true
         }
     }
@@ -175,6 +177,7 @@ fun JacketApp(viewModel: MainViewModel) {
         playerProgressKey = null
         playerInitialPosition = 0L
         playerSubtitles = emptyList()
+        playerHeaders = emptyMap()
         isTorrentPlayback = false
     }
 
@@ -200,6 +203,7 @@ fun JacketApp(viewModel: MainViewModel) {
             progressKey = playerProgressKey,
             initialPositionMs = playerInitialPosition,
             subtitles = playerSubtitles,
+            httpHeaders = playerHeaders,
             onBack = ::closePlayer
         )
         return
@@ -226,12 +230,15 @@ fun JacketApp(viewModel: MainViewModel) {
                 viewModel.closeDetails()
                 showSettings = true
             },
-            onPlay = { title, url ->
+            onPlay = { title, url, headers, subtitles ->
                 playerTitle = title
                 playerUrl = url
                 playerProgressKey = PlaybackProgressStore.urlKey(url)
                 playerInitialPosition = PlaybackProgressStore(context).position(playerProgressKey!!)
-                playerSubtitles = emptyList()
+                playerSubtitles = subtitles
+                playerHeaders = headers.filterKeys {
+                    it.equals("Referer", true) || it.equals("User-Agent", true)
+                }
                 isTorrentPlayback = false
             }
         )
@@ -1001,7 +1008,7 @@ private fun DetailScreen(
     viewModel: MainViewModel,
     onBack: () -> Unit,
     onAddWebsite: () -> Unit,
-    onPlay: (String, String) -> Unit
+    onPlay: (String, String, Map<String, String>, List<app.jacket.mobile.torrent.PlaybackSubtitle>) -> Unit
 ) {
     val details by viewModel.selectedDetails.collectAsState()
     val tmdbToken by viewModel.tmdbToken.collectAsState()
@@ -1566,7 +1573,19 @@ private fun DetailScreen(
                                 source = source,
                                 onPlay = { url ->
                                     showSourcesSheet = false
-                                    onPlay(source.title, url)
+                                    onPlay(
+                                        source.title,
+                                        url,
+                                        source.requestHeaders,
+                                        source.subtitles.map { subtitle ->
+                                            app.jacket.mobile.torrent.PlaybackSubtitle(
+                                                url = subtitle.url,
+                                                mimeType = subtitle.mimeType,
+                                                language = subtitle.language,
+                                                label = subtitle.label
+                                            )
+                                        }
+                                    )
                                 },
                                 onMagnet = { magnet ->
                                     TorrentDownloadService.add(context, magnet, source.title)
