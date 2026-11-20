@@ -1935,6 +1935,7 @@ private fun SettingsScreen(
     val jackettIndexers by viewModel.jackettIndexers.collectAsState()
     val loadingJackettIndexers by viewModel.isLoadingJackettIndexers.collectAsState()
     val jackettCatalogStatus by viewModel.jackettCatalogStatus.collectAsState()
+    val testingJackettIndexerId by viewModel.testingJackettIndexerId.collectAsState()
     val savedJackett = indexers.firstOrNull { it.protocol == IndexerProtocol.JACKETT }
     val jackettConfigIndexerId by viewModel.jackettConfigIndexerId.collectAsState()
     val jackettConfigFields by viewModel.jackettConfigFields.collectAsState()
@@ -2839,7 +2840,13 @@ private fun SettingsScreen(
                     if (loadingJackettIndexers) {
                         LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
                     }
-                    jackettCatalogStatus?.let { MessageCard(it, isError = it.startsWith("Ошибка")) }
+                    jackettCatalogStatus?.let {
+                        MessageCard(
+                            it,
+                            isError = it.startsWith("Ошибка") || it.contains("не пройдена") ||
+                                it.startsWith("Не удалось")
+                        )
+                    }
                     if (savedJackett == null) {
                         MessageCard("Подключите Jackett выше, чтобы загрузить каталог трекеров.", false)
                     }
@@ -2970,6 +2977,16 @@ private fun SettingsScreen(
                                     Icon(Icons.Default.Search, contentDescription = null)
                                     Spacer(Modifier.width(6.dp))
                                     Text("Искать")
+                                }
+                                OutlinedButton(
+                                    onClick = { viewModel.testJackettIndexer(entry.id) },
+                                    enabled = testingJackettIndexerId == null
+                                ) {
+                                    if (testingJackettIndexerId == entry.id) {
+                                        CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+                                    } else {
+                                        Text("Проверить")
+                                    }
                                 }
                             }
                             OutlinedButton(
