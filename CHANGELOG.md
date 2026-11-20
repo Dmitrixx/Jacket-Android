@@ -2,6 +2,12 @@
 
 ## Next
 
+- Add a native Jackett `t=indexers` catalogue with configured/public/private/language/category metadata and per-configured-indexer Torznab search.
+- Keep torrent release results inside Jacket and enqueue direct `.torrent` links from the indexer cabinet instead of opening the download URL in a browser.
+- Expand release cards with feed publication dates, resolution dimensions, audio channels, language/subtitle markers and title-derived bitrate tags.
+- Add a ten-provider source registry in the requested priority order, while marking only HDRezka and Filmix as integrated and the remaining providers as unconnected pending a verified adapter.
+- Bound the HDRezka login response inspection to a small preview, remove the default restricted-domain suggestion, and stop relying on an undocumented Filmix HTTPS fallback.
+
 - Avoid buffering the full HDRezka landing page during mirror discovery and login; only a bounded preview is read when checking for browser challenges.
 - Align Filmix device authorization with the known-compatible Android API fingerprint and report per-host HTTPS failures without exposing request parameters.
 - Make torrent search explicit on the movie detail card, automatically search enabled in-app trackers, and offer an opt-in way to add tracker shortcuts when none are configured.
