@@ -143,6 +143,39 @@ class JackettIndexerClientTest {
     }
 
     @Test
+    fun clearingMaskedPasswordInputPreservesPreviousServerPassword() {
+        val field = JackettConfigField(
+            id = "password",
+            type = "password",
+            name = "Password",
+            value = "",
+            originalValue = JackettConfigField.PASSWORD_REPLACEMENT
+        )
+
+        val payload = JackettIndexerClient.buildConfigPayload(listOf(field))
+
+        assertEquals(
+            JackettConfigField.PASSWORD_REPLACEMENT,
+            payload.getJSONObject(0).getString("value")
+        )
+    }
+
+    @Test
+    fun replacingMaskedPasswordSubmitsNewValue() {
+        val field = JackettConfigField(
+            id = "password",
+            type = "password",
+            name = "Password",
+            value = "new-secret",
+            originalValue = JackettConfigField.PASSWORD_REPLACEMENT
+        )
+
+        val payload = JackettIndexerClient.buildConfigPayload(listOf(field))
+
+        assertEquals("new-secret", payload.getJSONObject(0).getString("value"))
+    }
+
+    @Test
     fun buildsSpecificIndexerSearchConfigFromSavedJackettConnection() {
         val base = IndexerConfig(
             id = "jackett-1",
