@@ -26,7 +26,8 @@ object FilmixDeviceAuth {
     const val DEFAULT_API_BASE = "https://filmixapp.cyou/api/v2"
     private val API_BASE_CANDIDATES = listOf(
         DEFAULT_API_BASE,
-        "https://api.filmix.tv/api/v2"
+        "https://api.filmix.tv/api/v2",
+        "https://fxapp.biz/api/v2"
     )
     private const val MAX_RESPONSE_BYTES = 256 * 1024
     private const val MAX_PROBE_BYTES = 16 * 1024
@@ -39,15 +40,32 @@ object FilmixDeviceAuth {
         appVersion: String
     ): FilmixPendingDevice {
         require(deviceId.matches(Regex("[a-fA-F0-9]{16}"))) { "Некорректный ID устройства" }
-        val apiBase = discoverApiBase(deviceId, deviceName, vendor, osVersion, appVersion)
-        val response = tokenRequest(apiBase, deviceId, deviceName, vendor, osVersion, appVersion)
-        val code = response.optString("user_code").trim()
-        require(code.length in 4..8) { "Filmix не вернул код активации" }
-        return FilmixPendingDevice(
-            code = code,
-            temporaryToken = response.optString("user_dev_token").trim(),
-            deviceId = deviceId,
-            apiBase = apiBase
+        var lastError: IOException? = null
+        for (apiBase in API_BASE_CANDIDATES) {
+            try {
+                if (!probeApiBase(apiBase, deviceId, deviceName, vendor, osVersion, appVersion)) {
+                    lastError = IOException("Сервер не подтвердил API Filmix: $apiBase")
+                    continue
+                }
+                val response = tokenRequest(apiBase, deviceId, deviceName, vendor, osVersion, appVersion)
+                val code = response.optString("user_code").trim()
+                require(code.length in 4..8) { "Filmix не вернул код активации" }
+                return FilmixPendingDevice(
+                    code = code,
+                    temporaryToken = response.optString("user_dev_token").trim(),
+                    deviceId = deviceId,
+                    apiBase = apiBase
+                )
+            } catch (error: Exception) {
+                lastError = if (error is IOException) error else IOException(
+                    "Ошибка API Filmix (${error.javaClass.simpleName})", error
+                )
+            }
+        }
+        throw IOException(
+            "Не удалось подключить Filmix: все проверенные HTTPS API отклонили проверку или запрос кода. " +
+                "Сертификаты TLS не отключались.",
+            lastError
         )
     }
 
@@ -71,34 +89,6 @@ object FilmixDeviceAuth {
         return token.takeIf { it.isNotBlank() && it != pending.temporaryToken }
     }
 
-    private fun discoverApiBase(
-        deviceId: String,
-        deviceName: String,
-        vendor: String,
-        osVersion: String,
-        appVersion: String
-    ): String {
-        var lastError: IOException? = null
-        for (base in API_BASE_CANDIDATES) {
-            try {
-                if (probeApiBase(base, deviceId, deviceName, vendor, osVersion, appVersion)) {
-                    return base
-                }
-                lastError = IOException("сервер не вернул ожидаемый ответ check_update")
-            } catch (error: Exception) {
-                lastError = IOException(
-                    "проверка HTTPS API завершилась ошибкой (${error.javaClass.simpleName})",
-                    error
-                )
-            }
-        }
-        throw IOException(
-            "Filmix API не найден: проверенные HTTPS-адреса не подтвердили совместимость. " +
-                "Попробуйте позже; проверка TLS не отключалась.",
-            lastError
-        )
-    }
-
     private fun probeApiBase(
         apiBase: String,
         deviceId: String,
@@ -120,6 +110,7 @@ object FilmixDeviceAuth {
         }
         try {
             val status = connection.responseCode
+            if (status == 405) throw IOException("Filmix API вернул HTTP 405 на /check_update")
             if (status !in 200..299) return false
             val body = readLimited(connection.inputStream, MAX_PROBE_BYTES)
                 .toString(Charsets.UTF_8)

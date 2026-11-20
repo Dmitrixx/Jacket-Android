@@ -298,7 +298,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             clearMessage()
             try {
                 val results = withContext(Dispatchers.IO) {
-                    TrackerSearchClient.search(provider, query.trim())
+                    if (provider.id == "tracker-archive") {
+                        catalog.archiveSources(query.trim())
+                    } else {
+                        TrackerSearchClient.search(provider, query.trim())
+                    }
                 }
                 _sourceResults.value = results
                 _message.value = if (results.isEmpty()) {

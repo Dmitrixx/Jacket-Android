@@ -826,7 +826,7 @@ private fun SearchScreen(
                     items(activeWebProviders, key = { "search-${it.id}" }) { provider ->
                         OutlinedButton(
                             onClick = {
-                                if (TrackerSearchClient.supports(provider.id)) {
+                                if (TrackerSearchClient.supports(provider.id) || provider.id == "tracker-archive") {
                                     viewModel.searchTracker(provider, query.trim())
                                 } else {
                                     openWebsiteSearch(context, provider, query.trim())
@@ -834,7 +834,7 @@ private fun SearchScreen(
                             }
                         ) {
                             Icon(
-                                if (TrackerSearchClient.supports(provider.id)) Icons.Default.Search
+                                if (TrackerSearchClient.supports(provider.id) || provider.id == "tracker-archive") Icons.Default.Search
                                 else Icons.Default.OpenInNew,
                                 contentDescription = null
                             )
