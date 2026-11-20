@@ -11,7 +11,6 @@ import java.net.URLEncoder
 import java.nio.charset.Charset
 import java.util.Locale
 import java.util.concurrent.Callable
-import java.util.concurrent.Executors
 
 /**
  * In-app HTML tracker adapter.
@@ -21,7 +20,10 @@ import java.util.concurrent.Executors
  */
 internal data class TrackerSearchBatchOutcome(
     val results: List<SourceResult>,
-    val failures: List<String>
+    val failures: List<String>,
+    val completedProviders: Int = 0,
+    val totalProviders: Int = 0,
+    val timedOut: Boolean = false
 )
 
 object TrackerSearchClient {
@@ -29,6 +31,10 @@ object TrackerSearchClient {
     private const val MAX_RESULTS = 40
     private const val MAX_DETAIL_PAGES = 10
     private const val MAX_DETAIL_CONCURRENCY = 4
+    private const val SEARCH_ALL_TIMEOUT_MS = 25_000L
+    private const val DETAIL_RESOLUTION_TIMEOUT_MS = 8_000L
+    private const val DETAIL_CONNECT_TIMEOUT_MS = 3_000
+    private const val DETAIL_READ_TIMEOUT_MS = 5_000
     private const val CONNECT_TIMEOUT_MS = 8_000
     private const val READ_TIMEOUT_MS = 12_000
     private const val USER_AGENT = "JacketAndroid/2.6 (in-app tracker search)"
@@ -97,7 +103,22 @@ object TrackerSearchClient {
      * Searches up to six enabled built-in trackers concurrently, with a strict
      * per-provider concurrency cap. Partial results are retained if one site fails.
      */
-    internal fun searchAll(providers: List<WebSearchProvider>, query: String): TrackerSearchBatchOutcome {
+    private data class ProviderSearchOutcome(
+        val provider: WebSearchProvider,
+        val results: List<SourceResult> = emptyList(),
+        val error: String? = null
+    )
+
+    /**
+     * Searches enabled trackers concurrently and publishes a merged snapshot each
+     * time one finishes. Results are collected in completion order, not provider
+     * settings order, and the whole batch has a hard time budget.
+     */
+    internal fun searchAll(
+        providers: List<WebSearchProvider>,
+        query: String,
+        onUpdate: (TrackerSearchBatchOutcome) -> Unit = {}
+    ): TrackerSearchBatchOutcome {
         require(query.isNotBlank()) { "Введите название для поиска" }
         val active = providers
             .filter { it.enabled && supports(it.id) }
@@ -105,31 +126,63 @@ object TrackerSearchClient {
             .take(6)
         require(active.isNotEmpty()) { "Нет включённых встроенных трекеров" }
 
-        val executor = Executors.newFixedThreadPool(minOf(3, active.size))
-        val futures = active.map { provider ->
-            provider to executor.submit(Callable { search(provider, query.trim()) })
+        val tasks = active.map { provider ->
+            Callable {
+                try {
+                    ProviderSearchOutcome(provider, search(provider, query.trim()))
+                } catch (error: Exception) {
+                    val cause = error.cause ?: error
+                    ProviderSearchOutcome(
+                        provider = provider,
+                        error = cause.message?.take(160) ?: cause.javaClass.simpleName
+                    )
+                }
+            }
         }
         val batches = ArrayList<List<SourceResult>>(active.size)
         val failures = ArrayList<String>()
-        try {
-            futures.forEach { (provider, future) ->
-                try {
-                    batches += future.get()
-                } catch (interrupted: InterruptedException) {
-                    Thread.currentThread().interrupt()
-                    throw IOException("Поиск трекеров прерван", interrupted)
-                } catch (error: Exception) {
-                    val cause = error.cause ?: error
-                    failures += "${provider.name}: ${cause.message?.take(160) ?: cause.javaClass.simpleName}"
-                }
-            }
-        } finally {
-            executor.shutdownNow()
-        }
-        return TrackerSearchBatchOutcome(
+        val completedIds = HashSet<String>()
+        var completedProviders = 0
+
+        fun snapshot(timedOut: Boolean = false) = TrackerSearchBatchOutcome(
             results = mergeResults(batches),
-            failures = failures
+            failures = failures.toList(),
+            completedProviders = completedProviders,
+            totalProviders = active.size,
+            timedOut = timedOut
         )
+
+        val completed = CompletionOrderCollector.collect(
+            tasks = tasks,
+            timeoutMs = SEARCH_ALL_TIMEOUT_MS,
+            maxConcurrency = 3
+        ) { result ->
+            completedProviders++
+            result.fold(
+                onSuccess = { outcome ->
+                    completedIds += outcome.provider.id
+                    if (outcome.error != null) {
+                        failures += "${outcome.provider.name}: ${outcome.error}"
+                    } else {
+                        batches += outcome.results
+                    }
+                },
+                onFailure = { error ->
+                    failures += "Ошибка обработчика трекера: ${error.message?.take(160) ?: error.javaClass.simpleName}"
+                }
+            )
+            runCatching { onUpdate(snapshot()) }
+        }
+
+        val timedOut = completed < active.size
+        if (timedOut) {
+            active.filterNot { it.id in completedIds }.forEach { provider ->
+                failures += "${provider.name}: превышено время поиска (25 секунд)"
+            }
+        }
+        return snapshot(timedOut).also { outcome ->
+            runCatching { onUpdate(outcome) }
+        }
     }
 
     /** Merges provider batches by BitTorrent info-hash and keeps the healthiest duplicate. */
@@ -220,23 +273,29 @@ object TrackerSearchClient {
         fallbackCharset: Charset
     ): Map<Int, Pair<String?, String?>> {
         if (pages.isEmpty()) return emptyMap()
-        val executor = Executors.newFixedThreadPool(minOf(MAX_DETAIL_CONCURRENCY, pages.size))
-        return try {
-            val futures = pages.map { (index, url) ->
-                index to executor.submit(Callable {
-                    runCatching {
-                        val page = fetchHtml(url, provider.cookie, originalHost, fallbackCharset)
-                        ensureNotChallenge(page.html, provider.name)
-                        parseDownloadLinks(page.html, page.finalUrl)
-                    }.getOrNull()
-                })
+        val tasks = pages.map { (index, url) ->
+            Callable {
+                val page = fetchHtml(
+                    url,
+                    provider.cookie,
+                    originalHost,
+                    fallbackCharset,
+                    connectTimeoutMs = DETAIL_CONNECT_TIMEOUT_MS,
+                    readTimeoutMs = DETAIL_READ_TIMEOUT_MS
+                )
+                ensureNotChallenge(page.html, provider.name)
+                index to parseDownloadLinks(page.html, page.finalUrl)
             }
-            futures.mapNotNull { (index, future) ->
-                runCatching { future.get() }.getOrNull()?.let { index to it }
-            }.toMap()
-        } finally {
-            executor.shutdownNow()
         }
+        val details = LinkedHashMap<Int, Pair<String?, String?>>()
+        CompletionOrderCollector.collect(
+            tasks = tasks,
+            timeoutMs = DETAIL_RESOLUTION_TIMEOUT_MS,
+            maxConcurrency = MAX_DETAIL_CONCURRENCY
+        ) { result ->
+            result.getOrNull()?.let { (index, links) -> details[index] = links }
+        }
+        return details
     }
 
     internal fun parseListing(html: String, baseUrl: String, providerId: String): List<Candidate> {
@@ -333,7 +392,9 @@ object TrackerSearchClient {
         urlValue: String,
         cookie: String,
         originalHost: String,
-        fallbackCharset: Charset
+        fallbackCharset: Charset,
+        connectTimeoutMs: Int = CONNECT_TIMEOUT_MS,
+        readTimeoutMs: Int = READ_TIMEOUT_MS
     ): HtmlPage {
         var current = urlValue
         for (redirect in 0..4) {
@@ -341,8 +402,8 @@ object TrackerSearchClient {
             val uri = URI(current)
             val connection = (URL(current).openConnection() as HttpURLConnection).apply {
                 requestMethod = "GET"
-                connectTimeout = CONNECT_TIMEOUT_MS
-                readTimeout = READ_TIMEOUT_MS
+                connectTimeout = connectTimeoutMs
+                readTimeout = readTimeoutMs
                 instanceFollowRedirects = false
                 setRequestProperty("User-Agent", USER_AGENT)
                 setRequestProperty("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
