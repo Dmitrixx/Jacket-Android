@@ -104,7 +104,10 @@ object TorrentQueueCodec {
             if (!seen.add(id.lowercase())) continue
             val migratedItem = QueuedTorrent(
                 id = id,
-                title = item.optString("title").trim().take(MAX_TITLE_LENGTH)
+                // org.json JVM and Android implementations differ for a missing key:
+                // some return the literal "null". Use an explicit empty fallback so
+                // legacy rows consistently receive a useful generated title.
+                title = item.optString("title", "").trim().take(MAX_TITLE_LENGTH)
                     .ifBlank { "Торрент ${id.take(10)}" },
                 magnetUri = magnet,
                 torrentPath = path,
