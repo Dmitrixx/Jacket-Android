@@ -23,7 +23,7 @@ class JackettIndexerClientTest {
 
     @Test
     fun extractsOnlyNonEmptyJackettSessionCookie() {
-        val headers = mapOf(
+        val headers = mapOf<String?, List<String>>(
             "Set-Cookie" to listOf(
                 "OtherCookie=ignored; Path=/",
                 "Jackett=session-123; Path=/; HttpOnly"
@@ -33,7 +33,7 @@ class JackettIndexerClientTest {
         assertEquals(
             null,
             JackettIndexerClient.extractDashboardCookie(
-                mapOf("Set-Cookie" to listOf("OtherCookie=value; Path=/", "Jackett=; Path=/"))
+                mapOf<String?, List<String>>("Set-Cookie" to listOf("OtherCookie=value; Path=/", "Jackett=; Path=/"))
             )
         )
     }
