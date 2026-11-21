@@ -11991,3 +11991,2103 @@ private fun formatRate(bytesPerSecond: Int): String = when {
 }
 
 END FILE: app/src/main/java/app/jacket/mobile/ui/JacketApp.kt
+
+
+========================================================================================
+FILE: app/src/main/java/app/jacket/mobile/ui/JacketPlayerScreen.kt
+========================================================================================
+
+package app.jacket.mobile.ui
+
+import android.app.Activity
+import android.app.PictureInPictureParams
+import android.content.Context
+import android.content.Intent
+import android.net.Uri
+import android.util.Rational
+import android.view.WindowManager
+import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.OpenInNew
+import androidx.compose.material.icons.filled.AspectRatio
+import androidx.compose.material.icons.filled.Audiotrack
+import androidx.compose.material.icons.filled.Bedtime
+import androidx.compose.material.icons.filled.FastForward
+import androidx.compose.material.icons.filled.FastRewind
+import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.PictureInPicture
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Speed
+import androidx.compose.material.icons.filled.Subtitles
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Slider
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.viewinterop.AndroidView
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
+import androidx.media3.common.C
+import androidx.media3.common.MediaItem
+import androidx.media3.common.MimeTypes
+import androidx.media3.common.PlaybackException
+import androidx.media3.common.Player
+import androidx.media3.datasource.DefaultHttpDataSource
+import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import androidx.media3.ui.AspectRatioFrameLayout
+import androidx.media3.ui.PlayerView
+import androidx.media3.ui.TrackSelectionDialogBuilder
+import app.jacket.mobile.MainActivity
+import app.jacket.mobile.torrent.PlaybackProgressStore
+import app.jacket.mobile.torrent.PlaybackSubtitle
+import kotlinx.coroutines.delay
+
+private const val PLAYER_PREFS = "jacket_player_chrome"
+private const val CHROME_HIDE_MS = 4_500L
+
+@androidx.annotation.OptIn(markerClass = [androidx.media3.common.util.UnstableApi::class])
+@Composable
+fun JacketPlayerScreen(
+    title: String,
+    streamUrl: String,
+    progressKey: String? = null,
+    initialPositionMs: Long = 0L,
+    subtitles: List<PlaybackSubtitle> = emptyList(),
+    onBack: () -> Unit
+) {
+    val context = LocalContext.current
+    val activity = context as? Activity
+    val onBackState by rememberUpdatedState(onBack)
+    val progressStore = remember(context) { PlaybackProgressStore(context) }
+    val isTv = (LocalConfiguration.current.uiMode and android.content.res.Configuration.UI_MODE_TYPE_MASK) ==
+        android.content.res.Configuration.UI_MODE_TYPE_TELEVISION
+    val saved = remember(context) { readPlayerChrome(context) }
+    var playWhenReady by remember(streamUrl) { mutableStateOf(true) }
+    var playbackError by remember(streamUrl) { mutableStateOf<String?>(null) }
+    var controlsVisible by remember(streamUrl) { mutableStateOf(true) }
+    var chromeToken by remember(streamUrl) { mutableIntStateOf(0) }
+    var speed by remember(streamUrl) { mutableFloatStateOf(saved.first) }
+    var fit by remember(streamUrl) { mutableStateOf(saved.second) }
+    var sleepMinutes by remember(streamUrl) { mutableIntStateOf(0) }
+    var positionMs by remember(streamUrl) { mutableLongStateOf(initialPositionMs.coerceAtLeast(0L)) }
+    var durationMs by remember(streamUrl) { mutableLongStateOf(0L) }
+    var scrubbing by remember(streamUrl) { mutableStateOf(false) }
+    var seekHint by remember(streamUrl) { mutableStateOf<String?>(null) }
+    var inPip by remember(streamUrl) { mutableStateOf(activity?.isInPictureInPictureMode == true) }
+    val hiddenFocus = remember(streamUrl) { FocusRequester() }
+    val playFocus = remember(streamUrl) { FocusRequester() }
+    var playerView by remember(streamUrl) { mutableStateOf<PlayerView?>(null) }
+
+    val player = remember(streamUrl, subtitles) {
+        buildPlayer(context, streamUrl, subtitles, initialPositionMs)
+    }
+
+    fun reveal() {
+        controlsVisible = true
+        chromeToken++
+    }
+
+    fun seekBy(deltaMs: Long) {
+        val duration = player.duration
+        val target = (player.currentPosition + deltaMs).coerceAtLeast(0L)
+        val bounded = if (duration > 0L) target.coerceAtMost(duration) else target
+        player.seekTo(bounded)
+        positionMs = bounded
+        seekHint = if (deltaMs < 0L) "−10 с" else "+10 с"
+        reveal()
+    }
+
+    fun togglePlayback() {
+        if (player.isPlaying || player.playWhenReady) {
+            player.pause()
+            playWhenReady = false
+        } else {
+            player.play()
+            playWhenReady = true
+        }
+        reveal()
+    }
+
+    fun applyFit(next: PlaybackChrome.Fit) {
+        fit = next
+        playerView?.resizeMode = next.toResizeMode()
+        writePlayerChrome(context, speed, next)
+        reveal()
+    }
+
+    BackHandler {
+        if (controlsVisible && !inPip) controlsVisible = false else onBackState()
+    }
+
+    DisposableEffect(activity, player) {
+        val host = activity as? MainActivity
+        host?.pipModeListener = { pip ->
+            inPip = pip
+            if (pip && playWhenReady) player.play()
+        }
+        val window = activity?.window
+        val insets = window?.let { WindowCompat.getInsetsController(it, it.decorView) }
+        insets?.hide(WindowInsetsCompat.Type.systemBars())
+        insets?.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+        activity?.window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        onDispose {
+            host?.pipModeListener = null
+            insets?.show(WindowInsetsCompat.Type.systemBars())
+            activity?.window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        }
+    }
+
+    DisposableEffect(player) {
+        val listener = object : Player.Listener {
+            override fun onPlayWhenReadyChanged(isReady: Boolean, reason: Int) {
+                playWhenReady = isReady
+            }
+
+            override fun onPlayerError(error: PlaybackException) {
+                playbackError = error.localizedMessage ?: "Проверьте ссылку и доступ к потоку"
+                controlsVisible = true
+            }
+
+            override fun onPlaybackStateChanged(playbackState: Int) {
+                if (playbackState == Player.STATE_READY) playbackError = null
+            }
+        }
+        player.addListener(listener)
+        onDispose {
+            progressKey?.let { key ->
+                progressStore.save(key, player.currentPosition, player.duration.coerceAtLeast(0L))
+            }
+            player.removeListener(listener)
+            player.release()
+        }
+    }
+
+    LaunchedEffect(player, speed) { player.setPlaybackSpeed(speed) }
+
+    LaunchedEffect(playerView, fit) { playerView?.resizeMode = fit.toResizeMode() }
+
+    LaunchedEffect(player, progressKey) {
+        while (true) {
+            delay(1_000)
+            if (!scrubbing) {
+                positionMs = player.currentPosition.coerceAtLeast(0L)
+                val duration = player.duration
+                durationMs = if (duration > 0L) duration else 0L
+            }
+            if (progressKey != null) {
+                progressStore.save(progressKey, player.currentPosition, player.duration.coerceAtLeast(0L))
+            }
+        }
+    }
+
+    LaunchedEffect(controlsVisible, playWhenReady, chromeToken, inPip) {
+        if (controlsVisible && playWhenReady && !inPip) {
+            delay(CHROME_HIDE_MS)
+            controlsVisible = false
+        }
+    }
+
+    LaunchedEffect(controlsVisible, inPip) {
+        if (inPip) return@LaunchedEffect
+        runCatching {
+            if (controlsVisible) playFocus.requestFocus() else hiddenFocus.requestFocus()
+        }
+    }
+
+    LaunchedEffect(sleepMinutes) {
+        if (sleepMinutes <= 0) return@LaunchedEffect
+        delay(sleepMinutes * 60_000L)
+        player.pause()
+        onBackState()
+    }
+
+    LaunchedEffect(seekHint) {
+        if (seekHint != null) {
+            delay(700)
+            seekHint = null
+        }
+    }
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black)
+            .onPreviewKeyEvent { event ->
+                if (inPip || event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                if (!controlsVisible) {
+                    when (event.key) {
+                        Key.DirectionLeft -> seekBy(-PlaybackChrome.SEEK_STEP_MS)
+                        Key.DirectionRight -> seekBy(PlaybackChrome.SEEK_STEP_MS)
+                        Key.MediaPlayPause, Key.MediaPlay, Key.MediaPause,
+                        Key.DirectionCenter, Key.Enter, Key.NumPadEnter -> togglePlayback()
+                        else -> reveal()
+                    }
+                    true
+                } else {
+                    when (event.key) {
+                        Key.MediaPlayPause, Key.MediaPlay, Key.MediaPause -> {
+                            togglePlayback()
+                            true
+                        }
+                        else -> {
+                            reveal()
+                            false
+                        }
+                    }
+                }
+            }
+    ) {
+        AndroidView(
+            modifier = Modifier.fillMaxSize(),
+            factory = { viewContext ->
+                PlayerView(viewContext).apply {
+                    this.player = player
+                    useController = false
+                    resizeMode = fit.toResizeMode()
+                    setShowBuffering(PlayerView.SHOW_BUFFERING_ALWAYS)
+                    isFocusable = false
+                    playerView = this
+                }
+            },
+            update = {
+                it.player = player
+                it.resizeMode = fit.toResizeMode()
+                playerView = it
+            }
+        )
+
+        if (!inPip && !controlsVisible) {
+            Row(Modifier.fillMaxSize()) {
+                Box(
+                    Modifier
+                        .weight(1f)
+                        .fillMaxSize()
+                        .focusRequester(hiddenFocus)
+                        .clickable { seekBy(-PlaybackChrome.SEEK_STEP_MS) }
+                )
+                Box(
+                    Modifier
+                        .weight(1f)
+                        .fillMaxSize()
+                        .clickable { reveal() }
+                )
+                Box(
+                    Modifier
+                        .weight(1f)
+                        .fillMaxSize()
+                        .clickable { seekBy(PlaybackChrome.SEEK_STEP_MS) }
+                )
+            }
+        }
+
+        if (seekHint != null && !inPip) {
+            Text(
+                seekHint.orEmpty(),
+                modifier = Modifier
+                    .align(Alignment.Center)
+                    .background(Color(0xCC111722), RoundedCornerShape(16.dp))
+                    .padding(horizontal = 18.dp, vertical = 10.dp),
+                color = Color.White,
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold
+            )
+        }
+
+        if (!inPip && controlsVisible) {
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .background(
+                        Brush.verticalGradient(
+                            0f to Color(0xC0000000),
+                            0.28f to Color.Transparent,
+                            0.58f to Color.Transparent,
+                            1f to Color(0xE0000000)
+                        )
+                    )
+                    .clickable { controlsVisible = false }
+            )
+            Column(Modifier.fillMaxSize()) {
+                Row(
+                    Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    IconButton(onClick = onBackState) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, "Назад", tint = Color.White)
+                    }
+                    Text(
+                        title,
+                        modifier = Modifier.weight(1f),
+                        color = Color.White,
+                        style = if (isTv) MaterialTheme.typography.titleLarge else MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1
+                    )
+                    if (!isTv) {
+                        IconButton(onClick = { enterPictureInPicture(activity) }) {
+                            Icon(Icons.Default.PictureInPicture, "Картинка в картинке", tint = Color.White)
+                        }
+                    }
+                }
+                Spacer(Modifier.weight(1f))
+                Column(
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = if (isTv) 36.dp else 16.dp, vertical = 12.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    if (durationMs > 0L) {
+                        Slider(
+                            value = positionMs.coerceIn(0L, durationMs).toFloat(),
+                            onValueChange = {
+                                scrubbing = true
+                                positionMs = it.toLong()
+                                reveal()
+                            },
+                            onValueChangeFinished = {
+                                player.seekTo(positionMs)
+                                scrubbing = false
+                                reveal()
+                            },
+                            valueRange = 0f..durationMs.toFloat()
+                        )
+                    }
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text(PlaybackChrome.formatClock(positionMs), color = Color.White, style = MaterialTheme.typography.labelLarge)
+                        Text(
+                            if (durationMs > 0L) "−${PlaybackChrome.formatClock((durationMs - positionMs).coerceAtLeast(0L))}"
+                            else "буферизация",
+                            color = Color(0xFFD0D7E2),
+                            style = MaterialTheme.typography.labelLarge
+                        )
+                    }
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
+                        IconButton(onClick = { seekBy(-PlaybackChrome.SEEK_STEP_MS) }, modifier = Modifier.size(if (isTv) 64.dp else 52.dp)) {
+                            Icon(Icons.Default.FastRewind, "Назад на 10 секунд", tint = Color.White, modifier = Modifier.size(32.dp))
+                        }
+                        Spacer(Modifier.width(12.dp))
+                        IconButton(
+                            onClick = { togglePlayback() },
+                            modifier = Modifier.size(if (isTv) 76.dp else 64.dp).focusRequester(playFocus)
+                        ) {
+                            Icon(
+                                if (playWhenReady) Icons.Default.Pause else Icons.Default.PlayArrow,
+                                if (playWhenReady) "Пауза" else "Воспроизвести",
+                                tint = Color.White,
+                                modifier = Modifier.size(40.dp)
+                            )
+                        }
+                        Spacer(Modifier.width(12.dp))
+                        IconButton(onClick = { seekBy(PlaybackChrome.SEEK_STEP_MS) }, modifier = Modifier.size(if (isTv) 64.dp else 52.dp)) {
+                            Icon(Icons.Default.FastForward, "Вперёд на 10 секунд", tint = Color.White, modifier = Modifier.size(32.dp))
+                        }
+                    }
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        PlayerChip(Icons.Default.Speed, PlaybackChrome.speedLabel(speed), Modifier.weight(1f)) {
+                            speed = PlaybackChrome.nextSpeed(speed)
+                            writePlayerChrome(context, speed, fit)
+                            reveal()
+                        }
+                        PlayerChip(Icons.Default.AspectRatio, PlaybackChrome.fitLabel(fit), Modifier.weight(1f)) {
+                            applyFit(PlaybackChrome.nextFit(fit))
+                        }
+                        PlayerChip(Icons.Default.Bedtime, PlaybackChrome.sleepLabel(sleepMinutes), Modifier.weight(1f)) {
+                            sleepMinutes = PlaybackChrome.nextSleepMinutes(sleepMinutes)
+                            reveal()
+                        }
+                    }
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        PlayerChip(Icons.Default.Audiotrack, "Аудио", Modifier.weight(1f)) {
+                            TrackSelectionDialogBuilder(context, "Аудиодорожка", player, C.TRACK_TYPE_AUDIO)
+                                .setShowDisableOption(false)
+                                .build()
+                                .show()
+                            reveal()
+                        }
+                        PlayerChip(Icons.Default.Subtitles, "Субтитры", Modifier.weight(1f)) {
+                            TrackSelectionDialogBuilder(context, "Субтитры", player, C.TRACK_TYPE_TEXT)
+                                .setShowDisableOption(true)
+                                .build()
+                                .show()
+                            reveal()
+                        }
+                        PlayerChip(Icons.AutoMirrored.Filled.OpenInNew, "Внешний", Modifier.weight(1f)) {
+                            openExternalPlayer(context, streamUrl)
+                            reveal()
+                        }
+                    }
+                    if (playbackError != null) {
+                        Card(
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer),
+                            shape = RoundedCornerShape(16.dp)
+                        ) {
+                            Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                Text("Не удалось начать воспроизведение", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.onErrorContainer)
+                                Text(playbackError.orEmpty(), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onErrorContainer)
+                                TextButton(onClick = {
+                                    playbackError = null
+                                    player.prepare()
+                                    player.playWhenReady = true
+                                    reveal()
+                                }) { Text("Повторить") }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PlayerChip(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    label: String,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit
+) {
+    OutlinedButton(onClick = onClick, modifier = modifier) {
+        Icon(icon, contentDescription = null, tint = Color.White)
+        Spacer(Modifier.width(6.dp))
+        Text(label, color = Color.White, maxLines = 1)
+    }
+}
+
+@androidx.annotation.OptIn(markerClass = [androidx.media3.common.util.UnstableApi::class])
+private fun buildPlayer(
+    context: Context,
+    streamUrl: String,
+    subtitles: List<PlaybackSubtitle>,
+    initialPositionMs: Long
+): ExoPlayer {
+    val subtitleConfigurations = subtitles.map { subtitle ->
+        MediaItem.SubtitleConfiguration.Builder(Uri.parse(subtitle.url))
+            .setMimeType(subtitle.mimeType)
+            .setLanguage(subtitle.language)
+            .setLabel(subtitle.label)
+            .setSelectionFlags(C.SELECTION_FLAG_DEFAULT)
+            .build()
+    }
+    val streamUri = Uri.parse(streamUrl)
+    val isLoopbackStream = streamUri.host == "127.0.0.1" || streamUri.host == "localhost"
+    val dataSourceFactory = DefaultHttpDataSource.Factory()
+        .setConnectTimeoutMs(12_000)
+        .setReadTimeoutMs(if (isLoopbackStream) 120_000 else 30_000)
+    val mediaSourceFactory = DefaultMediaSourceFactory(context).setDataSourceFactory(dataSourceFactory)
+    return ExoPlayer.Builder(context)
+        .setMediaSourceFactory(mediaSourceFactory)
+        .build()
+        .apply {
+            setMediaItem(
+                MediaItem.Builder()
+                    .setUri(streamUrl)
+                    .apply {
+                        val path = streamUri.lastPathSegment.orEmpty().lowercase()
+                        when {
+                            path.endsWith(".m3u8") -> setMimeType(MimeTypes.APPLICATION_M3U8)
+                            path.endsWith(".mpd") -> setMimeType(MimeTypes.APPLICATION_MPD)
+                        }
+                    }
+                    .setSubtitleConfigurations(subtitleConfigurations)
+                    .build()
+            )
+            if (initialPositionMs > 0L) seekTo(initialPositionMs)
+            prepare()
+            playWhenReady = true
+        }
+}
+
+@androidx.annotation.OptIn(markerClass = [androidx.media3.common.util.UnstableApi::class])
+private fun PlaybackChrome.Fit.toResizeMode(): Int = when (this) {
+    PlaybackChrome.Fit.Fit -> AspectRatioFrameLayout.RESIZE_MODE_FIT
+    PlaybackChrome.Fit.Fill -> AspectRatioFrameLayout.RESIZE_MODE_FILL
+    PlaybackChrome.Fit.Zoom -> AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+}
+
+private fun readPlayerChrome(context: Context): Pair<Float, PlaybackChrome.Fit> {
+    val prefs = context.getSharedPreferences(PLAYER_PREFS, Context.MODE_PRIVATE)
+    val speed = prefs.getFloat("speed", 1f).takeIf { candidate ->
+        PlaybackChrome.SPEEDS.any { kotlin.math.abs(it - candidate) < 0.02f }
+    } ?: 1f
+    val fit = runCatching { PlaybackChrome.Fit.valueOf(prefs.getString("fit", "Fit").orEmpty()) }
+        .getOrDefault(PlaybackChrome.Fit.Fit)
+    return speed to fit
+}
+
+private fun writePlayerChrome(context: Context, speed: Float, fit: PlaybackChrome.Fit) {
+    context.getSharedPreferences(PLAYER_PREFS, Context.MODE_PRIVATE)
+        .edit()
+        .putFloat("speed", speed)
+        .putString("fit", fit.name)
+        .apply()
+}
+
+private fun enterPictureInPicture(activity: Activity?) {
+    val host = activity ?: return
+    val params = PictureInPictureParams.Builder().setAspectRatio(Rational(16, 9)).build()
+    runCatching { host.enterPictureInPictureMode(params) }
+}
+
+private fun openExternalPlayer(context: Context, streamUrl: String) {
+    runCatching {
+        val intent = Intent(Intent.ACTION_VIEW).apply {
+            setDataAndType(Uri.parse(streamUrl), "video/*")
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        context.startActivity(Intent.createChooser(intent, "Открыть во внешнем плеере"))
+    }
+}
+
+END FILE: app/src/main/java/app/jacket/mobile/ui/JacketPlayerScreen.kt
+
+
+========================================================================================
+FILE: app/src/main/java/app/jacket/mobile/ui/JackettSetupCard.kt
+========================================================================================
+
+package app.jacket.mobile.ui
+
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material3.Button
+import androidx.compose.material3.Card
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.unit.dp
+import app.jacket.mobile.data.IndexerConfig
+import app.jacket.mobile.data.JackettUrl
+
+/** Optional connection to a Jackett server managed by the user; no Jackett service is bundled. */
+@Composable
+fun JackettSetupCard(
+    saved: IndexerConfig?,
+    status: String?,
+    onSave: (address: String, apiKey: String, indexer: String, dashboardCookie: String) -> Unit,
+    onTest: () -> Unit,
+    onRemove: () -> Unit
+) {
+    val parsed = remember(saved?.searchUrlTemplate) {
+        saved?.let { JackettUrl.parseTemplate(it.searchUrlTemplate) }
+    }
+    var address by remember(saved?.id, parsed?.baseUrl) { mutableStateOf(parsed?.baseUrl.orEmpty()) }
+    var apiKey by remember(saved?.id, saved?.apiKey) { mutableStateOf(saved?.apiKey.orEmpty()) }
+    var dashboardCookie by remember(saved?.id, saved?.cookie) { mutableStateOf(saved?.cookie.orEmpty()) }
+    var indexer by remember(saved?.id, parsed?.indexer) {
+        mutableStateOf(parsed?.indexer ?: JackettUrl.DEFAULT_INDEXER)
+    }
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.large
+    ) {
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(9.dp)
+        ) {
+            Text("Jackett • дополнительный агрегатор", style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold)
+            Text(
+                "Необязательная интеграция с вашим Jackett в домашней сети или на HTTPS-сервере. Один запрос ищет сразу по индексаторам, включённым в Jackett. Сам Jackett в APK не входит; остальные источники Jacket работают без него.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            OutlinedTextField(
+                value = address,
+                onValueChange = { address = it },
+                label = { Text("Адрес сервера") },
+                placeholder = { Text("http://192.168.1.50:9117") },
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
+                modifier = Modifier.fillMaxWidth()
+            )
+            OutlinedTextField(
+                value = apiKey,
+                onValueChange = { apiKey = it },
+                label = { Text("API-ключ Jackett") },
+                singleLine = true,
+                visualTransformation = PasswordVisualTransformation(),
+                modifier = Modifier.fillMaxWidth()
+            )
+            OutlinedTextField(
+                value = dashboardCookie,
+                onValueChange = { dashboardCookie = it.replace(Regex("[\\r\\n]"), "").take(8192) },
+                label = { Text("Cookie панели Jackett (необязательно)") },
+                placeholder = { Text("Cookie из авторизованной панели Jackett") },
+                singleLine = false,
+                visualTransformation = PasswordVisualTransformation(),
+                modifier = Modifier.fillMaxWidth()
+            )
+            Text(
+                "Cookie нужна для просмотра и сохранения настроек приватных индексаторов, если панель требует вход. Она шифруется на устройстве и отправляется только указанному серверу; для внешнего сервера используйте HTTPS.",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            OutlinedTextField(
+                value = indexer,
+                onValueChange = { indexer = it },
+                label = { Text("Фильтр индексатора (all — все)") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth()
+            )
+            Button(
+                modifier = Modifier.fillMaxWidth(),
+                onClick = { onSave(address, apiKey, indexer, dashboardCookie) },
+                enabled = address.isNotBlank() && apiKey.isNotBlank()
+            ) { Text(if (saved == null) "Подключить и проверить" else "Сохранить и проверить") }
+            if (saved != null) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(onClick = onTest) { Text("Проверить") }
+                    OutlinedButton(onClick = onRemove) { Text("Отключить") }
+                }
+            }
+            status?.let {
+                Text(
+                    it,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (it.startsWith("Ошибка")) MaterialTheme.colorScheme.error
+                    else MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+    }
+}
+
+END FILE: app/src/main/java/app/jacket/mobile/ui/JackettSetupCard.kt
+
+
+========================================================================================
+FILE: app/src/main/java/app/jacket/mobile/ui/MainViewModel.kt
+========================================================================================
+
+package app.jacket.mobile.ui
+
+import android.app.Application
+import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.viewModelScope
+import app.jacket.mobile.data.CatalogItem
+import app.jacket.mobile.data.FilmixDeviceAuth
+import app.jacket.mobile.data.FilmixCatalogClient
+import app.jacket.mobile.data.FilmixPendingDevice
+import app.jacket.mobile.data.HdRezkaCatalogClient
+import app.jacket.mobile.data.HdRezkaLoginClient
+import app.jacket.mobile.data.HdRezkaSettings
+import app.jacket.mobile.data.IndexerConfig
+import app.jacket.mobile.data.IndexerFailure
+import app.jacket.mobile.data.IndexerRegistry
+import app.jacket.mobile.data.JackettUrl
+import app.jacket.mobile.data.JackettIndexerClient
+import app.jacket.mobile.data.JackettIndexerEntry
+import app.jacket.mobile.data.JackettConfigField
+import app.jacket.mobile.data.MediaCatalogClient
+import app.jacket.mobile.data.MediaDetails
+import app.jacket.mobile.data.MediaSection
+import app.jacket.mobile.data.MediaSeason
+import app.jacket.mobile.data.MediaEpisode
+import app.jacket.mobile.data.MediaSettingsStore
+import app.jacket.mobile.data.WebSearchProvider
+import app.jacket.mobile.data.SourceResult
+import app.jacket.mobile.data.TrackerSearchClient
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.runInterruptible
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.withContext
+
+/** UI state and orchestration for the self-contained catalog/indexer app. */
+class MainViewModel(application: Application) : AndroidViewModel(application) {
+    private val settings = MediaSettingsStore(application)
+    private val catalog = MediaCatalogClient()
+    private val indexers = IndexerRegistry(catalog)
+    private var catalogJob: Job? = null
+    private var sourcesJob: Job? = null
+    private val sourceSearchEpoch = SourceSearchEpoch()
+    private var jackettCatalogJob: Job? = null
+    private var jackettConfigJob: Job? = null
+    private var jackettTestJob: Job? = null
+    private var indexerTestJob: Job? = null
+    private var episodeJob: Job? = null
+    private var filmixPairingJob: Job? = null
+    private var hdRezkaLoginJob: Job? = null
+
+    private val _tmdbToken = MutableStateFlow(settings.tmdbToken())
+    val tmdbToken: StateFlow<String> = _tmdbToken.asStateFlow()
+
+    private val _customIndexers = MutableStateFlow(settings.indexers())
+    val customIndexers: StateFlow<List<IndexerConfig>> = _customIndexers.asStateFlow()
+
+    private val _webSearchProviders = MutableStateFlow(settings.webSearchProviders())
+    val webSearchProviders: StateFlow<List<WebSearchProvider>> = _webSearchProviders.asStateFlow()
+
+    private val _filmixToken = MutableStateFlow(settings.filmixToken())
+    val filmixToken: StateFlow<String> = _filmixToken.asStateFlow()
+
+    private val _filmixApiBase = MutableStateFlow(settings.filmixApiBase())
+    val filmixApiBase: StateFlow<String> = _filmixApiBase.asStateFlow()
+
+    private val _filmixCode = MutableStateFlow<String?>(null)
+    val filmixCode: StateFlow<String?> = _filmixCode.asStateFlow()
+
+    private val _filmixStatus = MutableStateFlow(
+        if (_filmixToken.value.isBlank()) "Устройство не авторизовано" else "Токен сохранён"
+    )
+    val filmixStatus: StateFlow<String> = _filmixStatus.asStateFlow()
+
+    private val _isFilmixPairing = MutableStateFlow(false)
+    val isFilmixPairing: StateFlow<Boolean> = _isFilmixPairing.asStateFlow()
+
+    private val _hdRezkaSettings = MutableStateFlow(settings.hdRezkaSettings())
+    val hdRezkaSettings: StateFlow<HdRezkaSettings> = _hdRezkaSettings.asStateFlow()
+
+    private val _hdRezkaStatus = MutableStateFlow(
+        if (_hdRezkaSettings.value.connected) "Cookie-сессия сохранена; серверная проверка не выполнялась" else "Не авторизовано"
+    )
+    val hdRezkaStatus: StateFlow<String> = _hdRezkaStatus.asStateFlow()
+
+    private val _isHdRezkaBusy = MutableStateFlow(false)
+    val isHdRezkaBusy: StateFlow<Boolean> = _isHdRezkaBusy.asStateFlow()
+
+    private val _indexerStatuses = MutableStateFlow<Map<String, String>>(emptyMap())
+    val indexerStatuses: StateFlow<Map<String, String>> = _indexerStatuses.asStateFlow()
+
+    private val _indexerErrors = MutableStateFlow<List<IndexerFailure>>(emptyList())
+    val indexerErrors: StateFlow<List<IndexerFailure>> = _indexerErrors.asStateFlow()
+
+    private val _homeSections = MutableStateFlow<List<MediaSection>>(emptyList())
+    val homeSections: StateFlow<List<MediaSection>> = _homeSections.asStateFlow()
+
+    private val _items = MutableStateFlow<List<CatalogItem>>(emptyList())
+    val items: StateFlow<List<CatalogItem>> = _items.asStateFlow()
+
+    private val _favorites = MutableStateFlow(settings.favorites())
+    val favorites: StateFlow<List<CatalogItem>> = _favorites.asStateFlow()
+
+    private val _history = MutableStateFlow(settings.history())
+    val history: StateFlow<List<CatalogItem>> = _history.asStateFlow()
+
+    private val _selectedDetails = MutableStateFlow<MediaDetails?>(null)
+    val selectedDetails: StateFlow<MediaDetails?> = _selectedDetails.asStateFlow()
+
+    private val _seasons = MutableStateFlow<List<MediaSeason>>(emptyList())
+    val seasons: StateFlow<List<MediaSeason>> = _seasons.asStateFlow()
+
+    private val _episodes = MutableStateFlow<List<MediaEpisode>>(emptyList())
+    val episodes: StateFlow<List<MediaEpisode>> = _episodes.asStateFlow()
+
+    private val _selectedSeasonNumber = MutableStateFlow<Int?>(null)
+    val selectedSeasonNumber: StateFlow<Int?> = _selectedSeasonNumber.asStateFlow()
+
+    private val _isLoadingEpisodes = MutableStateFlow(false)
+    val isLoadingEpisodes: StateFlow<Boolean> = _isLoadingEpisodes.asStateFlow()
+
+    private val _sourceResults = MutableStateFlow<List<SourceResult>>(emptyList())
+    val sourceResults: StateFlow<List<SourceResult>> = _sourceResults.asStateFlow()
+
+    private val _jackettIndexers = MutableStateFlow<List<JackettIndexerEntry>>(emptyList())
+    val jackettIndexers: StateFlow<List<JackettIndexerEntry>> = _jackettIndexers.asStateFlow()
+
+    private val _isLoadingJackettIndexers = MutableStateFlow(false)
+    val isLoadingJackettIndexers: StateFlow<Boolean> = _isLoadingJackettIndexers.asStateFlow()
+
+    private val _jackettCatalogStatus = MutableStateFlow<String?>(null)
+    val jackettCatalogStatus: StateFlow<String?> = _jackettCatalogStatus.asStateFlow()
+
+    private val _testingJackettIndexerId = MutableStateFlow<String?>(null)
+    val testingJackettIndexerId: StateFlow<String?> = _testingJackettIndexerId.asStateFlow()
+
+    private val _jackettConfigIndexerId = MutableStateFlow<String?>(null)
+    val jackettConfigIndexerId: StateFlow<String?> = _jackettConfigIndexerId.asStateFlow()
+
+    private val _jackettConfigFields = MutableStateFlow<List<JackettConfigField>>(emptyList())
+    val jackettConfigFields: StateFlow<List<JackettConfigField>> = _jackettConfigFields.asStateFlow()
+
+    private val _isLoadingJackettConfig = MutableStateFlow(false)
+    val isLoadingJackettConfig: StateFlow<Boolean> = _isLoadingJackettConfig.asStateFlow()
+
+    private val _isSavingJackettConfig = MutableStateFlow(false)
+    val isSavingJackettConfig: StateFlow<Boolean> = _isSavingJackettConfig.asStateFlow()
+
+    private val _jackettConfigStatus = MutableStateFlow<String?>(null)
+    val jackettConfigStatus: StateFlow<String?> = _jackettConfigStatus.asStateFlow()
+
+
+    private val _isLoading = MutableStateFlow(false)
+    val isLoading: StateFlow<Boolean> = _isLoading.asStateFlow()
+
+    private fun beginSourceSearch(): Long {
+        val epoch = sourceSearchEpoch.next()
+        sourcesJob?.cancel()
+        _isSearchingSources.value = true
+        return epoch
+    }
+
+    private fun cancelSourceSearch() {
+        sourceSearchEpoch.next()
+        sourcesJob?.cancel()
+        sourcesJob = null
+        _isSearchingSources.value = false
+    }
+
+    private fun finishSourceSearch(epoch: Long) {
+        if (sourceSearchEpoch.isCurrent(epoch)) {
+            sourcesJob = null
+            _isSearchingSources.value = false
+        }
+    }
+
+    private val _isSearchingSources = MutableStateFlow(false)
+    val isSearchingSources: StateFlow<Boolean> = _isSearchingSources.asStateFlow()
+
+    private val _message = MutableStateFlow<String?>(null)
+    val message: StateFlow<String?> = _message.asStateFlow()
+
+    private val _isError = MutableStateFlow(false)
+    val isError: StateFlow<Boolean> = _isError.asStateFlow()
+
+    fun loadHome(force: Boolean = false) {
+        if (!force && _homeSections.value.isNotEmpty()) return
+        catalogJob?.cancel()
+        catalogJob = viewModelScope.launch {
+            _isLoading.value = true
+            clearMessage()
+            try {
+                val sections = withContext(Dispatchers.IO) {
+                    catalog.loadHome(_tmdbToken.value)
+                }
+                _homeSections.value = sections
+                _message.value = if (sections.isEmpty()) "Каталог пока пуст. Проверьте подключение к интернету." else null
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                showError(error.message ?: "Не удалось загрузить главную страницу")
+            } finally {
+                _isLoading.value = false
+            }
+        }
+    }
+
+    fun loadMovies() = loadList { catalog.movies(_tmdbToken.value) }
+    fun loadSeries() = loadList { catalog.series(_tmdbToken.value) }
+
+    fun clearSearch() {
+        catalogJob?.cancel()
+        cancelSourceSearch()
+        _items.value = emptyList()
+        _sourceResults.value = emptyList()
+        _indexerErrors.value = emptyList()
+        _isSearchingSources.value = false
+        _message.value = null
+        _isError.value = false
+    }
+
+    fun search(query: String) {
+        val clean = query.trim()
+        if (clean.isBlank()) {
+            clearSearch()
+            _message.value = "Введите название фильма или сериала"
+            _isError.value = true
+            return
+        }
+        cancelSourceSearch()
+        _sourceResults.value = emptyList()
+        _indexerErrors.value = emptyList()
+        loadList { catalog.search(clean, _tmdbToken.value) }
+    }
+
+    fun openItem(item: CatalogItem) {
+        catalogJob?.cancel()
+        episodeJob?.cancel()
+        _seasons.value = emptyList()
+        _episodes.value = emptyList()
+        _selectedSeasonNumber.value = null
+        _isLoadingEpisodes.value = false
+        catalogJob = viewModelScope.launch {
+            _isLoading.value = true
+            _selectedDetails.value = MediaDetails(item = item, description = item.overview, pageUrl = item.catalogUrl)
+            _sourceResults.value = emptyList()
+            _indexerErrors.value = emptyList()
+            clearMessage()
+            try {
+                val token = _tmdbToken.value
+                val details = withContext(Dispatchers.IO) {
+                    catalog.tmdbDetails(item, token)
+                }
+                _selectedDetails.value = details
+                settings.addToHistory(details.item)
+                _history.value = settings.history()
+
+                // Seasons are optional metadata. A TMDB failure must never hide the card.
+                if (item.kind == app.jacket.mobile.data.MediaKind.SERIES && token.isNotBlank()) {
+                    val availableSeasons = runCatching {
+                        withContext(Dispatchers.IO) { catalog.seasons(item, token) }
+                    }.getOrDefault(emptyList())
+                    _seasons.value = availableSeasons
+                    val firstSeason = availableSeasons.firstOrNull { it.seasonNumber == 1 }
+                        ?: availableSeasons.firstOrNull()
+                    if (firstSeason != null) {
+                        _selectedSeasonNumber.value = firstSeason.seasonNumber
+                        _isLoadingEpisodes.value = true
+                        _episodes.value = runCatching {
+                            withContext(Dispatchers.IO) {
+                                catalog.episodes(item, firstSeason.seasonNumber, token)
+                            }
+                        }.getOrDefault(emptyList())
+                        _isLoadingEpisodes.value = false
+                    }
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                _selectedDetails.value = MediaDetails(
+                    item = item,
+                    description = item.overview,
+                    pageUrl = item.catalogUrl
+                )
+                showError(error.message ?: "Не удалось загрузить подробности")
+            } finally {
+                _isLoading.value = false
+                _isLoadingEpisodes.value = false
+            }
+        }
+    }
+
+    fun closeDetails() {
+        catalogJob?.cancel()
+        episodeJob?.cancel()
+        _selectedDetails.value = null
+        _sourceResults.value = emptyList()
+        _indexerErrors.value = emptyList()
+        _seasons.value = emptyList()
+        _episodes.value = emptyList()
+        _selectedSeasonNumber.value = null
+        _isLoadingEpisodes.value = false
+    }
+
+    fun selectSeason(item: CatalogItem, seasonNumber: Int) {
+        if (seasonNumber <= 0 || _selectedSeasonNumber.value == seasonNumber) return
+        episodeJob?.cancel()
+        _selectedSeasonNumber.value = seasonNumber
+        _episodes.value = emptyList()
+        _isLoadingEpisodes.value = true
+        episodeJob = viewModelScope.launch {
+            try {
+                val loaded = withContext(Dispatchers.IO) {
+                    catalog.episodes(item, seasonNumber, _tmdbToken.value)
+                }
+                _episodes.value = loaded
+                if (loaded.isEmpty()) {
+                    _message.value = "В этом сезоне TMDB не вернул серии"
+                    _isError.value = false
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                showError(error.message ?: "Не удалось загрузить список серий")
+            } finally {
+                _isLoadingEpisodes.value = false
+            }
+        }
+    }
+
+    /**
+     * Federates the detail-card search across torrent indexers, built-in trackers,
+     * Filmix, HDRezka and license-gated Internet Archive results.
+     */
+    fun findSources(item: CatalogItem, episode: MediaEpisode? = null) {
+        val year = item.year.takeIf { it.matches(Regex("\\d{4}")) }
+        val query = if (episode != null) {
+            listOf(item.title, episode.releaseCode, episode.name).joinToString(" ")
+        } else {
+            listOfNotNull(item.title, year).joinToString(" ")
+        }
+        runCombinedSourceSearch(query, item, episode)
+    }
+
+    private fun runCombinedSourceSearch(query: String, item: CatalogItem, episode: MediaEpisode?) {
+        // Torrent releases need the episode code, but streaming catalogues
+        // search the series by its title and resolve the episode separately.
+        val catalogueQuery = listOfNotNull(
+            item.title,
+            item.year.takeIf { it.matches(Regex("\\d{4}")) }
+        ).joinToString(" ")
+        val searchEpoch = beginSourceSearch()
+        sourcesJob = viewModelScope.launch {
+            _sourceResults.value = emptyList()
+            _indexerErrors.value = emptyList()
+            clearMessage()
+            try {
+                val customIndexers = _customIndexers.value
+                val builtInTrackers = _webSearchProviders.value.filter {
+                    it.enabled && TrackerSearchClient.supports(it.id)
+                }
+                val filmixTokenValue = settings.filmixToken()
+                val filmixApiValue = settings.filmixApiBase()
+                val filmixDeviceValue = settings.filmixDeviceId()
+                val rezkaSettings = settings.hdRezkaSettings()
+
+                val combined = runInterruptible(Dispatchers.IO) {
+                    val results = ArrayList<SourceResult>()
+                    val failures = ArrayList<IndexerFailure>()
+
+                    runCatching { indexers.searchDetailed(query, customIndexers, includeArchive = true) }
+                        .onSuccess { outcome ->
+                            results += outcome.results
+                            failures.addAll(outcome.failures)
+                        }
+                        .onFailure { error ->
+                        if (error is CancellationException || Thread.currentThread().isInterrupted) {
+                            throw CancellationException("Поиск источников отменён")
+                        }
+                            failures += IndexerFailure("indexers", "Торрент-индексаторы", safeProviderMessage(error))
+                        }
+
+                    if (builtInTrackers.isNotEmpty()) {
+                        runCatching {
+                            TrackerSearchClient.searchAll(builtInTrackers, query) { partial ->
+                                if (sourceSearchEpoch.isCurrent(searchEpoch)) {
+                                    val partialResults = (results + partial.results)
+                                        .distinctBy { it.id }
+                                        .take(160)
+                                    _sourceResults.value = partialResults
+                                    val partialFailures = partial.failures.mapIndexed { index, message ->
+                                        IndexerFailure(
+                                            indexerId = "built-in-tracker-$index",
+                                            indexerName = "Встроенные трекеры",
+                                            message = message
+                                        )
+                                    }
+                                    _indexerErrors.value = (failures + partialFailures).distinctBy { it.indexerId }
+                                    _message.value = buildString {
+                                        append("Поступило раздач: ${partialResults.size}")
+                                        append(" • трекеров ответило: ${partial.completedProviders}/${partial.totalProviders}")
+                                        if (partial.failures.isNotEmpty()) append(" • ошибок: ${partial.failures.size}")
+                                        if (partial.timedOut) append(" • поиск остановлен по тайм-ауту")
+                                        else if (partial.completedProviders < partial.totalProviders) append(" • ищем дальше…")
+                                    }
+                                    _isError.value = false
+                                }
+                            }
+                        }
+                            .onSuccess { outcome ->
+                                results += outcome.results
+                                failures.addAll(
+                                    outcome.failures.mapIndexed { index, message ->
+                                        IndexerFailure(
+                                            indexerId = "built-in-tracker-$index",
+                                            indexerName = "Встроенные трекеры",
+                                            message = message
+                                        )
+                                    }
+                                )
+                            }
+                            .onFailure { error ->
+                        if (error is CancellationException || Thread.currentThread().isInterrupted) {
+                            throw CancellationException("Поиск источников отменён")
+                        }
+                                failures += IndexerFailure("built-in-trackers", "Встроенные трекеры", safeProviderMessage(error))
+                            }
+                    }
+
+                    if (filmixTokenValue.isNotBlank()) {
+                        runCatching {
+                            FilmixCatalogClient.searchSources(
+                                apiBase = filmixApiValue,
+                                deviceId = filmixDeviceValue,
+                                token = filmixTokenValue,
+                                query = catalogueQuery,
+                                kind = item.kind,
+                                episodeCode = episode?.releaseCode
+                            )
+                        }.onSuccess { results += it }
+                            .onFailure { error ->
+                        if (error is CancellationException || Thread.currentThread().isInterrupted) {
+                            throw CancellationException("Поиск источников отменён")
+                        }
+                                failures += IndexerFailure(
+                                    "filmix", "Filmix", FilmixDeviceAuth.userFriendlyError(error)
+                                )
+                            }
+                    }
+
+                    if (rezkaSettings.mirror.isNotBlank()) {
+                        runCatching {
+                            HdRezkaCatalogClient.searchSources(
+                                settings = rezkaSettings,
+                                query = catalogueQuery,
+                                kind = item.kind,
+                                episodeCode = episode?.releaseCode
+                            )
+                        }.onSuccess { results += it }
+                            .onFailure { error ->
+                        if (error is CancellationException || Thread.currentThread().isInterrupted) {
+                            throw CancellationException("Поиск источников отменён")
+                        }
+                                failures += IndexerFailure(
+                                    "hdrezka", "HDRezka", HdRezkaLoginClient.userFriendlyError(error)
+                                )
+                            }
+                    }
+
+                    val orderedResults = results.distinctBy { it.id }.sortedBy { source ->
+                        when (source.sourceType) {
+                            app.jacket.mobile.data.MediaSourceType.HDREZKA -> 0
+                            app.jacket.mobile.data.MediaSourceType.FILMIX -> 1
+                            app.jacket.mobile.data.MediaSourceType.TORRENT -> 2
+                            app.jacket.mobile.data.MediaSourceType.LICENSED_DIRECT -> 3
+                        }
+                    }.take(160)
+                    orderedResults to failures.distinctBy { it.indexerId }
+                }
+
+                if (sourceSearchEpoch.isCurrent(searchEpoch)) {
+                    _sourceResults.value = combined.first
+                    _indexerErrors.value = combined.second
+                    _message.value = when {
+                    combined.first.isNotEmpty() && combined.second.isNotEmpty() ->
+                        "Найдено источников: ${combined.first.size}. Недоступны: ${combined.second.size}."
+                    combined.first.isNotEmpty() ->
+                        "Найдено источников: ${combined.first.size}."
+                    combined.second.isNotEmpty() ->
+                        "Источники ответили с ошибками. Проверьте подключение и настройки."
+                    else -> "Ничего не найдено. Проверьте название и подключённые источники."
+                }
+                    _isError.value = combined.first.isEmpty() && combined.second.isNotEmpty()
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                if (sourceSearchEpoch.isCurrent(searchEpoch)) {
+                    showError(error.message ?: "Не удалось найти источники")
+                }
+            } finally {
+                finishSourceSearch(searchEpoch)
+            }
+        }
+    }
+
+    private fun safeProviderMessage(error: Throwable): String =
+        error.message?.replace(Regex("[\\r\\n\\t]+"), " ")?.take(220)
+            ?.ifBlank { "Источник временно недоступен" }
+            ?: "Источник временно недоступен"
+
+    /** Fetches and parses releases from one selected tracker inside Jacket. */
+    fun searchTracker(provider: WebSearchProvider, query: String) {
+        if (query.isBlank()) {
+            showError("Введите название для поиска")
+            return
+        }
+        val searchEpoch = beginSourceSearch()
+        sourcesJob = viewModelScope.launch {
+            _sourceResults.value = emptyList()
+            _indexerErrors.value = emptyList()
+            clearMessage()
+            try {
+                val results = runInterruptible(Dispatchers.IO) {
+                    if (provider.id == "tracker-archive") {
+                        catalog.archiveSources(query.trim())
+                    } else {
+                        TrackerSearchClient.search(provider, query.trim())
+                    }
+                }
+                _sourceResults.value = results
+                _message.value = if (results.isEmpty()) {
+                    "На сайте не найдено раздач с прямой magnet или .torrent ссылкой."
+                } else {
+                    "Найдено раздач: ${results.size} • выберите релиз."
+                }
+                _isError.value = false
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                if (sourceSearchEpoch.isCurrent(searchEpoch)) {
+                    showError(error.message ?: "Не удалось разобрать результаты трекера")
+                }
+            } finally {
+                finishSourceSearch(searchEpoch)
+            }
+        }
+    }
+
+    /** Searches every enabled built-in tracker and combines the releases into one list. */
+    fun searchAllTrackers(query: String) {
+        if (query.isBlank()) {
+            showError("Введите название для поиска")
+            return
+        }
+        val providers = _webSearchProviders.value.filter {
+            it.enabled && TrackerSearchClient.supports(it.id)
+        }
+        if (providers.isEmpty()) {
+            showError("Включите хотя бы один встроенный трекер в настройках сайтов")
+            return
+        }
+        val searchEpoch = beginSourceSearch()
+        sourcesJob = viewModelScope.launch {
+            _sourceResults.value = emptyList()
+            _indexerErrors.value = emptyList()
+            clearMessage()
+            try {
+                val outcome = runInterruptible(Dispatchers.IO) {
+                    TrackerSearchClient.searchAll(providers, query.trim()) { partial ->
+                        if (sourceSearchEpoch.isCurrent(searchEpoch)) {
+                            _sourceResults.value = partial.results
+                            _message.value = buildString {
+                                append("Получено раздач: ${partial.results.size}")
+                                append(" • трекеров ответило: ${partial.completedProviders}/${partial.totalProviders}")
+                                if (partial.failures.isNotEmpty()) append(" • ошибок: ${partial.failures.size}")
+                                if (partial.timedOut) append(" • поиск остановлен по тайм-ауту")
+                                else if (partial.completedProviders < partial.totalProviders) append(" • ищем дальше…")
+                            }
+                            _isError.value = false
+                        }
+                    }
+                }
+                _sourceResults.value = outcome.results
+                val summary = when {
+                    outcome.results.isEmpty() && outcome.timedOut ->
+                        "Поиск остановлен по тайм-ауту. Попробуйте повторить запрос позже."
+                    outcome.results.isEmpty() ->
+                        "На включённых трекерах не найдено раздач с прямыми magnet или .torrent ссылками."
+                    outcome.timedOut ->
+                        "Найдено раздач: ${outcome.results.size} • часть трекеров не успела ответить за 25 секунд."
+                    else ->
+                        "Найдено раздач: ${outcome.results.size} • трекеров ответило: ${providers.size - outcome.failures.size}/${providers.size}."
+                }
+                _message.value = if (outcome.failures.isEmpty()) summary else {
+                    "$summary Ошибок: ${outcome.failures.size}."
+                }
+                _isError.value = outcome.results.isEmpty() && outcome.failures.isNotEmpty()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                if (sourceSearchEpoch.isCurrent(searchEpoch)) {
+                    showError(error.message ?: "Не удалось выполнить поиск по трекерам")
+                }
+            } finally {
+                finishSourceSearch(searchEpoch)
+            }
+        }
+    }
+
+    /** Builds a release query from a catalog item and searches every enabled built-in tracker. */
+    fun findSourcesOnAllTrackers(item: CatalogItem, episode: MediaEpisode? = null) {
+        findSources(item, episode)
+    }
+
+    /** Manual search from the indexer dashboard; queries all enabled user indexers in parallel order. */
+    fun searchIndexers(query: String) {
+        if (query.isBlank()) {
+            showError("Введите название для ручного поиска")
+            return
+        }
+        runSourceSearch(query.trim(), includeArchive = false)
+    }
+
+    private fun runSourceSearch(query: String, includeArchive: Boolean) {
+        val searchEpoch = beginSourceSearch()
+        sourcesJob = viewModelScope.launch {
+            _sourceResults.value = emptyList()
+            _indexerErrors.value = emptyList()
+            clearMessage()
+            try {
+                val outcome = withContext(Dispatchers.IO) {
+                    indexers.searchDetailed(query, _customIndexers.value, includeArchive)
+                }
+                _sourceResults.value = outcome.results
+                _indexerErrors.value = outcome.failures
+                val resultMessage = if (outcome.results.isEmpty()) {
+                    "Ничего не найдено"
+                } else {
+                    "Найдено результатов: ${outcome.results.size}"
+                }
+                _message.value = if (outcome.failures.isEmpty()) resultMessage else {
+                    "$resultMessage • ошибок источников: ${outcome.failures.size}"
+                }
+                _isError.value = outcome.results.isEmpty() && outcome.failures.isNotEmpty()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                if (sourceSearchEpoch.isCurrent(searchEpoch)) {
+                    showError(error.message ?: "Ошибка поиска источников")
+                }
+            } finally {
+                finishSourceSearch(searchEpoch)
+            }
+        }
+    }
+
+    fun toggleFavorite(item: CatalogItem) {
+        val current = _favorites.value
+        val updated = if (current.any { it.id == item.id }) {
+            current.filterNot { it.id == item.id }
+        } else {
+            (listOf(item) + current).take(MAX_FAVORITES)
+        }
+        settings.saveFavorites(updated)
+        _favorites.value = updated
+        _message.value = if (updated.any { it.id == item.id }) "Добавлено в избранное" else "Удалено из избранного"
+        _isError.value = false
+    }
+
+    fun isFavorite(item: CatalogItem): Boolean = _favorites.value.any { it.id == item.id }
+
+    fun saveTmdbToken(token: String) {
+        settings.saveTmdbToken(token)
+        _tmdbToken.value = settings.tmdbToken()
+        _homeSections.value = emptyList()
+        _items.value = emptyList()
+        _message.value = if (_tmdbToken.value.isBlank()) {
+            "Используется открытый каталог Internet Archive"
+        } else {
+            "TMDB подключён. Каталог будет обновлён."
+        }
+        _isError.value = false
+        loadHome(force = true)
+    }
+
+    fun saveIndexer(config: IndexerConfig): Boolean {
+        return try {
+            val saved = settings.saveIndexer(config)
+            _customIndexers.value = settings.indexers()
+            _indexerStatuses.value = _indexerStatuses.value - saved.id
+            _message.value = "Индексатор «${saved.name}» сохранён"
+            _isError.value = false
+            true
+        } catch (error: Exception) {
+            showError(error.message ?: "Не удалось сохранить индексатор")
+            false
+        }
+    }
+
+    /** Optional connection to the user's own Jackett server. Nothing is bundled in the APK. */
+    fun saveJackett(
+        address: String,
+        apiKey: String,
+        indexerFilter: String,
+        dashboardCookie: String = ""
+    ) {
+        val base = JackettUrl.normalizeBase(address)
+        if (base == null) {
+            showError("Некорректный адрес Jackett. HTTP разрешён только для локального адреса.")
+            return
+        }
+        if (apiKey.isBlank()) {
+            showError("Введите API-ключ Jackett для поиска Torznab")
+            return
+        }
+        val existing = _customIndexers.value.firstOrNull {
+            it.protocol == app.jacket.mobile.data.IndexerProtocol.JACKETT
+        }
+        val config = IndexerConfig(
+            id = existing?.id.orEmpty(),
+            name = "Jackett",
+            searchUrlTemplate = JackettUrl.searchTemplate(base, indexerFilter),
+            protocol = app.jacket.mobile.data.IndexerProtocol.JACKETT,
+            apiKey = apiKey.trim(),
+            cookie = dashboardCookie.trim()
+        )
+        if (saveIndexer(config)) {
+            _customIndexers.value.firstOrNull {
+                it.protocol == app.jacket.mobile.data.IndexerProtocol.JACKETT
+            }?.let {
+                testIndexer(it.id)
+                _jackettCatalogStatus.value = if (dashboardCookie.isBlank()) {
+                    "Поиск Torznab подключён. Чтобы настраивать приватные индексаторы в приложении, добавьте Cookie авторизованной панели."
+                } else {
+                    "Подключено. Каталог обновится автоматически."
+                }
+            }
+        }
+    }
+    /** Loads Jackett's native REST indexer catalogue into the in-app settings screen. */
+    fun refreshJackettIndexers() {
+        val config = _customIndexers.value.firstOrNull {
+            it.protocol == app.jacket.mobile.data.IndexerProtocol.JACKETT
+        }
+        if (config == null) {
+            _jackettIndexers.value = emptyList()
+            _jackettCatalogStatus.value = "Сначала подключите свой сервер Jackett."
+            _isLoadingJackettIndexers.value = false
+            return
+        }
+        jackettCatalogJob?.cancel()
+        jackettCatalogJob = viewModelScope.launch {
+            _isLoadingJackettIndexers.value = true
+            _jackettCatalogStatus.value = "Загружаем список индексаторов Jackett…"
+            try {
+                val entries = withContext(Dispatchers.IO) {
+                    JackettIndexerClient.fetch(config)
+                }
+                _jackettIndexers.value = entries
+                val configured = entries.count { it.configured }
+                _jackettCatalogStatus.value =
+                    "Получено индексаторов: ${entries.size} • настроено на сервере: $configured."
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                _jackettCatalogStatus.value =
+                    error.message?.replace(Regex("[\\r\\n\\t]+"), " ")?.take(220)
+                        ?: "Не удалось загрузить каталог Jackett."
+            } finally {
+                _isLoadingJackettIndexers.value = false
+            }
+        }
+    }
+
+    /** Runs the server-side tracker test and refreshes its reported last_error status. */
+    fun testJackettIndexer(indexerId: String) {
+        val config = _customIndexers.value.firstOrNull {
+            it.protocol == app.jacket.mobile.data.IndexerProtocol.JACKETT
+        } ?: run {
+            _jackettCatalogStatus.value = "Сначала подключите Jackett."
+            return
+        }
+        if (_testingJackettIndexerId.value != null) return
+        jackettTestJob?.cancel()
+        jackettTestJob = viewModelScope.launch {
+            _testingJackettIndexerId.value = indexerId
+            _jackettCatalogStatus.value = "Проверяем «$indexerId» на сервере Jackett…"
+            var testFailure: Exception? = null
+            try {
+                withContext(Dispatchers.IO) {
+                    JackettIndexerClient.testIndexer(config, indexerId)
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                testFailure = error
+            }
+
+            try {
+                val entries = withContext(Dispatchers.IO) {
+                    JackettIndexerClient.fetch(config)
+                }
+                _jackettIndexers.value = entries
+                val entryError = entries.firstOrNull { it.id == indexerId }?.lastError
+                _jackettCatalogStatus.value = if (testFailure == null) {
+                    "Проверка «$indexerId» прошла успешно."
+                } else {
+                    val reason = entryError ?: testFailure?.message ?: "неизвестная ошибка"
+                    "Проверка «$indexerId» не пройдена: ${reason.replace(Regex("[\\r\\n\\t]+"), " ").take(200)}"
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (refreshError: Exception) {
+                val reason = testFailure?.message ?: refreshError.message ?: "ошибка сервера"
+                _jackettCatalogStatus.value =
+                    "Не удалось обновить статус «$indexerId»: ${reason.replace(Regex("[\\r\\n\\t]+"), " ").take(200)}"
+            } finally {
+                _testingJackettIndexerId.value = null
+            }
+        }
+    }
+
+    /** Loads Jackett's dynamic setup fields for one public or private indexer. */
+    fun loadJackettIndexerConfig(indexerId: String) {
+        val config = _customIndexers.value.firstOrNull {
+            it.protocol == app.jacket.mobile.data.IndexerProtocol.JACKETT
+        } ?: run {
+            _jackettConfigStatus.value = "Сначала подключите Jackett."
+            return
+        }
+        jackettConfigJob?.cancel()
+        _jackettConfigIndexerId.value = indexerId
+        _jackettConfigFields.value = emptyList()
+        jackettConfigJob = viewModelScope.launch {
+            _isLoadingJackettConfig.value = true
+            _jackettConfigStatus.value = "Загружаем поля настройки…"
+            try {
+                val fields = withContext(Dispatchers.IO) {
+                    JackettIndexerClient.fetchIndexerConfig(config, indexerId)
+                }
+                _jackettConfigFields.value = fields
+                _jackettConfigStatus.value = if (fields.isEmpty()) {
+                    "Для этого индексатора Jackett не вернул настраиваемых полей."
+                } else {
+                    "Полей настройки: ${fields.count { it.type !in setOf("displayinfo", "displayimage") }}."
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                _jackettConfigStatus.value =
+                    error.message?.replace(Regex("[\\r\\n\\t]+"), " ")?.take(240)
+                        ?: "Не удалось получить настройки индексатора."
+            } finally {
+                _isLoadingJackettConfig.value = false
+            }
+        }
+    }
+
+    fun updateJackettConfigField(fieldId: String, value: String) {
+        _jackettConfigFields.value = _jackettConfigFields.value.map { field ->
+            if (field.id == fieldId) field.copy(value = value) else field
+        }
+    }
+
+    fun updateJackettConfigValues(fieldId: String, values: List<String>) {
+        _jackettConfigFields.value = _jackettConfigFields.value.map { field ->
+            if (field.id == fieldId) field.copy(values = values.distinct()) else field
+        }
+    }
+
+    fun closeJackettIndexerConfig() {
+        jackettConfigJob?.cancel()
+        jackettConfigJob = null
+        _jackettConfigIndexerId.value = null
+        _jackettConfigFields.value = emptyList()
+        _jackettConfigStatus.value = null
+        _isLoadingJackettConfig.value = false
+        _isSavingJackettConfig.value = false
+    }
+
+    fun saveJackettIndexerConfig() {
+        val indexerId = _jackettConfigIndexerId.value ?: return
+        val config = _customIndexers.value.firstOrNull {
+            it.protocol == app.jacket.mobile.data.IndexerProtocol.JACKETT
+        } ?: run {
+            _jackettConfigStatus.value = "Сначала подключите Jackett."
+            return
+        }
+        val fields = _jackettConfigFields.value
+        if (fields.isEmpty()) {
+            _jackettConfigStatus.value = "Нет полей настройки для сохранения."
+            return
+        }
+        jackettConfigJob?.cancel()
+        jackettConfigJob = viewModelScope.launch {
+            _isSavingJackettConfig.value = true
+            _jackettConfigStatus.value = "Сохраняем настройки в Jackett…"
+            try {
+                withContext(Dispatchers.IO) {
+                    JackettIndexerClient.updateIndexerConfig(config, indexerId, fields)
+                }
+                _jackettConfigStatus.value = "Настройки сохранены. Обновляем статус индексатора…"
+                _jackettConfigIndexerId.value = null
+                _jackettConfigFields.value = emptyList()
+                refreshJackettIndexers()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                _jackettConfigStatus.value =
+                    error.message?.replace(Regex("[\\r\\n\\t]+"), " ")?.take(240)
+                        ?: "Не удалось сохранить настройки индексатора."
+            } finally {
+                _isSavingJackettConfig.value = false
+            }
+        }
+    }
+
+    /** Searches one configured Jackett tracker and keeps the results in Jacket's native list. */
+    fun searchJackettIndexer(indexerId: String, query: String) {
+        val base = _customIndexers.value.firstOrNull {
+            it.protocol == app.jacket.mobile.data.IndexerProtocol.JACKETT
+        } ?: run {
+            showError("Сначала подключите Jackett")
+            return
+        }
+        if (query.isBlank()) {
+            showError("Введите название для поиска")
+            return
+        }
+        val target = try {
+            JackettIndexerClient.searchConfig(base, indexerId)
+        } catch (error: Exception) {
+            showError(error.message ?: "Некорректный индексатор Jackett")
+            return
+        }
+        sourcesJob?.cancel()
+        sourcesJob = viewModelScope.launch {
+            _isSearchingSources.value = true
+            _sourceResults.value = emptyList()
+            _indexerErrors.value = emptyList()
+            clearMessage()
+            try {
+                val results = withContext(Dispatchers.IO) {
+                    indexers.searchOne(target, query.trim())
+                }
+                _sourceResults.value = results
+                _message.value = if (results.isEmpty()) {
+                    "В «${target.name}» ничего не найдено"
+                } else {
+                    "Найдено в «${target.name}»: ${results.size}"
+                }
+                _isError.value = false
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                _indexerErrors.value = listOf(
+                    IndexerFailure(target.id, target.name, error.message ?: "Ошибка поиска Jackett")
+                )
+                showError("«${target.name}»: ${error.message ?: "ошибка поиска"}")
+            } finally {
+                _isSearchingSources.value = false
+            }
+        }
+    }
+
+    fun saveWebSearchProvider(provider: WebSearchProvider): Boolean {
+        return try {
+            settings.saveWebSearchProvider(provider)
+            _webSearchProviders.value = settings.webSearchProviders()
+            _message.value = "Сайт поиска сохранён"
+            _isError.value = false
+            true
+        } catch (error: Exception) {
+            showError(error.message ?: "Не удалось сохранить сайт поиска")
+            false
+        }
+    }
+
+    fun setWebSearchProviderEnabled(id: String, enabled: Boolean) {
+        settings.setWebSearchProviderEnabled(id, enabled)
+        _webSearchProviders.value = settings.webSearchProviders()
+    }
+
+    fun removeWebSearchProvider(id: String) {
+        settings.removeWebSearchProvider(id)
+        _webSearchProviders.value = settings.webSearchProviders()
+        _message.value = "Сайт поиска удалён"
+        _isError.value = false
+    }
+
+    fun startFilmixPairing() {
+        filmixPairingJob?.cancel()
+        filmixPairingJob = viewModelScope.launch {
+            _isFilmixPairing.value = true
+            _filmixCode.value = null
+            _filmixStatus.value = "Запрашиваем код у Filmix…"
+            try {
+                val deviceId = settings.filmixDeviceId()
+                val selectedApi = settings.filmixApiBase()
+                val pending = withContext(Dispatchers.IO) {
+                    FilmixDeviceAuth.requestCode(deviceId, selectedApi)
+                }
+                _filmixCode.value = pending.code
+                _filmixStatus.value = "Введите код на странице устройств Filmix. Проверяем подтверждение автоматически."
+                val deadline = System.currentTimeMillis() + FILMIX_PAIRING_TIMEOUT_MS
+
+                while (isActive && System.currentTimeMillis() < deadline) {
+                    delay(FILMIX_PAIRING_POLL_MS)
+                    val activated = try {
+                        withContext(Dispatchers.IO) {
+                            FilmixDeviceAuth.pollActivation(pending)
+                        }
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (error: Exception) {
+                        _filmixStatus.value = "Нет ответа от Filmix. Повторяем проверку…"
+                        null
+                    }
+                    if (!activated.isNullOrBlank()) {
+                        settings.saveFilmixToken(activated)
+                        _filmixToken.value = settings.filmixToken()
+                        _filmixCode.value = null
+                        _filmixStatus.value = "Устройство авторизовано"
+                        return@launch
+                    }
+                }
+                if (isActive) {
+                    _filmixStatus.value = "Время действия запроса истекло. Получите новый код."
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                _filmixStatus.value = FilmixDeviceAuth.userFriendlyError(error)
+                _filmixCode.value = null
+            } finally {
+                _isFilmixPairing.value = false
+            }
+        }
+    }
+
+    fun selectFilmixApiBase(value: String) {
+        if (_isFilmixPairing.value) return
+        runCatching { settings.saveFilmixApiBase(value) }
+            .onSuccess { normalized ->
+                _filmixApiBase.value = normalized
+                val host = normalized.substringAfter("://").substringBefore('/')
+                _filmixStatus.value = "Выбран API-сервер $host. TLS будет проверен перед выдачей кода."
+            }
+            .onFailure { _filmixStatus.value = it.message ?: "Не удалось сохранить API Filmix" }
+    }
+
+    fun cancelFilmixPairing() {
+        filmixPairingJob?.cancel()
+        filmixPairingJob = null
+        _isFilmixPairing.value = false
+        _filmixCode.value = null
+        _filmixStatus.value = if (_filmixToken.value.isBlank()) "Запрос отменён" else "Токен сохранён"
+    }
+
+    fun disconnectFilmix() {
+        cancelFilmixPairing()
+        settings.clearFilmixToken()
+        _filmixToken.value = ""
+        _filmixStatus.value = "Устройство не авторизовано"
+    }
+
+    fun saveHdRezkaSettings(config: HdRezkaSettings) {
+        try {
+            val sessionCookieValid = HdRezkaLoginClient.hasAuthenticatedCookie(config.cookie)
+            val saved = config.copy(connected = sessionCookieValid)
+            settings.saveHdRezkaSettings(saved)
+            _hdRezkaSettings.value = settings.hdRezkaSettings()
+            _hdRezkaStatus.value = when {
+                sessionCookieValid -> "Cookie содержит пару авторизации DLE. Срок действия сессии сервером не проверен."
+                config.cookie.isNotBlank() -> "Cookie сохранена, но не распознана как сессия: нужны dle_user_id и dle_password."
+                else -> "Данные сохранены; вход не выполнен."
+            }
+        } catch (error: Exception) {
+            _hdRezkaStatus.value = error.message ?: "Не удалось сохранить настройки HDRezka"
+        }
+    }
+
+    fun loginHdRezka(config: HdRezkaSettings) {
+        hdRezkaLoginJob?.cancel()
+        hdRezkaLoginJob = viewModelScope.launch {
+            _isHdRezkaBusy.value = true
+            _hdRezkaStatus.value = "Подключаемся к HDRezka по HTTPS…"
+            try {
+                settings.saveHdRezkaSettings(config.copy(cookie = "", connected = false))
+                val result = withContext(Dispatchers.IO) {
+                    HdRezkaLoginClient.login(config.mirror, config.login, config.password)
+                }
+                val saved = config.copy(
+                    mirror = result.activeMirror,
+                    cookie = result.cookieHeader,
+                    connected = true
+                )
+                settings.saveHdRezkaSettings(saved)
+                _hdRezkaSettings.value = settings.hdRezkaSettings()
+                _hdRezkaStatus.value = "HDRezka подтвердила вход. Cookie-сессия сохранена."
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                _hdRezkaSettings.value = settings.hdRezkaSettings()
+                _hdRezkaStatus.value = HdRezkaLoginClient.userFriendlyError(error)
+            } finally {
+                _isHdRezkaBusy.value = false
+            }
+        }
+    }
+
+    fun checkHdRezkaMirror(mirror: String) {
+        hdRezkaLoginJob?.cancel()
+        hdRezkaLoginJob = viewModelScope.launch {
+            _isHdRezkaBusy.value = true
+            _hdRezkaStatus.value = "Проверяем доступность зеркала HDRezka…"
+            try {
+                val active = withContext(Dispatchers.IO) {
+                    HdRezkaLoginClient.probeMirror(mirror)
+                }
+                val current = settings.hdRezkaSettings()
+                settings.saveHdRezkaSettings(current.copy(mirror = active))
+                _hdRezkaSettings.value = settings.hdRezkaSettings()
+                _hdRezkaStatus.value = "Зеркало доступно: $active"
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                _hdRezkaStatus.value = HdRezkaLoginClient.userFriendlyError(error)
+            } finally {
+                _isHdRezkaBusy.value = false
+            }
+        }
+    }
+
+    fun disconnectHdRezka() {
+        settings.disconnectHdRezka()
+        _hdRezkaSettings.value = settings.hdRezkaSettings()
+        _hdRezkaStatus.value = "Сессия удалена"
+    }
+
+    fun restoreDefaultTrackerShortcuts() {
+        _webSearchProviders.value = settings.restoreDefaultTrackerShortcuts()
+        _message.value = "Список сайтов поиска восстановлен"
+        _isError.value = false
+    }
+
+    /** Kept for compatibility with the simple RSS add flow. */
+    fun addIndexer(name: String, urlTemplate: String) {
+        saveIndexer(IndexerConfig(id = "", name = name, searchUrlTemplate = urlTemplate))
+    }
+
+    fun setIndexerEnabled(id: String, enabled: Boolean) {
+        settings.setIndexerEnabled(id, enabled)
+        _customIndexers.value = settings.indexers()
+    }
+
+    fun removeIndexer(id: String) {
+        settings.removeIndexer(id)
+        _customIndexers.value = settings.indexers()
+        _indexerStatuses.value = _indexerStatuses.value - id
+        _message.value = "Индексатор удалён"
+        _isError.value = false
+    }
+    fun exportIndexersJson(): String = settings.exportIndexersJson()
+
+    fun importIndexersJson(json: String): Int {
+        return try {
+            val count = settings.importIndexersJson(json)
+            _customIndexers.value = settings.indexers()
+            _message.value = "Импортировано индексаторов: $count. Секреты нужно ввести заново."
+            _isError.value = false
+            count
+        } catch (error: Exception) {
+            showError(error.message ?: "Не удалось импортировать список индексаторов")
+            0
+        }
+    }
+
+
+    fun searchOneIndexer(id: String, query: String) {
+        val config = _customIndexers.value.firstOrNull { it.id == id } ?: return
+        if (query.isBlank()) {
+            showError("Введите название для пробного поиска")
+            return
+        }
+        val searchEpoch = beginSourceSearch()
+        sourcesJob = viewModelScope.launch {
+            _sourceResults.value = emptyList()
+            _indexerErrors.value = emptyList()
+            clearMessage()
+            try {
+                val results = runInterruptible(Dispatchers.IO) { indexers.searchOne(config, query) }
+                _sourceResults.value = results
+                _message.value = if (results.isEmpty()) "Пробный поиск: результатов нет" else "Пробный поиск: ${results.size} результатов"
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                if (sourceSearchEpoch.isCurrent(searchEpoch)) {
+                    _indexerErrors.value = listOf(
+                        IndexerFailure(config.id, config.name, error.message ?: "Ошибка пробного поиска")
+                    )
+                    showError("Пробный поиск «${config.name}»: ${error.message ?: "ошибка источника"}")
+                }
+            } finally {
+                finishSourceSearch(searchEpoch)
+            }
+        }
+    }
+
+    fun testIndexer(id: String) {
+        val config = _customIndexers.value.firstOrNull { it.id == id } ?: return
+        indexerTestJob?.cancel()
+        indexerTestJob = viewModelScope.launch {
+            _indexerStatuses.value = _indexerStatuses.value + (id to "Проверка…")
+            val result = runCatching { withContext(Dispatchers.IO) { indexers.test(config) } }
+            _indexerStatuses.value = _indexerStatuses.value + (
+                id to result.fold(
+                    onSuccess = { "Доступен • результатов теста: $it" },
+                    onFailure = { "Ошибка: ${it.message ?: "не удалось подключиться"}" }
+                )
+            )
+        }
+    }
+
+    fun testAllIndexers() {
+        indexerTestJob?.cancel()
+        indexerTestJob = viewModelScope.launch {
+            val configs = _customIndexers.value.filter { it.enabled }
+            if (configs.isEmpty()) {
+                _message.value = "Нет включённых индексаторов для проверки"
+                _isError.value = false
+                return@launch
+            }
+            configs.forEach { _indexerStatuses.value = _indexerStatuses.value + (it.id to "Проверка…") }
+            val failures = withContext(Dispatchers.IO) { indexers.testAll(configs) }
+            val failedIds = failures.map { it.indexerId }.toSet()
+            configs.forEach { config ->
+                val failure = failures.firstOrNull { it.indexerId == config.id }
+                _indexerStatuses.value = _indexerStatuses.value + (
+                    config.id to if (failure == null) "Доступен" else "Ошибка: ${failure.message}"
+                )
+            }
+            val ok = configs.size - failedIds.size
+            _message.value = "Проверка завершена: $ok из ${configs.size} доступны"
+            _isError.value = ok == 0
+        }
+    }
+
+    fun refreshFavoritesAndHistory() {
+        _favorites.value = settings.favorites()
+        _history.value = settings.history()
+    }
+
+    private fun loadList(block: () -> List<CatalogItem>) {
+        catalogJob?.cancel()
+        catalogJob = viewModelScope.launch {
+            _isLoading.value = true
+            _items.value = emptyList()
+            clearMessage()
+            try {
+                _items.value = withContext(Dispatchers.IO) { block() }
+                if (_items.value.isEmpty()) _message.value = "Ничего не найдено"
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                showError(error.message ?: "Не удалось загрузить каталог")
+            } finally {
+                _isLoading.value = false
+            }
+        }
+    }
+
+    private fun clearMessage() {
+        _message.value = null
+        _isError.value = false
+    }
+
+    private fun showError(message: String) {
+        _message.value = message
+        _isError.value = true
+    }
+
+    private companion object {
+        const val MAX_FAVORITES = 200
+        const val FILMIX_PAIRING_TIMEOUT_MS = 15 * 60 * 1000L
+        const val FILMIX_PAIRING_POLL_MS = 10_000L
+    }
+}
+
+END FILE: app/src/main/java/app/jacket/mobile/ui/MainViewModel.kt
+
+
+========================================================================================
+FILE: app/src/main/java/app/jacket/mobile/ui/PlaybackChrome.kt
+========================================================================================
+
+package app.jacket.mobile.ui
+
+import kotlin.math.abs
+
+/** Pure player-chrome decisions. No Android or Media3 types, so JVM tests can cover them. */
+object PlaybackChrome {
+    val SPEEDS: FloatArray = floatArrayOf(0.5f, 0.75f, 1f, 1.25f, 1.5f, 1.75f, 2f)
+    val SLEEP_MINUTES: IntArray = intArrayOf(0, 15, 30, 45, 60)
+    const val SEEK_STEP_MS = 10_000L
+
+    enum class Fit { Fit, Fill, Zoom }
+
+    fun nextSpeed(current: Float): Float {
+        val index = SPEEDS.indexOfFirst { abs(it - current) < 0.02f }
+        return SPEEDS[if (index < 0) 0 else (index + 1) % SPEEDS.size]
+    }
+
+    fun speedLabel(speed: Float): String = when {
+        abs(speed - 0.5f) < 0.02f -> "0.5×"
+        abs(speed - 0.75f) < 0.02f -> "0.75×"
+        abs(speed - 1.25f) < 0.02f -> "1.25×"
+        abs(speed - 1.5f) < 0.02f -> "1.5×"
+        abs(speed - 1.75f) < 0.02f -> "1.75×"
+        abs(speed - 2f) < 0.02f -> "2×"
+        else -> "1×"
+    }
+
+    fun nextSleepMinutes(current: Int): Int {
+        val index = SLEEP_MINUTES.indexOf(current)
+        return SLEEP_MINUTES[if (index < 0) 1 else (index + 1) % SLEEP_MINUTES.size]
+    }
+
+    fun sleepLabel(minutes: Int): String = when (minutes) {
+        15 -> "Сон 15"
+        30 -> "Сон 30"
+        45 -> "Сон 45"
+        60 -> "Сон 60"
+        else -> "Сон выкл"
+    }
+
+    fun nextFit(current: Fit): Fit = when (current) {
+        Fit.Fit -> Fit.Fill
+        Fit.Fill -> Fit.Zoom
+        Fit.Zoom -> Fit.Fit
+    }
+
+    fun fitLabel(fit: Fit): String = when (fit) {
+        Fit.Fit -> "Вписать"
+        Fit.Fill -> "Заполнить"
+        Fit.Zoom -> "Крупно"
+    }
+
+    fun formatClock(ms: Long): String {
+        if (ms <= 0L) return "0:00"
+        val totalSeconds = ms / 1_000L
+        val hours = totalSeconds / 3_600L
+        val minutes = (totalSeconds % 3_600L) / 60L
+        val seconds = totalSeconds % 60L
+        return if (hours > 0L) "%d:%02d:%02d".format(hours, minutes, seconds)
+        else "%d:%02d".format(minutes, seconds)
+    }
+
+    fun remainingPhrase(positionMs: Long, durationMs: Long): String {
+        if (durationMs <= 0L) return "Продолжить с сохранённой позиции"
+        val left = (durationMs - positionMs).coerceAtLeast(0L)
+        return "Осталось ${formatClock(left)}"
+    }
+}
+
+END FILE: app/src/main/java/app/jacket/mobile/ui/PlaybackChrome.kt
