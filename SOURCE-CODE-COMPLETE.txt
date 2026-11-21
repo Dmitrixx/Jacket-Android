@@ -6386,3 +6386,1587 @@ object RangeResponseBuilder {
 }
 
 END FILE: app/src/main/java/app/jacket/mobile/torrent/RangeResponseBuilder.kt
+
+
+========================================================================================
+FILE: app/src/main/java/app/jacket/mobile/torrent/StreamDiskCache.kt
+========================================================================================
+
+package app.jacket.mobile.torrent
+
+import java.io.Closeable
+import java.io.File
+import java.io.IOException
+import java.io.RandomAccessFile
+import java.util.LinkedHashMap
+
+/** Stable identity for one cached byte interval of one torrent file. */
+internal data class StreamCacheKey(
+    val infoHash: String,
+    val fileIndex: Int,
+    val startOffset: Long
+)
+
+internal data class CachedStreamRange(
+    val startOffset: Long,
+    val bytes: ByteArray
+)
+
+/**
+ * A bounded LRU disk ring for recently served video segments.
+ *
+ * The cache stores only playback copies. Libtorrent's verified torrent files
+ * remain untouched, so evicting a cache slot never invalidates resume data or
+ * causes a previously downloaded torrent piece to be downloaded again.
+ */
+internal class StreamDiskCache(
+    directory: File,
+    private val maxBytes: Long = DEFAULT_MAX_BYTES,
+    val segmentBytes: Int = DEFAULT_SEGMENT_BYTES
+) : Closeable {
+    private data class Slot(val index: Int, val length: Int)
+
+    private val slotCount: Int
+    private val entries = LinkedHashMap<StreamCacheKey, Slot>(16, 0.75f, true)
+    private val slotOwners: Array<StreamCacheKey?>
+    private val cacheFile: File
+    private val storage: RandomAccessFile
+    private var closed = false
+
+    var evictions: Long = 0L
+        private set
+
+    init {
+        require(maxBytes >= segmentBytes.toLong()) { "Кэш должен содержать хотя бы один сегмент" }
+        require(segmentBytes > 0) { "Размер сегмента должен быть положительным" }
+        slotCount = (maxBytes / segmentBytes).coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
+        require(slotCount > 0) { "Недостаточный размер дискового кэша" }
+        slotOwners = arrayOfNulls(slotCount)
+        require(directory.mkdirs() || directory.isDirectory) { "Не удалось создать каталог дискового кэша" }
+        cacheFile = File.createTempFile("jacket-stream-", ".ring", directory)
+        storage = RandomAccessFile(cacheFile, "rw")
+    }
+
+    /**
+     * Returns the cached bytes beginning at the requested offset. The returned
+     * interval may be shorter than maxLength when it reaches the end of a slot.
+     */
+    @Synchronized
+    @Throws(IOException::class)
+    fun get(key: StreamCacheKey, maxLength: Int): CachedStreamRange? {
+        checkOpen()
+        if (maxLength !in 1..segmentBytes || key.startOffset < 0L) return null
+
+        // Most-recently-used entries are examined first. A seek into an already
+        // cached interval can reuse its suffix, even if the new Range starts at
+        // a different byte offset.
+        val candidates = entries.entries.toList().asReversed()
+        for (candidate in candidates) {
+            val storedKey = candidate.key
+            if (storedKey.infoHash != key.infoHash || storedKey.fileIndex != key.fileIndex) continue
+            if (key.startOffset < storedKey.startOffset) continue
+            val delta = key.startOffset - storedKey.startOffset
+            if (delta >= candidate.value.length.toLong()) continue
+
+            val length = minOf(maxLength, candidate.value.length - delta.toInt())
+            if (length <= 0) continue
+            val result = ByteArray(length)
+            storage.seek(candidate.value.index.toLong() * segmentBytes + delta)
+            storage.readFully(result)
+            entries[storedKey] // Refresh LRU position.
+            return CachedStreamRange(key.startOffset, result)
+        }
+        return null
+    }
+
+    /** Stores one segment and evicts the least-recently-used slot when the ring is full. */
+    @Synchronized
+    @Throws(IOException::class)
+    fun put(key: StreamCacheKey, data: ByteArray) {
+        checkOpen()
+        require(data.isNotEmpty() && data.size <= segmentBytes) { "Недопустимый размер сегмента" }
+
+        val existing = entries[key]
+        val slotIndex = existing?.index ?: allocateSlot()
+        storage.seek(slotIndex.toLong() * segmentBytes)
+        storage.write(data)
+
+        val previousOwner = slotOwners[slotIndex]
+        if (previousOwner != null && previousOwner != key) entries.remove(previousOwner)
+        entries[key] = Slot(slotIndex, data.size)
+        slotOwners[slotIndex] = key
+    }
+
+    @Synchronized
+    override fun close() {
+        if (closed) return
+        closed = true
+        entries.clear()
+        slotOwners.fill(null)
+        runCatching { storage.close() }
+        runCatching { cacheFile.delete() }
+    }
+
+    private fun allocateSlot(): Int {
+        if (entries.size < slotCount) {
+            val free = slotOwners.indexOfFirst { it == null }
+            if (free >= 0) return free
+        }
+        val leastRecent = entries.entries.iterator()
+        if (!leastRecent.hasNext()) return 0
+        val evicted = leastRecent.next()
+        val slot = evicted.value.index
+        entries.remove(evicted.key)
+        slotOwners[slot] = null
+        evictions++
+        return slot
+    }
+
+    private fun checkOpen() {
+        check(!closed) { "Дисковый кэш потока уже закрыт" }
+    }
+
+    companion object {
+        const val DEFAULT_SEGMENT_BYTES = 256 * 1024
+        const val DEFAULT_MAX_BYTES = 32L * 1024L * 1024L
+    }
+}
+
+END FILE: app/src/main/java/app/jacket/mobile/torrent/StreamDiskCache.kt
+
+
+========================================================================================
+FILE: app/src/main/java/app/jacket/mobile/torrent/StreamPiecePlanner.kt
+========================================================================================
+
+package app.jacket.mobile.torrent
+
+/** One piece deadline relative to the first requested piece. */
+internal data class StreamPieceDeadline(
+    val pieceIndex: Int,
+    val deadlineMs: Int
+)
+
+/** Bounded, ordered piece window for a video byte-range request. */
+internal data class StreamPiecePlan(
+    val firstPiece: Int,
+    val lastPiece: Int,
+    val deadlines: List<StreamPieceDeadline>
+)
+
+/**
+ * Maps a file-relative HTTP byte range to torrent piece indices.
+ *
+ * The requested piece gets the nearest deadline. Subsequent pieces receive
+ * increasing deadlines, so libtorrent favours the playback position before
+ * the forward buffer without enabling global sequential-download mode.
+ */
+internal object StreamPiecePlanner {
+    fun plan(
+        fileOffset: Long,
+        fileSize: Long,
+        pieceLength: Long,
+        requestStart: Long,
+        requestLength: Long,
+        firstFilePiece: Int,
+        lastFilePiece: Int,
+        prefetchBytes: Long = DEFAULT_PREFETCH_BYTES,
+        maxPieces: Int = DEFAULT_MAX_PIECES,
+        deadlineStepMs: Int = DEFAULT_DEADLINE_STEP_MS
+    ): StreamPiecePlan {
+        require(fileOffset >= 0L) { "Отрицательное смещение файла" }
+        require(fileSize > 0L) { "Пустой файл" }
+        require(pieceLength > 0L) { "Некорректный размер части торрента" }
+        require(requestStart >= 0L && requestLength > 0L) { "Некорректный HTTP-диапазон" }
+        require(requestStart < fileSize && requestLength <= fileSize - requestStart) {
+            "HTTP-диапазон выходит за пределы файла"
+        }
+        require(firstFilePiece >= 0 && lastFilePiece >= firstFilePiece) {
+            "Некорректные границы файла в торренте"
+        }
+        require(prefetchBytes >= 0L && maxPieces > 0 && deadlineStepMs >= 0)
+
+        val absoluteStart = Math.addExact(fileOffset, requestStart)
+        val requestedEndExclusive = Math.addExact(requestStart, requestLength)
+        val prefetchEndExclusive = if (prefetchBytes > fileSize - requestedEndExclusive) {
+            fileSize
+        } else {
+            requestedEndExclusive + prefetchBytes
+        }
+        val absoluteEndInclusive = Math.addExact(
+            fileOffset,
+            prefetchEndExclusive - 1L
+        )
+
+        val first = (absoluteStart / pieceLength).toInt().coerceAtLeast(firstFilePiece)
+        val last = minOf(
+            (absoluteEndInclusive / pieceLength).toInt(),
+            lastFilePiece,
+            first + maxPieces - 1
+        )
+        require(first in firstFilePiece..lastFilePiece && last >= first) {
+            "Не удалось сопоставить диапазон с частями торрента"
+        }
+
+        val deadlines = (first..last).mapIndexed { position, piece ->
+            StreamPieceDeadline(
+                pieceIndex = piece,
+                deadlineMs = (position.toLong() * deadlineStepMs)
+                    .coerceAtMost(Int.MAX_VALUE.toLong())
+                    .toInt()
+            )
+        }
+        return StreamPiecePlan(first, last, deadlines)
+    }
+
+    const val DEFAULT_PREFETCH_BYTES = 8L * 1024L * 1024L
+    const val DEFAULT_MAX_PIECES = 32
+    const val DEFAULT_DEADLINE_STEP_MS = 350
+}
+
+END FILE: app/src/main/java/app/jacket/mobile/torrent/StreamPiecePlanner.kt
+
+
+========================================================================================
+FILE: app/src/main/java/app/jacket/mobile/torrent/TorrentDownloadService.kt
+========================================================================================
+
+package app.jacket.mobile.torrent
+
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
+import android.app.Service
+import android.content.Context
+import android.content.Intent
+import android.content.pm.ServiceInfo
+import android.net.Uri
+import android.os.Build
+import android.os.IBinder
+import androidx.core.app.NotificationCompat
+import androidx.core.app.ServiceCompat
+import androidx.core.content.ContextCompat
+import app.jacket.mobile.R
+import app.jacket.mobile.MainActivity
+import app.jacket.mobile.data.MediaSettingsStore
+import app.jacket.mobile.data.IndexerProtocol
+import app.jacket.mobile.data.IndexerErrorSanitizer
+import app.jacket.mobile.data.LocalNetwork
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
+import java.io.File
+import java.io.IOException
+import java.net.HttpURLConnection
+import java.net.URL
+import java.net.URI
+import java.util.concurrent.atomic.AtomicBoolean
+
+/** Single-process foreground owner of the BitTorrent session and loopback media server. */
+class TorrentDownloadService : Service() {
+    private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private var pollingStarted = false
+    private val commandMutex = Mutex()
+    private val playbackActive = AtomicBoolean(false)
+    private var streamServer: LocalStreamServer? = null
+    private var streamingTorrentId: String? = null
+
+    override fun onCreate() {
+        super.onCreate()
+        createChannel()
+    }
+
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        val action = intent?.action ?: ACTION_RESTORE
+        startForegroundFor(playbackActive.get() || action == ACTION_PLAY)
+        serviceScope.launch {
+            commandMutex.withLock {
+            try {
+                withContext(Dispatchers.IO) {
+                    TorrentEngine.start(applicationContext)
+                    when (action) {
+                        ACTION_ADD -> {
+                            val magnet = intent?.getStringExtra(EXTRA_MAGNET).orEmpty()
+                            val title = intent?.getStringExtra(EXTRA_TITLE).orEmpty()
+                            require(magnet.startsWith("magnet:?")) { "Для загрузки нужна magnet-ссылка" }
+                            TorrentEngine.add(applicationContext, magnet, title)
+                        }
+                        ACTION_ADD_TORRENT -> {
+                            val path = intent?.getStringExtra(EXTRA_TORRENT_PATH).orEmpty()
+                            require(path.isNotBlank()) { "Путь к .torrent не указан" }
+                            TorrentEngine.addTorrent(applicationContext, File(path), intent?.getStringExtra(EXTRA_TITLE))
+                        }
+                        ACTION_ADD_TORRENT_URL -> {
+                            val url = intent?.getStringExtra(EXTRA_TORRENT_URL).orEmpty()
+                            val title = intent?.getStringExtra(EXTRA_TITLE).orEmpty()
+                            val file = downloadTorrentFile(
+                                url,
+                                title,
+                                intent?.getStringExtra(EXTRA_INDEXER_ID)
+                            )
+                            TorrentEngine.addTorrent(applicationContext, file, title)
+                        }
+                        ACTION_PAUSE -> TorrentEngine.pause(applicationContext, intent?.getStringExtra(EXTRA_ID).orEmpty())
+                        ACTION_RESUME -> TorrentEngine.resume(applicationContext, intent?.getStringExtra(EXTRA_ID).orEmpty())
+                        ACTION_SELECT_FILE -> TorrentEngine.selectFile(
+                            applicationContext,
+                            intent?.getStringExtra(EXTRA_ID).orEmpty(),
+                            intent?.getIntExtra(EXTRA_FILE_INDEX, -1) ?: -1
+                        )
+                        ACTION_REMOVE -> TorrentEngine.remove(
+                            applicationContext,
+                            intent?.getStringExtra(EXTRA_ID).orEmpty(),
+                            intent?.getBooleanExtra(EXTRA_DELETE_FILES, false) ?: false
+                        )
+                        ACTION_PLAY -> startTorrentPlayback(
+                            intent?.getStringExtra(EXTRA_ID).orEmpty(),
+                            intent?.getIntExtra(EXTRA_FILE_INDEX, -1) ?: -1
+                        )
+                        ACTION_STOP_PLAYBACK -> stopTorrentPlayback()
+                        ACTION_PAUSE_SELECTED -> {
+                            val id = intent?.getStringExtra(EXTRA_ID).orEmpty()
+                            if (TorrentEngine.snapshots.value.firstOrNull { it.id == id }?.paused == true) {
+                                TorrentEngine.resume(applicationContext, id)
+                            } else {
+                                TorrentEngine.pause(applicationContext, id)
+                            }
+                        }
+                    }
+                    TorrentEngine.refresh()
+                }
+                startPolling()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                getSystemService(NotificationManager::class.java)
+                    .notify(NOTIFICATION_ID, notification("Ошибка: ${error.message ?: "не удалось выполнить операцию"}", null))
+            }
+            }
+        }
+        return START_STICKY
+    }
+
+    private suspend fun startTorrentPlayback(id: String, fileIndex: Int) {
+        require(id.matches(Regex("(?i)([a-f0-9]{40}|[a-f0-9]{64})"))) { "Некорректный infohash" }
+        require(fileIndex >= 0) { "Не выбран файл раздачи" }
+        val target = withContext(Dispatchers.IO) {
+            if (TorrentQueueStore(applicationContext).isPaused(id)) {
+                TorrentEngine.resume(applicationContext, id)
+            }
+            if (streamingTorrentId != null && streamingTorrentId != id) {
+                TorrentEngine.clearStreamPriorities(streamingTorrentId!!)
+            }
+            selectFileWhenReady(id, fileIndex)
+            val server = streamServer ?: LocalStreamServer(
+                metadata = TorrentEngine::target,
+                awaitRange = { hash, index, start, length ->
+                    try {
+                        TorrentEngine.awaitRange(hash, index, start, length)
+                    } catch (error: Exception) {
+                        TorrentEngine.reportError(hash, error.message ?: "Ошибка локального видеопотока")
+                        throw error
+                    }
+                },
+                cacheDirectory = File(applicationContext.cacheDir, "torrent-stream")
+            ).also {
+                it.start()
+                streamServer = it
+                TorrentEngine.setLocalStreamPort(it.port)
+            }
+            streamingTorrentId = id
+            val item = TorrentEngine.target(id, fileIndex)
+            val subtitles = TorrentEngine.subtitleTargets(id, fileIndex).map { subtitle ->
+                val language = subtitle.name.substringAfterLast('/').substringBeforeLast('.')
+                    .substringAfterLast('.')
+                    .takeIf { it.matches(Regex("(?i)[a-z]{2,3}")) }
+                PlaybackSubtitle(
+                    url = server.url(id, subtitle.fileIndex),
+                    mimeType = if (subtitle.name.endsWith(".vtt", true)) "text/vtt" else "application/x-subrip",
+                    language = language,
+                    label = subtitle.name.substringAfterLast('/')
+                )
+            }
+            Triple(server.url(id, fileIndex), item, subtitles)
+        }
+        val key = PlaybackProgressStore.torrentKey(id, fileIndex)
+        val savedPosition = PlaybackProgressStore(applicationContext).position(key)
+        PlaybackSessionStore(applicationContext).begin(id, fileIndex, target.second.name, savedPosition)
+        playbackActive.set(true)
+        startForegroundFor(mediaPlayback = true, status = "Смотрим: ${target.second.name}")
+        TorrentPlaybackBus.publish(
+            StreamPlaybackRequest(
+                title = target.second.name,
+                url = target.first,
+                progressKey = key,
+                initialPositionMs = savedPosition,
+                subtitles = target.third
+            )
+        )
+    }
+
+    private suspend fun selectFileWhenReady(id: String, fileIndex: Int) {
+        var lastError: Exception? = null
+        repeat(60) {
+            try {
+                TorrentEngine.selectFile(applicationContext, id, fileIndex)
+                return
+            } catch (error: IllegalStateException) {
+                val message = error.message.orEmpty().lowercase()
+                val retryable = "подключается" in message || "метаданные" in message ||
+                    ("не найден" in message && TorrentQueueStore(applicationContext).get(id) != null)
+                if (!retryable) throw error
+                lastError = error
+                delay(500)
+            }
+        }
+        throw java.net.SocketTimeoutException(
+            "Не удалось получить метаданные раздачи за 30 секунд: ${lastError?.message.orEmpty()}"
+        )
+    }
+
+    private suspend fun stopTorrentPlayback() {
+        playbackActive.set(false)
+        TorrentPlaybackBus.publish(null)
+        withContext(Dispatchers.IO) {
+            streamingTorrentId?.let(TorrentEngine::clearStreamPriorities)
+            streamingTorrentId = null
+            streamServer?.close()
+            streamServer = null
+            TorrentEngine.setLocalStreamPort(null)
+        }
+        startForegroundFor(mediaPlayback = false, status = "Загрузка продолжается в фоне")
+    }
+
+    private fun startPolling() {
+        if (pollingStarted) return
+        pollingStarted = true
+        serviceScope.launch {
+            var lastResumeSave = 0L
+            while (isActive) {
+                commandMutex.withLock {
+                    withContext(Dispatchers.IO) {
+                        TorrentEngine.restorePending(applicationContext)
+                        TorrentEngine.refresh()
+                        val now = System.currentTimeMillis()
+                        if (now - lastResumeSave >= RESUME_SAVE_INTERVAL_MS) {
+                            TorrentEngine.saveAllResumeData()
+                            lastResumeSave = now
+                        }
+                    }
+                }
+                updateNotification()
+                delay(POLL_INTERVAL_MS)
+            }
+        }
+    }
+
+    private fun updateNotification() {
+        val rows = TorrentEngine.snapshots.value
+        val activeStream = TorrentPlaybackBus.active.value
+        val selected = rows.firstOrNull { it.files.any { f -> f.isSelected } }
+        val down = rows.sumOf { it.downloadBytesPerSecond.toLong() }
+        val up = rows.sumOf { it.uploadBytesPerSecond.toLong() }
+        val text = when {
+            activeStream != null && selected != null -> {
+                val file = selected.files.firstOrNull { it.isSelected }
+                "${activeStream.title} • ${(file?.progress ?: 0f).times(100).toInt()}% • ↓ ${formatRate(down)}"
+            }
+            rows.isEmpty() -> "Нет активных загрузок"
+            else -> "${rows.size} задач · ↓ ${formatRate(down)} · ↑ ${formatRate(up)}"
+        }
+        val pauseId = selected?.id ?: rows.firstOrNull { !it.paused }?.id
+        getSystemService(NotificationManager::class.java)
+            .notify(NOTIFICATION_ID, notification(text, pauseId))
+    }
+
+    private fun startForegroundFor(mediaPlayback: Boolean, status: String = "Запуск торрент-движка…") {
+        val notification = notification(status, TorrentEngine.snapshots.value.firstOrNull { !it.paused }?.id)
+        val type = if (mediaPlayback) {
+            ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK
+        } else {
+            ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            ServiceCompat.startForeground(this, NOTIFICATION_ID, notification, type)
+        } else {
+            startForeground(NOTIFICATION_ID, notification)
+        }
+    }
+
+    private fun downloadTorrentFile(urlValue: String, title: String, indexerId: String?): File {
+        val settingsStore = MediaSettingsStore(applicationContext)
+        val sourceConfig = indexerId?.let { wanted ->
+            settingsStore.indexers().firstOrNull { it.id == wanted }
+        }
+        val trackerCookie = indexerId?.let { wanted ->
+            settingsStore.webSearchProviders().firstOrNull { it.id == wanted }?.cookie
+        }.orEmpty()
+        val sourceCookie = sourceConfig?.cookie?.takeIf { it.isNotBlank() } ?: trackerCookie
+        var currentUrl = urlValue
+        val originalUri = Uri.parse(urlValue)
+        require(LocalNetwork.isAllowedUrl(urlValue)) {
+            "Для torrent-файла нужен HTTPS или HTTP-адрес локального сервера"
+        }
+        val keyParameter = if (sourceConfig?.protocol == IndexerProtocol.JACKETT) {
+            "jackett_apikey"
+        } else "apikey"
+        if (sourceConfig != null && sourceConfig.apiKey.isNotBlank()) {
+            val uri = Uri.parse(currentUrl)
+            currentUrl = if (uri.getQueryParameter(keyParameter) == null) {
+                uri.buildUpon().appendQueryParameter(keyParameter, sourceConfig.apiKey).build().toString()
+            } else currentUrl
+        }
+
+        val dir = File(filesDir, "torrent-imports").apply { mkdirs() }
+        val safeName = title.replace(Regex("[^a-zA-Z0-9._-]"), "_").take(64).ifBlank { "release" }
+        val target = File.createTempFile("${safeName}_", ".torrent", dir)
+        var activeUrl = currentUrl
+        var redirectCount = 0
+        try {
+            while (true) {
+                val uri = Uri.parse(activeUrl)
+                val allowedRedirect = when (uri.scheme?.lowercase()) {
+                    "https" -> LocalNetwork.isAllowedUrl(activeUrl)
+                    "http" -> originalUri.scheme.equals("http", true) &&
+                        uri.host.equals(originalUri.host, ignoreCase = true) &&
+                        effectivePort(uri) == effectivePort(originalUri) &&
+                        LocalNetwork.isAllowedUrl(activeUrl)
+                    else -> false
+                }
+                require(allowedRedirect && uri.userInfo == null && !uri.host.isNullOrBlank()) {
+                    "Перенаправление torrent-файла ведёт на небезопасный адрес"
+                }
+                val sameOrigin = uri.scheme.equals(originalUri.scheme, true) &&
+                    uri.host.equals(originalUri.host, ignoreCase = true) &&
+                    effectivePort(uri) == effectivePort(originalUri)
+                val requestUrl = if (
+                    sameOrigin && sourceConfig?.apiKey?.isNotBlank() == true &&
+                    uri.getQueryParameter(keyParameter) == null
+                ) {
+                    uri.buildUpon().appendQueryParameter(keyParameter, sourceConfig.apiKey).build().toString()
+                } else activeUrl
+                val connection = (URL(requestUrl).openConnection() as HttpURLConnection).apply {
+                    connectTimeout = 10_000
+                    readTimeout = 25_000
+                    instanceFollowRedirects = false
+                    setRequestProperty("User-Agent", "JacketAndroid/2.1")
+                    if (sameOrigin) {
+                        if (sourceConfig != null) {
+                            if (sourceConfig.username.isNotBlank() || sourceConfig.password.isNotBlank()) {
+                                val credentials = "${sourceConfig.username}:${sourceConfig.password}"
+                                val encoded = android.util.Base64.encodeToString(
+                                    credentials.toByteArray(Charsets.UTF_8),
+                                    android.util.Base64.NO_WRAP
+                                )
+                                setRequestProperty("Authorization", "Basic $encoded")
+                            }
+                            if (sourceConfig.apiKey.isNotBlank() && sourceConfig.protocol != IndexerProtocol.JACKETT) {
+                                setRequestProperty("X-Api-Key", sourceConfig.apiKey.take(512))
+                            }
+                        }
+                        if (sourceCookie.isNotBlank()) setRequestProperty("Cookie", sourceCookie.take(4096))
+                    }
+                }
+                try {
+                    val code = connection.responseCode
+                    if (code in REDIRECT_CODES) {
+                        if (redirectCount++ >= MAX_TORRENT_REDIRECTS) throw IOException("Слишком много перенаправлений .torrent")
+                        val location = connection.getHeaderField("Location")
+                            ?: throw IOException("Сервер вернул перенаправление без Location")
+                        activeUrl = URL(activeUrl).toURI().resolve(URI(location)).toString()
+                        continue
+                    }
+                    if (code !in 200..299) throw IOException("HTTP $code при загрузке .torrent")
+                    val declaredLength = connection.getHeaderFieldLong("Content-Length", -1L)
+                    if (declaredLength > TorrentQueueStore.MAX_TORRENT_BYTES) {
+                        throw IOException("Файл .torrent превышает 8 МиБ")
+                    }
+                    connection.inputStream.use { input ->
+                        target.outputStream().use { output ->
+                            val buffer = ByteArray(8192)
+                            var total = 0L
+                            while (true) {
+                                val count = input.read(buffer)
+                                if (count < 0) break
+                                total += count
+                                if (total > TorrentQueueStore.MAX_TORRENT_BYTES) {
+                                    throw IOException("Файл .torrent превышает 8 МиБ")
+                                }
+                                output.write(buffer, 0, count)
+                            }
+                        }
+                    }
+                    return target
+                } finally {
+                    connection.disconnect()
+                }
+            }
+        } catch (error: Exception) {
+            target.delete()
+            val safeMessage = IndexerErrorSanitizer.sanitize(
+                error,
+                listOfNotNull(
+                    sourceConfig?.apiKey,
+                    sourceCookie,
+                    sourceConfig?.username,
+                    sourceConfig?.password
+                )
+            )
+            throw IOException(safeMessage)
+        }
+    }
+
+    private fun effectivePort(uri: Uri): Int =
+        if (uri.port >= 0) uri.port else if (uri.scheme.equals("https", true)) 443 else 80
+
+    @android.annotation.TargetApi(35)
+    override fun onTimeout(startId: Int, fgsType: Int) {
+        // Only the dataSync mode is time-limited. Active viewing uses mediaPlayback mode.
+        if (playbackActive.get()) {
+            startForegroundFor(mediaPlayback = true, status = "Воспроизведение продолжается")
+            return
+        }
+        serviceScope.launch {
+            commandMutex.withLock {
+                val saved = withContext(Dispatchers.IO) { TorrentEngine.stop() }
+                if (!saved) {
+                    getSystemService(NotificationManager::class.java).notify(
+                        NOTIFICATION_ID,
+                        notification("Не все данные загрузок успели сохраниться. При следующем запуске будет выполнена проверка.", null)
+                    )
+                }
+            }
+            stopForeground(STOP_FOREGROUND_REMOVE)
+            stopSelf(startId)
+        }
+    }
+
+    override fun onDestroy() {
+        streamServer?.close()
+        streamServer = null
+        if (playbackActive.get()) TorrentPlaybackBus.publish(null)
+        serviceScope.cancel()
+        super.onDestroy()
+    }
+
+    override fun onBind(intent: Intent?): IBinder? = null
+
+    private fun createChannel() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val channel = NotificationChannel(CHANNEL_ID, "Jacket • загрузки и просмотр", NotificationManager.IMPORTANCE_LOW)
+            getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
+        }
+    }
+
+    private fun notification(text: String, torrentId: String?): Notification {
+        val pauseIntent = torrentId?.let { id ->
+            PendingIntent.getService(
+                this,
+                id.hashCode(),
+                Intent(this, TorrentDownloadService::class.java)
+                    .setAction(ACTION_PAUSE_SELECTED)
+                    .putExtra(EXTRA_ID, id),
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+        }
+        val openIntent = PendingIntent.getActivity(
+            this,
+            4102,
+            Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        val builder = NotificationCompat.Builder(this, CHANNEL_ID)
+            .setSmallIcon(R.drawable.ic_jacket)
+            .setContentTitle("Jacket")
+            .setContentText(text)
+            .setContentIntent(openIntent)
+            .setOngoing(true)
+            .setOnlyAlertOnce(true)
+            .setCategory(NotificationCompat.CATEGORY_SERVICE)
+        if (pauseIntent != null) builder.addAction(
+            R.drawable.ic_jacket,
+            if (TorrentEngine.snapshots.value.firstOrNull { it.id == torrentId }?.paused == true) "Продолжить" else "Пауза",
+            pauseIntent
+        )
+        return builder.build()
+    }
+
+    private fun formatRate(bytesPerSecond: Long): String = when {
+        bytesPerSecond >= 1024L * 1024L -> "%.1f МБ/с".format(bytesPerSecond / (1024.0 * 1024.0))
+        bytesPerSecond >= 1024L -> "%.0f КБ/с".format(bytesPerSecond / 1024.0)
+        else -> "$bytesPerSecond Б/с"
+    }
+
+    companion object {
+        const val EXTRA_MAGNET = "magnet"
+        const val EXTRA_TITLE = "title"
+        const val EXTRA_ID = "torrent_id"
+        const val EXTRA_FILE_INDEX = "file_index"
+        const val EXTRA_TORRENT_PATH = "torrent_path"
+        const val EXTRA_TORRENT_URL = "torrent_url"
+        const val EXTRA_INDEXER_ID = "indexer_id"
+        const val EXTRA_DELETE_FILES = "delete_files"
+
+        private const val ACTION_RESTORE = "app.jacket.action.RESTORE"
+        private const val ACTION_ADD = "app.jacket.action.ADD"
+        private const val ACTION_ADD_TORRENT = "app.jacket.action.ADD_TORRENT"
+        private const val ACTION_ADD_TORRENT_URL = "app.jacket.action.ADD_TORRENT_URL"
+        private const val ACTION_PAUSE = "app.jacket.action.PAUSE"
+        private const val ACTION_RESUME = "app.jacket.action.RESUME"
+        private const val ACTION_SELECT_FILE = "app.jacket.action.SELECT_FILE"
+        private const val ACTION_REMOVE = "app.jacket.action.REMOVE"
+        private const val ACTION_PLAY = "app.jacket.action.PLAY"
+        private const val ACTION_STOP_PLAYBACK = "app.jacket.action.STOP_PLAYBACK"
+        private const val ACTION_PAUSE_SELECTED = "app.jacket.action.PAUSE_SELECTED"
+        private const val CHANNEL_ID = "jacket_downloads"
+        private const val NOTIFICATION_ID = 4101
+        private const val POLL_INTERVAL_MS = 1_000L
+        private const val RESUME_SAVE_INTERVAL_MS = 30_000L
+        private const val MAX_TORRENT_REDIRECTS = 3
+        private val REDIRECT_CODES = setOf(301, 302, 303, 307, 308)
+
+        private fun send(context: Context, action: String, extras: Intent.() -> Unit = {}) {
+            val intent = Intent(context, TorrentDownloadService::class.java).setAction(action).apply(extras)
+            ContextCompat.startForegroundService(context, intent)
+        }
+
+        fun restore(context: Context) = send(context, ACTION_RESTORE)
+        fun add(context: Context, magnet: String, title: String) = send(context, ACTION_ADD) {
+            putExtra(EXTRA_MAGNET, magnet)
+            putExtra(EXTRA_TITLE, title)
+        }
+        fun addTorrentFile(context: Context, path: String, title: String? = null) = send(context, ACTION_ADD_TORRENT) {
+            putExtra(EXTRA_TORRENT_PATH, path)
+            putExtra(EXTRA_TITLE, title)
+        }
+        fun addTorrentUrl(context: Context, url: String, title: String, indexerId: String? = null) = send(context, ACTION_ADD_TORRENT_URL) {
+            putExtra(EXTRA_TORRENT_URL, url)
+            putExtra(EXTRA_TITLE, title)
+            putExtra(EXTRA_INDEXER_ID, indexerId)
+        }
+        fun pause(context: Context, id: String) = send(context, ACTION_PAUSE) { putExtra(EXTRA_ID, id) }
+        fun resume(context: Context, id: String) = send(context, ACTION_RESUME) { putExtra(EXTRA_ID, id) }
+        fun selectFile(context: Context, id: String, fileIndex: Int) = send(context, ACTION_SELECT_FILE) {
+            putExtra(EXTRA_ID, id)
+            putExtra(EXTRA_FILE_INDEX, fileIndex)
+        }
+        fun remove(context: Context, id: String, deleteFiles: Boolean = false) = send(context, ACTION_REMOVE) {
+            putExtra(EXTRA_ID, id)
+            putExtra(EXTRA_DELETE_FILES, deleteFiles)
+        }
+        fun play(context: Context, id: String, fileIndex: Int) = send(context, ACTION_PLAY) {
+            putExtra(EXTRA_ID, id)
+            putExtra(EXTRA_FILE_INDEX, fileIndex)
+        }
+        fun stopPlayback(context: Context) = send(context, ACTION_STOP_PLAYBACK)
+    }
+}
+
+END FILE: app/src/main/java/app/jacket/mobile/torrent/TorrentDownloadService.kt
+
+
+========================================================================================
+FILE: app/src/main/java/app/jacket/mobile/torrent/TorrentEngine.kt
+========================================================================================
+
+package app.jacket.mobile.torrent
+
+import android.content.Context
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
+import android.util.AtomicFile
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import org.libtorrent4j.AlertListener
+import org.libtorrent4j.AddTorrentParams
+import org.libtorrent4j.Priority
+import org.libtorrent4j.SessionManager
+import org.libtorrent4j.SettingsPack
+import org.libtorrent4j.TorrentFlags
+import org.libtorrent4j.TorrentHandle
+import org.libtorrent4j.TorrentInfo
+import org.libtorrent4j.Vectors
+import org.libtorrent4j.alerts.Alert
+import org.libtorrent4j.alerts.AlertType
+import org.libtorrent4j.alerts.MetadataReceivedAlert
+import org.libtorrent4j.alerts.SaveResumeDataAlert
+import org.libtorrent4j.swig.error_code
+import org.libtorrent4j.swig.libtorrent
+import org.libtorrent4j.swig.torrent_flags_t
+import java.io.File
+import java.io.RandomAccessFile
+import java.util.concurrent.ConcurrentHashMap
+
+/** Immutable file metadata suitable for UI; contains no native handles. */
+data class TorrentFileSnapshot(
+    val index: Int,
+    val path: String,
+    val sizeBytes: Long,
+    val downloadedBytes: Long,
+    val progress: Float,
+    val priority: Int,
+    val isSelected: Boolean
+)
+
+/** Immutable UI snapshot; native handles never escape the engine. */
+data class TorrentSnapshot(
+    val id: String,
+    val name: String,
+    val progress: Float,
+    val downloadedBytes: Long,
+    val totalBytes: Long,
+    val downloadBytesPerSecond: Int,
+    val uploadBytesPerSecond: Int,
+    val seeds: Int,
+    val peers: Int,
+    val state: String,
+    val paused: Boolean,
+    val files: List<TorrentFileSnapshot> = emptyList(),
+    val selectedFileIndex: Int? = null,
+    val selectedFileProgress: Float = 0f,
+    val error: String? = null,
+    val localStreamPort: Int? = null
+)
+
+data class TorrentStreamTarget(
+    val id: String,
+    val fileIndex: Int,
+    val name: String,
+    val sizeBytes: Long,
+    val filePath: String,
+    val progress: Float
+)
+
+/** Owns the single libtorrent session. JNI calls are kept on the service IO dispatcher. */
+object TorrentEngine {
+    @Volatile private var manager: SessionManager? = null
+    @Volatile private var appContext: Context? = null
+    @Volatile private var alertListener: AlertListener? = null
+
+    private data class ActiveStreamWindow(val fileIndex: Int, val firstPiece: Int)
+
+    private val errors = ConcurrentHashMap<String, String>()
+    private val pendingResumeSaves = ConcurrentHashMap<String, CompletableDeferred<Boolean>>()
+    private val activeStreamWindows = ConcurrentHashMap<String, ActiveStreamWindow>()
+    @Volatile private var localStreamPort: Int? = null
+    private val _snapshots = MutableStateFlow<List<TorrentSnapshot>>(emptyList())
+    val snapshots: StateFlow<List<TorrentSnapshot>> = _snapshots.asStateFlow()
+
+    @Synchronized
+    fun start(context: Context) {
+        appContext = context.applicationContext
+        if (manager?.isRunning == true) {
+            restorePending(context)
+            return
+        }
+
+        val instance = SessionManager()
+        val listener = object : AlertListener {
+            override fun types(): IntArray = intArrayOf(
+                AlertType.SAVE_RESUME_DATA.swig(),
+                AlertType.SAVE_RESUME_DATA_FAILED.swig(),
+                AlertType.METADATA_RECEIVED.swig(),
+                AlertType.TORRENT_ERROR.swig(),
+                AlertType.FILE_ERROR.swig(),
+                AlertType.HASH_FAILED.swig()
+            )
+
+            override fun alert(alert: Alert<*>) {
+                when (alert.type()) {
+                    AlertType.SAVE_RESUME_DATA -> saveResumeAlert(alert as SaveResumeDataAlert)
+                    AlertType.SAVE_RESUME_DATA_FAILED -> recordAlertError(alert)
+                    AlertType.METADATA_RECEIVED -> {
+                        val received = alert as MetadataReceivedAlert
+                        runCatching {
+                            val id = received.handle().infoHash().toHex()
+                            val selected = TorrentQueueStore(appContext!!).get(id)?.selectedFileIndex
+                            if (selected != null) applyFileSelection(received.handle(), selected)
+                        }.onFailure { recordErrorFromAlert(alert, it.message ?: "Не удалось прочитать метаданные") }
+                    }
+                    AlertType.TORRENT_ERROR, AlertType.FILE_ERROR, AlertType.HASH_FAILED -> recordAlertError(alert)
+                    else -> Unit
+                }
+            }
+        }
+        alertListener = listener
+        instance.addListener(listener)
+
+        val (downloadLimit, uploadLimit) = rateLimits(context)
+        val settings = SettingsPack.defaultSettings()
+            .downloadRateLimit(downloadLimit)
+            .uploadRateLimit(uploadLimit)
+        instance.start(org.libtorrent4j.SessionParams(settings))
+        instance.startDht()
+        manager = instance
+
+        restorePending(context)
+    }
+
+    @Synchronized
+    private fun restoreItem(context: Context, item: QueuedTorrent) {
+        val current = manager ?: return
+        val resumeFile = resumeFile(context, item.id)
+        val atomicResumeFile = AtomicFile(resumeFile)
+        try {
+            // openRead() is essential: it rolls back an interrupted AtomicFile write
+            // from the last committed backup. Reading File.readBytes() directly
+            // bypasses that recovery path and can discard a valid checkpoint.
+            val storedResumeData = atomicResumeFile.openRead().use { input ->
+                require(resumeFile.length() in 1..ResumeDataEnvelope.MAX_STORED_BYTES) {
+                    "Resume data отсутствует или слишком велик"
+                }
+                input.readBytes()
+            }
+            val payload = ResumeDataEnvelope.decode(storedResumeData)
+            val parseError = error_code()
+            val raw = libtorrent.read_resume_data_ex(Vectors.bytes2byte_vector(payload), parseError)
+            require(parseError.value() == 0) {
+                "Не удалось прочитать fast-resume: ${parseError.message()}"
+            }
+            val restoredHash = raw.getInfo_hashes().get_best().to_hex().lowercase()
+            require(restoredHash == item.id.lowercase()) {
+                "Fast-resume относится к другой раздаче"
+            }
+            raw.setSave_path(downloadDirectory(context).absolutePath)
+            if (TorrentQueueStore(context).isPaused(item.id)) {
+                raw.setFlags(raw.getFlags().or_(TorrentFlags.PAUSED))
+            }
+            current.swig().async_add_torrent(raw)
+            errors.remove(item.id)
+            return
+        } catch (_: java.io.FileNotFoundException) {
+            // No checkpoint exists yet; the durable queue entry below is enough
+            // to rebuild the torrent from its private metainfo or magnet URI.
+        } catch (error: Exception) {
+            // Delete through AtomicFile so a stale .bak cannot resurrect a
+            // checkpoint already rejected by its checksum, parser or info-hash.
+            atomicResumeFile.delete()
+            errors[item.id] = "Сохранённое состояние повреждено. Проверяем раздачу заново."
+        }
+
+        val torrentInfo = item.torrentPath
+            ?.takeIf { it.isNotBlank() }
+            ?.let { path -> runCatching { File(path).takeIf(File::isFile)?.let(::TorrentInfo) }.getOrNull() }
+            ?.takeIf { it.isValid }
+        when {
+            torrentInfo != null -> current.download(
+                torrentInfo, downloadDirectory(context), null, null, null, torrent_flags_t()
+            )
+            !item.magnetUri.isNullOrBlank() -> current.download(
+                item.magnetUri, downloadDirectory(context), torrent_flags_t()
+            )
+            else -> throw IllegalStateException("Не удалось восстановить раздачу: нет корректного .torrent или magnet")
+        }
+        if (TorrentQueueStore(context).isPaused(item.id)) findHandle(item.id)?.let(::pauseHandle)
+    }
+
+    @Synchronized
+    fun add(context: Context, magnet: String, title: String) {
+        start(context)
+        val queued = TorrentQueueStore(context).add(magnet, title)
+        if (findHandle(queued.id) == null && !wifiOnlyRestricted(context)) {
+            manager?.download(queued.magnetUri!!, downloadDirectory(context), torrent_flags_t())
+        }
+        refresh()
+    }
+
+    /** Copies the provided torrent metadata into app-private storage before queueing it. */
+    @Synchronized
+    fun addTorrent(context: Context, source: File, title: String? = null): QueuedTorrent {
+        require(source.isFile && source.length() in 1..TorrentQueueStore.MAX_TORRENT_BYTES) {
+            "Файл .torrent отсутствует или превышает 8 МиБ"
+        }
+        val info = TorrentInfo(source)
+        require(info.isValid) { "Файл не является корректным .torrent" }
+        val id = info.infoHash().toHex().lowercase()
+        val directory = torrentMetainfoDirectory(context)
+        directory.mkdirs()
+        val target = File(directory, "$id.torrent")
+        if (source.canonicalFile != target.canonicalFile) source.copyTo(target, overwrite = true)
+        val queued = TorrentQueueStore(context).addTorrentFile(target, id, title ?: info.name())
+        start(context)
+        if (findHandle(id) == null && !wifiOnlyRestricted(context)) {
+            manager?.download(info, downloadDirectory(context), null, null, null, torrent_flags_t())
+        }
+        refresh()
+        return queued
+    }
+
+    @Synchronized
+    fun selectFile(context: Context, id: String, fileIndex: Int) {
+        val item = TorrentQueueStore(context).get(id) ?: throw IllegalArgumentException("Загрузка не найдена")
+        val handle = findHandle(item.id) ?: throw IllegalStateException("Торрент ещё подключается. Повторите через несколько секунд.")
+        val info = handle.torrentFile() ?: throw IllegalStateException("Ожидаются метаданные раздачи")
+        require(fileIndex in 0 until info.numFiles()) { "Неверный индекс файла" }
+        require(!info.files().padFileAt(fileIndex)) { "Нельзя воспроизводить служебный pad-файл" }
+
+        TorrentQueueStore(context).selectFile(id, fileIndex)
+        applyFileSelection(handle, fileIndex)
+        refresh()
+    }
+
+    @Synchronized
+    private fun applyFileSelection(handle: TorrentHandle, fileIndex: Int) {
+        require(handle.isValid) { "Торрент уже удалён" }
+        val info = handle.torrentFile() ?: throw IllegalStateException("Метаданные раздачи ещё не получены")
+        val files = info.files()
+        require(fileIndex in 0 until files.numFiles())
+
+        // Keep the selected file eligible, but let HTTP Range requests drive
+        // the active piece window. Global sequential mode starts at piece zero
+        // and is a poor fit for seeking/streaming.
+        handle.clearPieceDeadlines()
+        runCatching { activeStreamWindows.remove(handle.infoHash().toHex()) }
+        handle.unsetFlags(TorrentFlags.SEQUENTIAL_DOWNLOAD)
+
+        val priorities = Priority.array(Priority.IGNORE, files.numFiles())
+        priorities[fileIndex] = Priority.TOP_PRIORITY
+        handle.prioritizeFiles(priorities)
+    }
+
+    /**
+     * Re-prioritizes a bounded forward window around the byte range requested
+     * by ExoPlayer. The first not-yet-downloaded piece gets the nearest
+     * deadline; following pieces are assigned increasing deadlines.
+     */
+    @Synchronized
+    private fun prioritizeStreamRange(
+        id: String,
+        handle: TorrentHandle,
+        storage: org.libtorrent4j.FileStorage,
+        fileIndex: Int,
+        start: Long,
+        length: Long
+    ) {
+        val fileSize = storage.fileSize(fileIndex)
+        val plan = StreamPiecePlanner.plan(
+            fileOffset = storage.fileOffset(fileIndex),
+            fileSize = fileSize,
+            pieceLength = storage.pieceLength().toLong(),
+            requestStart = start,
+            requestLength = length,
+            firstFilePiece = storage.pieceIndexAtFile(fileIndex),
+            lastFilePiece = storage.lastPieceIndexAtFile(fileIndex)
+        )
+        val window = ActiveStreamWindow(fileIndex, plan.firstPiece)
+        if (activeStreamWindows[id] == window) return
+
+        handle.clearPieceDeadlines()
+        plan.deadlines.forEach { deadline ->
+            if (!handle.havePiece(deadline.pieceIndex)) {
+                handle.setPieceDeadline(deadline.pieceIndex, deadline.deadlineMs)
+            }
+        }
+        activeStreamWindows[id] = window
+    }
+
+    /** Clear playback-only deadlines when streaming stops or the task is paused. */
+    @Synchronized
+    fun clearStreamPriorities(id: String) {
+        activeStreamWindows.remove(id)
+        findHandle(id)?.let { handle ->
+            runCatching { handle.clearPieceDeadlines() }
+        }
+    }
+
+    @Synchronized
+    fun pause(context: Context, id: String) {
+        clearStreamPriorities(id)
+        TorrentQueueStore(context).setPaused(id, true)
+        findHandle(id)?.let(::pauseHandle)
+        findHandle(id)?.let(::requestResumeData)
+        refresh()
+    }
+
+    private fun pauseHandle(handle: TorrentHandle) {
+        handle.setFlags(TorrentFlags.AUTO_MANAGED.inv(), TorrentFlags.AUTO_MANAGED)
+        handle.pause()
+    }
+
+    @Synchronized
+    fun resume(context: Context, id: String) {
+        TorrentQueueStore(context).setPaused(id, false)
+        val handle = findHandle(id)
+        if (handle != null) {
+            val selected = TorrentQueueStore(context).get(id)?.selectedFileIndex
+            if (selected != null && handle.torrentFile() != null) applyFileSelection(handle, selected)
+            handle.setFlags(TorrentFlags.AUTO_MANAGED, TorrentFlags.AUTO_MANAGED)
+            handle.resume()
+        } else {
+            restorePending(context)
+        }
+        refresh()
+    }
+
+    /** Removes only the task from the queue. The downloaded data is preserved. */
+    @Synchronized
+    fun remove(context: Context, id: String, deleteFiles: Boolean = false) {
+        val item = TorrentQueueStore(context).get(id)
+        val handle = findHandle(id)
+        // Capture metadata while the handle is still valid; this works for magnet and .torrent tasks.
+        val info = handle?.let { runCatching { it.torrentFile() }.getOrNull() }
+            ?: item?.torrentPath?.let { runCatching { TorrentInfo(File(it)) }.getOrNull() }
+        val base = downloadDirectory(context).canonicalFile
+        if (deleteFiles && info != null) {
+            val storage = info.files()
+            for (i in 0 until storage.numFiles()) {
+                if (storage.padFileAt(i)) continue
+                val path = File(storage.filePath(i, base.absolutePath)).canonicalFile
+                if (path.toPath().startsWith(base.toPath()) && path.isFile) path.delete()
+            }
+        }
+        clearStreamPriorities(id)
+        handle?.let { manager?.remove(it) }
+        TorrentQueueStore(context).remove(id)
+        AtomicFile(resumeFile(context, id)).delete()
+        refresh()
+    }
+
+    @Synchronized
+    fun setRateLimits(context: Context, downloadKbps: Int, uploadKbps: Int) {
+        val down = downloadKbps.coerceAtLeast(0)
+        val up = uploadKbps.coerceAtLeast(0)
+        context.applicationContext.getSharedPreferences(RATE_PREFS, Context.MODE_PRIVATE).edit()
+            .putInt(KEY_DOWNLOAD_KBPS, down).putInt(KEY_UPLOAD_KBPS, up).apply()
+        manager?.applySettings(SettingsPack().downloadRateLimit(kbpsToBytes(down)).uploadRateLimit(kbpsToBytes(up)))
+    }
+
+    fun rateLimits(context: Context): Pair<Int, Int> {
+        val prefs = context.applicationContext.getSharedPreferences(RATE_PREFS, Context.MODE_PRIVATE)
+        return prefs.getInt(KEY_DOWNLOAD_KBPS, 0) to prefs.getInt(KEY_UPLOAD_KBPS, 0)
+    }
+
+    fun isWifiOnly(context: Context): Boolean =
+        context.applicationContext.getSharedPreferences(RATE_PREFS, Context.MODE_PRIVATE)
+            .getBoolean(KEY_WIFI_ONLY, false)
+
+    @Synchronized
+    fun setWifiOnly(context: Context, enabled: Boolean) {
+        context.applicationContext.getSharedPreferences(RATE_PREFS, Context.MODE_PRIVATE).edit()
+            .putBoolean(KEY_WIFI_ONLY, enabled).apply()
+        // A service poll will start any queued tasks when Wi-Fi becomes available.
+    }
+
+    /** Resumes persisted queue entries that do not yet have a live native handle. */
+    @Synchronized
+    fun restorePending(context: Context) {
+        if (manager == null || wifiOnlyRestricted(context)) {
+            refresh()
+            return
+        }
+        val store = TorrentQueueStore(context)
+        store.all().forEach { item ->
+            if (findHandle(item.id) == null) {
+                runCatching { restoreItem(context, item) }
+                    .onFailure { errors[item.id] = it.message ?: "Не удалось восстановить загрузку" }
+            }
+        }
+        refresh()
+    }
+
+    private fun wifiOnlyRestricted(context: Context): Boolean {
+        if (!isWifiOnly(context)) return false
+        val connectivity = context.applicationContext.getSystemService(ConnectivityManager::class.java)
+            ?: return true
+        val network = connectivity.activeNetwork ?: return true
+        val capabilities = connectivity.getNetworkCapabilities(network) ?: return true
+        return !capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)
+    }
+
+
+    private fun kbpsToBytes(value: Int): Int = if (value <= 0) 0 else (value.toLong() * 1024L).coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
+
+    fun reportError(id: String, message: String) {
+        val safeId = id.takeIf { it.matches(Regex("(?i)([a-f0-9]{40}|[a-f0-9]{64})")) } ?: "unknown"
+        errors[safeId] = message.replace(Regex("[\\r\\n\\t]+"), " ").take(300)
+        refresh()
+    }
+
+    @Synchronized
+    fun setLocalStreamPort(port: Int?) {
+        localStreamPort = port?.takeIf { it in 8090..8099 }
+        refresh()
+    }
+
+    @Synchronized
+    fun refresh() {
+        val current = manager ?: run {
+            _snapshots.value = emptyList()
+            return
+        }
+        val context = appContext ?: return
+        val store = TorrentQueueStore(context)
+        val pausedIds = store.pausedIds()
+        val vector = current.swig().get_torrents()
+        val rows = ArrayList<TorrentSnapshot>(vector.size)
+
+        for (index in 0 until vector.size) {
+            val handle = TorrentHandle(vector.get(index))
+            if (!handle.isValid) continue
+            try {
+                val status = handle.status()
+                val id = handle.infoHash().toHex()
+                val queued = store.get(id)
+                val paused = id in pausedIds
+                if (paused) pauseHandle(handle)
+                val info = handle.torrentFile()
+                val storage = info?.files()
+                val progress = if (info != null) handle.fileProgress() else longArrayOf()
+                var priorities = if (info != null) handle.filePriorities() else emptyArray()
+                // A resume-data restore already includes metadata and will not emit METADATA_RECEIVED.
+                val selectedIndex = queued?.selectedFileIndex
+                if (info != null && selectedIndex != null &&
+                    selectedIndex in priorities.indices &&
+                    priorities[selectedIndex] != Priority.TOP_PRIORITY
+                ) {
+                    runCatching {
+                        applyFileSelection(handle, selectedIndex)
+                        priorities = handle.filePriorities()
+                    }.onFailure { errors[id] = it.message ?: "Не удалось восстановить приоритет файла" }
+                }
+                val files = if (storage != null) {
+                    (0 until storage.numFiles()).map { fileIndex ->
+                        val size = storage.fileSize(fileIndex).coerceAtLeast(0L)
+                        val downloaded = progress.getOrNull(fileIndex)?.coerceIn(0L, size) ?: 0L
+                        TorrentFileSnapshot(
+                            index = fileIndex,
+                            path = storage.filePath(fileIndex),
+                            sizeBytes = size,
+                            downloadedBytes = downloaded,
+                            progress = if (size == 0L) 0f else downloaded.toFloat() / size.toFloat(),
+                            priority = priorities.getOrNull(fileIndex)?.swig()?.toInt() ?: 0,
+                            isSelected = queued?.selectedFileIndex == fileIndex
+                        )
+                    }.filterNot { runCatching { storage.padFileAt(it.index) }.getOrDefault(true) }
+                } else emptyList()
+                val selectedProgress = files.firstOrNull { it.index == selectedIndex }?.progress ?: 0f
+                rows += TorrentSnapshot(
+                    id = id,
+                    name = status.name().ifBlank { queued?.title ?: "Торрент ${id.take(10)}" },
+                    progress = status.progress().coerceIn(0f, 1f),
+                    downloadedBytes = status.totalWantedDone().coerceAtLeast(0),
+                    totalBytes = status.totalWanted().coerceAtLeast(0),
+                    downloadBytesPerSecond = status.downloadPayloadRate().coerceAtLeast(0),
+                    uploadBytesPerSecond = status.uploadPayloadRate().coerceAtLeast(0),
+                    seeds = status.numSeeds().coerceAtLeast(0),
+                    peers = status.numPeers().coerceAtLeast(0),
+                    state = status.state().name,
+                    paused = paused,
+                    files = files,
+                    selectedFileIndex = selectedIndex,
+                    selectedFileProgress = selectedProgress,
+                    error = errors[id],
+                    localStreamPort = localStreamPort
+                )
+            } catch (error: Exception) {
+                errors[runCatching { handle.infoHash().toHex() }.getOrDefault("unknown")] =
+                    error.message ?: "Ошибка чтения состояния торрента"
+            }
+        }
+        val activeIds = rows.mapTo(HashSet()) { it.id }
+        store.all().filterNot { it.id in activeIds }.forEach { queued ->
+            rows += TorrentSnapshot(
+                id = queued.id,
+                name = queued.title,
+                progress = 0f,
+                downloadedBytes = 0L,
+                totalBytes = 0L,
+                downloadBytesPerSecond = 0,
+                uploadBytesPerSecond = 0,
+                seeds = 0,
+                peers = 0,
+                state = if (wifiOnlyRestricted(context)) "WAITING_FOR_WIFI" else "QUEUED",
+                paused = store.isPaused(queued.id),
+                error = errors[queued.id],
+                localStreamPort = localStreamPort
+            )
+        }
+        _snapshots.value = rows.sortedBy { it.name.lowercase() }
+    }
+
+    /** Wait until every piece intersecting the requested file byte range is complete on disk. */
+    fun awaitRange(id: String, fileIndex: Int, start: Long, length: Long, timeoutPerPieceMs: Long = 25_000L): File {
+        require(start >= 0L && length > 0L)
+        val handle = findHandle(id) ?: throw IllegalStateException("Торрент не найден")
+        require(handle.isValid) { "Торрент больше не активен" }
+        val info = handle.torrentFile() ?: throw IllegalStateException("Ожидаются метаданные торрента")
+        val storage = info.files()
+        require(fileIndex in 0 until storage.numFiles()) { "Неверный индекс файла" }
+        val fileSize = storage.fileSize(fileIndex)
+        require(start < fileSize && length <= fileSize - start) { "Запрошенный диапазон выходит за пределы файла" }
+        val selected = TorrentQueueStore(appContext!!).get(id)?.selectedFileIndex
+        if (selected != fileIndex) {
+            val completedBytes = handle.fileProgress().getOrNull(fileIndex) ?: 0L
+            if (completedBytes < fileSize) {
+                throw IllegalStateException("Дополнительный файл не загружен полностью")
+            }
+            // Fully downloaded subtitle sidecars can be served without switching priorities.
+        }
+        val absoluteStart = Math.addExact(storage.fileOffset(fileIndex), start)
+        require(length - 1L <= Long.MAX_VALUE - absoluteStart) { "Диапазон слишком большой" }
+        val absoluteEnd = absoluteStart + length - 1L
+        val pieceLength = storage.pieceLength().toLong()
+        val firstPiece = (absoluteStart / pieceLength).toInt()
+        val lastPiece = (absoluteEnd / pieceLength).toInt()
+
+        if (selected == fileIndex) {
+            prioritizeStreamRange(id, handle, storage, fileIndex, start, length)
+        }
+
+        for (piece in firstPiece..lastPiece) {
+            val began = System.currentTimeMillis()
+            while (!handle.havePiece(piece)) {
+                if (TorrentQueueStore(appContext!!).isPaused(id)) {
+                    throw IllegalStateException("Загрузка приостановлена")
+                }
+                if (System.currentTimeMillis() - began > timeoutPerPieceMs) {
+                    throw java.net.SocketTimeoutException("Ожидание части торрента превысило 25 секунд")
+                }
+                Thread.sleep(120)
+            }
+        }
+        val root = File(handle.savePath()).canonicalFile
+        val file = File(storage.filePath(fileIndex, root.absolutePath)).canonicalFile
+        require(file.toPath().startsWith(root.toPath())) { "Путь файла выходит за каталог загрузки" }
+        require(file.isFile && file.length() >= start && length <= file.length() - start) { "Файл ещё не записан на диск" }
+        return file
+    }
+
+    fun target(id: String, fileIndex: Int): TorrentStreamTarget {
+        val handle = findHandle(id) ?: throw IllegalStateException("Торрент не найден")
+        val info = handle.torrentFile() ?: throw IllegalStateException("Метаданные ещё не получены")
+        val storage = info.files()
+        require(fileIndex in 0 until storage.numFiles())
+        val size = storage.fileSize(fileIndex)
+        val progress = handle.fileProgress().getOrNull(fileIndex) ?: 0L
+        return TorrentStreamTarget(
+            id = id,
+            fileIndex = fileIndex,
+            name = storage.fileName(fileIndex),
+            sizeBytes = size,
+            filePath = storage.filePath(fileIndex),
+            progress = if (size <= 0L) 0f else (progress.toFloat() / size.toFloat()).coerceIn(0f, 1f)
+        )
+    }
+
+    /** Returns matching subtitle tracks already present in the torrent metadata. */
+    fun subtitleTargets(id: String, videoFileIndex: Int): List<TorrentStreamTarget> {
+        val handle = findHandle(id) ?: return emptyList()
+        val info = handle.torrentFile() ?: return emptyList()
+        val storage = info.files()
+        if (videoFileIndex !in 0 until storage.numFiles()) return emptyList()
+        val videoName = storage.fileName(videoFileIndex)
+        val baseName = videoName.substringAfterLast('/').substringBeforeLast('.').lowercase()
+        val fileProgress = handle.fileProgress()
+        return (0 until storage.numFiles()).mapNotNull { index ->
+            if (index == videoFileIndex || storage.padFileAt(index)) return@mapNotNull null
+            val name = storage.fileName(index)
+            val extension = name.substringAfterLast('.', "").lowercase()
+            if (extension !in setOf("srt", "vtt")) return@mapNotNull null
+            val candidateBase = name.substringAfterLast('/').substringBeforeLast('.').lowercase()
+            if (candidateBase != baseName && !candidateBase.startsWith("$baseName.")) return@mapNotNull null
+            val size = storage.fileSize(index)
+            // Never change selected-file priorities while ExoPlayer requests subtitle bytes.
+            // A sidecar is exposed only when it is already fully available on disk.
+            if (size <= 0L || fileProgress.getOrNull(index) != size) return@mapNotNull null
+            target(id, index)
+        }.take(MAX_SUBTITLE_TRACKS)
+    }
+
+    /** Wait for native save-resume alerts before destroying libtorrent's session. */
+    suspend fun stop(timeoutMs: Long = RESUME_SAVE_SHUTDOWN_TIMEOUT_MS): Boolean {
+        val current = manager ?: return true
+        val saved = saveAllResumeDataAndAwait(timeoutMs)
+        current.removeListener(alertListener)
+        current.stop()
+        manager = null
+        alertListener = null
+        localStreamPort = null
+        _snapshots.value = emptyList()
+        return saved
+    }
+
+    fun saveAllResumeData() {
+        val current = manager ?: return
+        val vector = current.swig().get_torrents()
+        for (index in 0 until vector.size) {
+            val handle = TorrentHandle(vector.get(index))
+            if (handle.isValid) requestResumeData(handle)
+        }
+    }
+
+    suspend fun saveAllResumeDataAndAwait(timeoutMs: Long = RESUME_SAVE_SHUTDOWN_TIMEOUT_MS): Boolean {
+        val current = manager ?: return true
+        val vector = current.swig().get_torrents()
+        val requests = ArrayList<Pair<String, CompletableDeferred<Boolean>>>(vector.size)
+        for (index in 0 until vector.size) {
+            val handle = TorrentHandle(vector.get(index))
+            if (handle.isValid) {
+                val id = handle.infoHash().toHex().lowercase()
+                requests += id to requestResumeData(handle)
+            }
+        }
+        if (requests.isEmpty()) return true
+        val results = withTimeoutOrNull(timeoutMs.coerceAtLeast(1L)) {
+            requests.map { it.second }.awaitAll()
+        }
+        if (results == null) {
+            requests.forEach { (id, ticket) ->
+                if (!ticket.isCompleted && pendingResumeSaves.remove(id, ticket)) ticket.cancel()
+            }
+            return false
+        }
+        return results.all { it }
+    }
+
+    private fun requestResumeData(handle: TorrentHandle): CompletableDeferred<Boolean> {
+        val id = handle.infoHash().toHex().lowercase()
+        val ticket = CompletableDeferred<Boolean>()
+        val active = pendingResumeSaves.putIfAbsent(id, ticket)
+        if (active != null) return active
+        runCatching { handle.saveResumeData(TorrentHandle.SAVE_INFO_DICT) }
+            .onFailure { error ->
+                pendingResumeSaves.remove(id, ticket)
+                errors[id] = friendlyError(error.message ?: "Не удалось запросить сохранение состояния")
+                ticket.complete(false)
+            }
+        return ticket
+    }
+
+    @Synchronized
+    private fun saveResumeAlert(alert: SaveResumeDataAlert) {
+        runCatching {
+            val id = alert.handle().infoHash().toHex().lowercase()
+            val context = appContext ?: return
+            val file = resumeFile(context, id)
+            file.parentFile?.mkdirs()
+            val bytes = ResumeDataEnvelope.encode(AddTorrentParams.writeResumeDataBuf(alert.params()))
+            val atomic = AtomicFile(file)
+            val output = atomic.startWrite()
+            try {
+                output.write(bytes)
+                atomic.finishWrite(output)
+            } catch (error: Exception) {
+                atomic.failWrite(output)
+                throw error
+            }
+            errors.remove(id)
+            pendingResumeSaves.remove(id)?.complete(true)
+        }.onFailure {
+            val id = runCatching { alert.handle().infoHash().toHex().lowercase() }.getOrNull()
+            id?.let { hash -> pendingResumeSaves.remove(hash)?.complete(false) }
+            recordErrorFromAlert(alert, it.message ?: "Не удалось записать resume data")
+        }
+    }
+
+    private fun recordAlertError(alert: Alert<*>) {
+        val id = runCatching {
+            (alert as? org.libtorrent4j.alerts.TorrentAlert<*>)?.handle()?.infoHash()?.toHex()?.lowercase()
+        }.getOrNull()
+        id?.let { pendingResumeSaves.remove(it)?.complete(false) }
+        recordErrorFromAlert(alert, alert.message().take(500))
+    }
+
+    private fun recordErrorFromAlert(alert: Alert<*>, message: String) {
+        val id = runCatching {
+            (alert as? org.libtorrent4j.alerts.TorrentAlert<*>)?.handle()?.infoHash()?.toHex()
+        }.getOrNull() ?: "unknown"
+        errors[id] = friendlyError(message.ifBlank { "Ошибка торрент-движка" })
+    }
+
+    private fun friendlyError(message: String): String {
+        val clean = message.replace(Regex("[\\r\\n\\t]+"), " ").take(240)
+        val lower = clean.lowercase()
+        return when {
+            "no space" in lower || "disk" in lower || "write" in lower || "permission" in lower ->
+                "Ошибка диска или записи: $clean"
+            "timeout" in lower || "timed out" in lower ->
+                "Истекло время ожидания соединения: $clean"
+            "hash" in lower || "corrupt" in lower || "invalid resume" in lower ->
+                "Проверка целостности не пройдена: $clean"
+            "connection" in lower || "socket" in lower || "network" in lower ->
+                "Потеряно сетевое соединение: $clean"
+            "no peers" in lower || "no seed" in lower ->
+                "Пока нет доступных пиров или сидов: $clean"
+            else -> clean
+        }
+    }
+
+    private fun findHandle(id: String): TorrentHandle? {
+        val current = manager ?: return null
+        val vector = current.swig().get_torrents()
+        for (index in 0 until vector.size) {
+            val handle = TorrentHandle(vector.get(index))
+            if (runCatching { handle.isValid && handle.infoHash().toHex().equals(id, true) }.getOrDefault(false)) {
+                return handle
+            }
+        }
+        return null
+    }
+
+    fun resumeFile(context: Context, id: String): File = File(File(context.filesDir, "torrent-resume"), "$id.fastresume")
+    private fun torrentMetainfoDirectory(context: Context): File = File(context.filesDir, "torrent-metainfo").apply { mkdirs() }
+
+    fun downloadDirectory(context: Context): File =
+        File(context.getExternalFilesDir(null) ?: context.filesDir, "Downloads").apply { mkdirs() }
+
+    private const val RATE_PREFS = "jacket_torrent_settings"
+    private const val RESUME_SAVE_SHUTDOWN_TIMEOUT_MS = 12_000L
+    private const val KEY_DOWNLOAD_KBPS = "download_kbps"
+    private const val KEY_UPLOAD_KBPS = "upload_kbps"
+    private const val KEY_WIFI_ONLY = "wifi_only"
+    private const val MAX_SUBTITLE_TRACKS = 12
+}
+
+/** Versioned CRC envelope. Legacy raw libtorrent fast-resume files remain supported. */
+internal object ResumeDataEnvelope {
+    private val MAGIC = "JACKETR1".toByteArray(Charsets.US_ASCII)
+    private const val HEADER_BYTES = 16
+    private const val MAX_PAYLOAD_BYTES = 64 * 1024 * 1024
+    internal const val MAX_STORED_BYTES = MAX_PAYLOAD_BYTES + HEADER_BYTES
+
+    fun encode(payload: ByteArray): ByteArray {
+        require(payload.isNotEmpty() && payload.size <= MAX_PAYLOAD_BYTES) { "Недопустимый размер resume data" }
+        val checksum = java.util.zip.CRC32().apply { update(payload) }.value
+        return java.nio.ByteBuffer.allocate(HEADER_BYTES + payload.size)
+            .order(java.nio.ByteOrder.BIG_ENDIAN)
+            .put(MAGIC)
+            .putInt(payload.size)
+            .putInt(checksum.toInt())
+            .put(payload)
+            .array()
+    }
+
+    fun decode(stored: ByteArray): ByteArray {
+        require(stored.isNotEmpty() && stored.size <= MAX_PAYLOAD_BYTES + HEADER_BYTES) {
+            "Resume data отсутствует или слишком велик"
+        }
+        if (stored.size < MAGIC.size || !stored.copyOfRange(0, MAGIC.size).contentEquals(MAGIC)) return stored
+        require(stored.size >= HEADER_BYTES) { "Обрезан заголовок resume data" }
+        val buffer = java.nio.ByteBuffer.wrap(stored).order(java.nio.ByteOrder.BIG_ENDIAN)
+        buffer.position(MAGIC.size)
+        val size = buffer.int
+        val checksum = buffer.int.toLong() and 0xffffffffL
+        require(size in 1..MAX_PAYLOAD_BYTES && buffer.remaining() == size) { "Некорректный размер resume data" }
+        val payload = ByteArray(size)
+        buffer.get(payload)
+        val actual = java.util.zip.CRC32().apply { update(payload) }.value
+        require(actual == checksum) { "Контрольная сумма resume data не совпадает" }
+        return payload
+    }
+}
+
+END FILE: app/src/main/java/app/jacket/mobile/torrent/TorrentEngine.kt
