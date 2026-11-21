@@ -107,7 +107,7 @@ Resume data is asynchronous and periodic: abruptly killing the process can lose 
 - Idle/background transfer uses `dataSync`.
 - Active in-app torrent playback switches the foreground service to `mediaPlayback`.
 - Android 15+ can time-limit `dataSync`. If the time limit arrives with no active playback, the service saves resume data and stops rather than claiming infinite background seeding.
-- On Android 12+, the player requests the source video's frame rate on its `SurfaceView` using fixed-source compatibility and the long-form `CHANGE_FRAME_RATE_ALWAYS` strategy. Media3's own frame-rate calls are disabled to avoid competing requests; the surface request is reset when the view is detached. Devices before API 31 keep the system-selected rate.
+- On Android 12+, the player requests the source video's frame rate on its `SurfaceView` only while playback is actively rendering, using fixed-source compatibility and the long-form `CHANGE_FRAME_RATE_ALWAYS` strategy. Media3's own frame-rate calls are disabled to avoid competing requests; the request is reset on pause/stop and when the view is detached. Devices before API 31 keep the system-selected rate.
 - The player releases ExoPlayer and stores position when its screen is left; the download service and torrent session remain alive unless Android stops them or the user removes/stops the task.
 
 ## UI and device profiles
