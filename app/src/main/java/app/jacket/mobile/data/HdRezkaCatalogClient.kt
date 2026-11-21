@@ -63,7 +63,7 @@ object HdRezkaCatalogClient {
         episodeCode: String? = null
     ): List<SourceResult> {
         require(query.isNotBlank()) { "Введите название для поиска HDRezka" }
-        val mirror = HdRezkaLoginClient.validateMirror(settings.mirror)
+        val mirror = HdRezkaLoginClient.validateMirror(settings.mirror, settings.allowCustomMirror)
         val searchUrl = buildSearchUrl(mirror)
         val searchBody = buildSearchBody(query)
         val html = requestText(
