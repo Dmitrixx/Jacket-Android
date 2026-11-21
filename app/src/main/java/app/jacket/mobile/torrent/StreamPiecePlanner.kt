@@ -31,7 +31,9 @@ internal object StreamPiecePlanner {
         lastFilePiece: Int,
         prefetchBytes: Long = DEFAULT_PREFETCH_BYTES,
         maxPieces: Int = DEFAULT_MAX_PIECES,
-        deadlineStepMs: Int = DEFAULT_DEADLINE_STEP_MS
+        deadlineStepMs: Int = DEFAULT_DEADLINE_STEP_MS,
+        includeTailPiece: Boolean = false,
+        tailDeadlineMs: Int = DEFAULT_TAIL_DEADLINE_MS
     ): StreamPiecePlan {
         require(fileOffset >= 0L) { "Отрицательное смещение файла" }
         require(fileSize > 0L) { "Пустой файл" }
@@ -43,7 +45,7 @@ internal object StreamPiecePlanner {
         require(firstFilePiece >= 0 && lastFilePiece >= firstFilePiece) {
             "Некорректные границы файла в торренте"
         }
-        require(prefetchBytes >= 0L && maxPieces > 0 && deadlineStepMs >= 0)
+        require(prefetchBytes >= 0L && maxPieces > 0 && deadlineStepMs >= 0 && tailDeadlineMs >= 0)
 
         val absoluteStart = Math.addExact(fileOffset, requestStart)
         val requestedEndExclusive = Math.addExact(requestStart, requestLength)
@@ -67,7 +69,7 @@ internal object StreamPiecePlanner {
             "Не удалось сопоставить диапазон с частями торрента"
         }
 
-        val deadlines = (first..last).mapIndexed { position, piece ->
+        val forwardDeadlines = (first..last).mapIndexed { position, piece ->
             StreamPieceDeadline(
                 pieceIndex = piece,
                 deadlineMs = (position.toLong() * deadlineStepMs)
@@ -75,10 +77,18 @@ internal object StreamPiecePlanner {
                     .toInt()
             )
         }
-        return StreamPiecePlan(first, last, deadlines)
+        val tailDeadline = if (includeTailPiece && lastFilePiece > last && lastFilePiece > first) {
+            val afterForwardWindow = forwardDeadlines.lastOrNull()?.deadlineMs
+                ?.toLong()?.plus(deadlineStepMs)?.coerceAtMost(Int.MAX_VALUE.toLong())?.toInt() ?: 0
+            listOf(StreamPieceDeadline(lastFilePiece, maxOf(tailDeadlineMs, afterForwardWindow)))
+        } else {
+            emptyList()
+        }
+        return StreamPiecePlan(first, last, forwardDeadlines + tailDeadline)
     }
 
     const val DEFAULT_PREFETCH_BYTES = 8L * 1024L * 1024L
     const val DEFAULT_MAX_PIECES = 32
     const val DEFAULT_DEADLINE_STEP_MS = 350
+    const val DEFAULT_TAIL_DEADLINE_MS = 1_400
 }

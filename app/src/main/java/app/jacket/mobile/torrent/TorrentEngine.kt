@@ -1,5 +1,6 @@
 package app.jacket.mobile.torrent
 
+import android.app.ActivityManager
 import android.content.Context
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
@@ -29,6 +30,7 @@ import org.libtorrent4j.swig.torrent_flags_t
 import java.io.File
 import java.io.RandomAccessFile
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.TimeUnit
 
 /** Immutable file metadata suitable for UI; contains no native handles. */
 data class TorrentFileSnapshot(
@@ -73,11 +75,15 @@ data class TorrentStreamTarget(
 /** Owns the single libtorrent session. JNI calls are kept on the service IO dispatcher. */
 object TorrentEngine {
     @Volatile private var manager: SessionManager? = null
+    @Volatile private var stopping = false
     @Volatile private var appContext: Context? = null
     @Volatile private var alertListener: AlertListener? = null
 
-    private data class ActiveStreamWindow(val fileIndex: Int, val firstPiece: Int)
+    // Identity matters: when a seek replaces the piece window, in-flight Range workers
+    // must detect that their original request has become stale.
+    private class ActiveStreamWindow(val fileIndex: Int, val firstPiece: Int, val lastPiece: Int)
 
+    private val pieceCompletionSignal = PieceCompletionSignal()
     private val errors = ConcurrentHashMap<String, String>()
     private val pendingResumeSaves = ConcurrentHashMap<String, CompletableDeferred<Boolean>>()
     private val activeStreamWindows = ConcurrentHashMap<String, ActiveStreamWindow>()
@@ -89,9 +95,11 @@ object TorrentEngine {
     fun start(context: Context) {
         appContext = context.applicationContext
         if (manager?.isRunning == true) {
+            check(!stopping) { "Торрент-сессия завершает работу" }
             restorePending(context)
             return
         }
+        stopping = false
 
         val instance = SessionManager()
         val listener = object : AlertListener {
@@ -99,6 +107,7 @@ object TorrentEngine {
                 AlertType.SAVE_RESUME_DATA.swig(),
                 AlertType.SAVE_RESUME_DATA_FAILED.swig(),
                 AlertType.METADATA_RECEIVED.swig(),
+                AlertType.PIECE_FINISHED.swig(),
                 AlertType.TORRENT_ERROR.swig(),
                 AlertType.FILE_ERROR.swig(),
                 AlertType.HASH_FAILED.swig()
@@ -108,6 +117,7 @@ object TorrentEngine {
                 when (alert.type()) {
                     AlertType.SAVE_RESUME_DATA -> saveResumeAlert(alert as SaveResumeDataAlert)
                     AlertType.SAVE_RESUME_DATA_FAILED -> recordAlertError(alert)
+                    AlertType.PIECE_FINISHED -> pieceCompletionSignal.signal()
                     AlertType.METADATA_RECEIVED -> {
                         val received = alert as MetadataReceivedAlert
                         runCatching {
@@ -125,9 +135,11 @@ object TorrentEngine {
         instance.addListener(listener)
 
         val (downloadLimit, uploadLimit) = rateLimits(context)
+        val isLowRamDevice = context.getSystemService(ActivityManager::class.java)?.isLowRamDevice == true
         val settings = SettingsPack.defaultSettings()
             .downloadRateLimit(downloadLimit)
             .uploadRateLimit(uploadLimit)
+            .connectionsLimit(TorrentSessionPolicy.connectionsLimit(isLowRamDevice))
         instance.start(org.libtorrent4j.SessionParams(settings))
         instance.startDht()
         manager = instance
@@ -270,7 +282,7 @@ object TorrentEngine {
         fileIndex: Int,
         start: Long,
         length: Long
-    ) {
+    ): ActiveStreamWindow {
         val fileSize = storage.fileSize(fileIndex)
         val plan = StreamPiecePlanner.plan(
             fileOffset = storage.fileOffset(fileIndex),
@@ -279,11 +291,17 @@ object TorrentEngine {
             requestStart = start,
             requestLength = length,
             firstFilePiece = storage.pieceIndexAtFile(fileIndex),
-            lastFilePiece = storage.lastPieceIndexAtFile(fileIndex)
+            lastFilePiece = storage.lastPieceIndexAtFile(fileIndex),
+            includeTailPiece = start == 0L
         )
-        val window = ActiveStreamWindow(fileIndex, plan.firstPiece)
-        if (activeStreamWindows[id] == window) return
+        val current = activeStreamWindows[id]
+        if (current != null &&
+            current.fileIndex == fileIndex &&
+            current.firstPiece == plan.firstPiece &&
+            current.lastPiece == plan.lastPiece
+        ) return current
 
+        val window = ActiveStreamWindow(fileIndex, plan.firstPiece, plan.lastPiece)
         handle.clearPieceDeadlines()
         plan.deadlines.forEach { deadline ->
             if (!handle.havePiece(deadline.pieceIndex)) {
@@ -291,12 +309,17 @@ object TorrentEngine {
             }
         }
         activeStreamWindows[id] = window
+        // Wake older Range workers so they can fail fast rather than waiting for
+        // pieces that belong to a seek which has already been superseded.
+        pieceCompletionSignal.signal()
+        return window
     }
 
     /** Clear playback-only deadlines when streaming stops or the task is paused. */
     @Synchronized
     fun clearStreamPriorities(id: String) {
         activeStreamWindows.remove(id)
+        pieceCompletionSignal.signal()
         findHandle(id)?.let { handle ->
             runCatching { handle.clearPieceDeadlines() }
         }
@@ -304,6 +327,7 @@ object TorrentEngine {
 
     @Synchronized
     fun pause(context: Context, id: String) {
+        pieceCompletionSignal.signal()
         clearStreamPriorities(id)
         TorrentQueueStore(context).setPaused(id, true)
         findHandle(id)?.let(::pauseHandle)
@@ -334,6 +358,7 @@ object TorrentEngine {
     /** Removes only the task from the queue. The downloaded data is preserved. */
     @Synchronized
     fun remove(context: Context, id: String, deleteFiles: Boolean = false) {
+        pieceCompletionSignal.signal()
         val item = TorrentQueueStore(context).get(id)
         val handle = findHandle(id)
         // Capture metadata while the handle is still valid; this works for magnet and .torrent tasks.
@@ -520,6 +545,7 @@ object TorrentEngine {
     /** Wait until every piece intersecting the requested file byte range is complete on disk. */
     fun awaitRange(id: String, fileIndex: Int, start: Long, length: Long, timeoutPerPieceMs: Long = 25_000L): File {
         require(start >= 0L && length > 0L)
+        check(!stopping) { "Торрент-сессия завершает работу" }
         val handle = findHandle(id) ?: throw IllegalStateException("Торрент не найден")
         require(handle.isValid) { "Торрент больше не активен" }
         val info = handle.torrentFile() ?: throw IllegalStateException("Ожидаются метаданные торрента")
@@ -542,21 +568,46 @@ object TorrentEngine {
         val firstPiece = (absoluteStart / pieceLength).toInt()
         val lastPiece = (absoluteEnd / pieceLength).toInt()
 
-        if (selected == fileIndex) {
+        val requestWindow = if (selected == fileIndex) {
             prioritizeStreamRange(id, handle, storage, fileIndex, start, length)
+        } else {
+            null // Fully downloaded subtitle sidecar: no playback priority window.
         }
 
+        val queueStore = TorrentQueueStore(appContext!!)
         for (piece in firstPiece..lastPiece) {
-            val began = System.currentTimeMillis()
-            while (!handle.havePiece(piece)) {
-                if (TorrentQueueStore(appContext!!).isPaused(id)) {
-                    throw IllegalStateException("Загрузка приостановлена")
+            val beganNanos = System.nanoTime()
+            val timeoutNanos = TimeUnit.MILLISECONDS.toNanos(timeoutPerPieceMs.coerceAtLeast(1L))
+            while (true) {
+                check(!stopping) { "Торрент-сессия завершает работу" }
+                if (requestWindow != null && activeStreamWindows[id] !== requestWindow) {
+                    throw java.io.InterruptedIOException(
+                        "Запрос диапазона отменён после новой перемотки"
+                    )
                 }
-                if (System.currentTimeMillis() - began > timeoutPerPieceMs) {
+                if (!handle.isValid) throw IllegalStateException("Торрент больше не активен")
+                if (handle.havePiece(piece)) break
+                if (queueStore.isPaused(id)) throw IllegalStateException("Загрузка приостановлена")
+
+                val remainingNanos = timeoutNanos - (System.nanoTime() - beganNanos)
+                if (remainingNanos <= 0L) {
                     throw java.net.SocketTimeoutException("Ожидание части торрента превысило 25 секунд")
                 }
-                Thread.sleep(120)
+                val generation = pieceCompletionSignal.generation()
+                // Recheck after observing the generation so a completion that races
+                // with the wait cannot be lost between havePiece() and awaitChange().
+                if (handle.havePiece(piece)) break
+                if (queueStore.isPaused(id)) throw IllegalStateException("Загрузка приостановлена")
+                if (requestWindow != null && activeStreamWindows[id] !== requestWindow) {
+                    throw java.io.InterruptedIOException(
+                        "Запрос диапазона отменён после новой перемотки"
+                    )
+                }
+                pieceCompletionSignal.awaitChange(generation, remainingNanos)
             }
+        }
+        if (requestWindow != null && activeStreamWindows[id] !== requestWindow) {
+            throw java.io.InterruptedIOException("Запрос диапазона отменён после новой перемотки")
         }
         val root = File(handle.savePath()).canonicalFile
         val file = File(storage.filePath(fileIndex, root.absolutePath)).canonicalFile
@@ -609,12 +660,17 @@ object TorrentEngine {
     /** Wait for native save-resume alerts before destroying libtorrent's session. */
     suspend fun stop(timeoutMs: Long = RESUME_SAVE_SHUTDOWN_TIMEOUT_MS): Boolean {
         val current = manager ?: return true
+        // Wake any HTTP Range workers before the native session disappears; they must not
+        // remain parked on a condition signal after the service has stopped its engine.
+        stopping = true
+        pieceCompletionSignal.signal()
         val saved = saveAllResumeDataAndAwait(timeoutMs)
         current.removeListener(alertListener)
         current.stop()
         manager = null
         alertListener = null
         localStreamPort = null
+        activeStreamWindows.clear()
         _snapshots.value = emptyList()
         return saved
     }

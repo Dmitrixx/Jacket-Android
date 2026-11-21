@@ -3,9 +3,12 @@ package app.jacket.mobile.ui
 import android.app.Activity
 import android.app.PictureInPictureParams
 import android.content.Context
+import android.os.Build
 import android.content.Intent
 import android.net.Uri
 import android.util.Rational
+import android.view.Surface
+import android.view.SurfaceView
 import android.view.WindowManager
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
@@ -79,6 +82,7 @@ import androidx.media3.common.MimeTypes
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.datasource.DefaultHttpDataSource
+import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.AspectRatioFrameLayout
@@ -207,6 +211,30 @@ fun JacketPlayerScreen(
             }
             player.removeListener(listener)
             player.release()
+        }
+    }
+
+    // Key by PlayerView: a recreated SurfaceView gets a fresh refresh-rate request.
+    DisposableEffect(player, playerView) {
+        applySurfaceFrameRate(playerView, player)
+        val listener = object : Player.Listener {
+            override fun onPlaybackStateChanged(playbackState: Int) {
+                if (playbackState == Player.STATE_READY) applySurfaceFrameRate(playerView, player)
+            }
+
+            override fun onTracksChanged(tracks: androidx.media3.common.Tracks) {
+                applySurfaceFrameRate(playerView, player)
+            }
+
+            override fun onIsPlayingChanged(isPlaying: Boolean) {
+                // Switching to pause, buffering or ended state releases the display request.
+                applySurfaceFrameRate(playerView, player)
+            }
+        }
+        player.addListener(listener)
+        onDispose {
+            player.removeListener(listener)
+            applySurfaceFrameRate(playerView, null)
         }
     }
 
@@ -533,8 +561,11 @@ private fun buildPlayer(
             if (safeHeaders.isNotEmpty()) setDefaultRequestProperties(safeHeaders)
         }
     val mediaSourceFactory = DefaultMediaSourceFactory(context).setDataSourceFactory(dataSourceFactory)
-    return ExoPlayer.Builder(context)
+    val renderersFactory = DefaultRenderersFactory(context)
+        .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_PREFER)
+    return ExoPlayer.Builder(context, renderersFactory)
         .setMediaSourceFactory(mediaSourceFactory)
+        .setVideoChangeFrameRateStrategy(C.VIDEO_CHANGE_FRAME_RATE_STRATEGY_OFF)
         .build()
         .apply {
             setMediaItem(
@@ -554,6 +585,35 @@ private fun buildPlayer(
             prepare()
             playWhenReady = true
         }
+}
+
+
+@androidx.annotation.OptIn(markerClass = [androidx.media3.common.util.UnstableApi::class])
+private fun applySurfaceFrameRate(playerView: PlayerView?, player: ExoPlayer?) {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return
+    val surfaceView = playerView?.videoSurfaceView as? SurfaceView ?: return
+    val surface = surfaceView.holder.surface
+    if (!surface.isValid) return
+
+    val frameRate = player
+        ?.takeIf { it.isPlaying }
+        ?.videoFormat?.frameRate
+        ?.let(FrameRatePolicy::normalize)
+    runCatching {
+        if (frameRate == null) {
+            surface.setFrameRate(
+                0f,
+                Surface.FRAME_RATE_COMPATIBILITY_DEFAULT,
+                Surface.CHANGE_FRAME_RATE_ONLY_IF_SEAMLESS
+            )
+        } else {
+            surface.setFrameRate(
+                frameRate,
+                Surface.FRAME_RATE_COMPATIBILITY_FIXED_SOURCE,
+                Surface.CHANGE_FRAME_RATE_ALWAYS
+            )
+        }
+    }
 }
 
 @androidx.annotation.OptIn(markerClass = [androidx.media3.common.util.UnstableApi::class])

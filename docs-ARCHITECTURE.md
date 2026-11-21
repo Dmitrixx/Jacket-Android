@@ -16,7 +16,8 @@ Compose UI (phone / tablet / Android TV)
    TorrentEngine (one libtorrent4j SessionManager)
         ├── magnet / private .torrent metainfo
         ├── file priorities + range-driven piece deadlines
-        ├── 8 MiB / 32-piece forward playback window
+        ├── 8 MiB / 32-piece forward playback window + initial tail-piece request
+        ├── piece-finished condition signal (no timed polling loop)
         ├── DHT and download/upload rate limits
         ├── resume-data / error snapshots
         └── verified download files in app-specific storage
@@ -31,6 +32,8 @@ No external Jackett or TorrServer process is started or packaged.
 - Filmix uses the explicitly selected allowlisted HTTPS API host and encrypted device token. Search, post details, account profile and plan-limited quality variants are resolved through Filmix v2.
 - HDRezka uses only the mirror explicitly configured by the user. The client parses the DLE AJAX search response, `post_id`, `initCDN*Events`, translator flags, favorites token and series defaults; AJAX requests use movie flags or resolved season/episode IDs. It decodes the known HDRezka `#h` stream payload locally and resolves quality fallbacks; unknown/rotated encodings fail closed. DLE cookies are sent only to the configured mirror, never to media CDNs. CAPTCHA/Anubis, paywalls, Filmix `#2` manifests and cross-origin redirects are not bypassed.
 - Media3 receives only non-secret `Referer`/`User-Agent` headers and parsed subtitle configurations. Account cookies are never copied into player request headers.
+- `io.put:media3-ffmpeg-decoder:1.11.1+1` is version-matched to Media3 1.11.1 and loaded through `DefaultRenderersFactory` with extension renderers preferred. Its LGPL-only FFmpeg build enables AC-3, E-AC-3, DTS, MLP and TrueHD (as well as the additional decoders listed by the upstream artifact); it does not enable GPL or nonfree components. The AAR provides four ABIs and 16 KB alignment for 64-bit libraries. FFmpeg is statically linked into `libffmpegJNI.so`, so the matching `ffmpeg-source` archive and rebuild/relink instructions are distributed alongside the dependency.
+- The app embeds the upstream Apache, LGPL and FFmpeg third-party notices in `app/src/main/assets/licenses/ffmpeg/` and exposes them from Settings → About. Gradle packaging deliberately keeps `META-INF/media3-ffmpeg-decoder/**` resources. Codec patent rights are separate from the software licences.
 - The detail-card source picker merges torrents, Filmix, HDRezka and license-gated Internet Archive results, isolates individual provider failures and displays source type/quality/translation metadata.
 
 ## Video source registry
@@ -78,11 +81,11 @@ The registry intentionally does not include tracker-specific HTML parsers or sol
 - Magnet links and imported `.torrent` files are stored in the queue. The metainfo is copied into app-private `filesDir/torrent-metainfo`.
 - Once metadata exists, UI can inspect files.
 - Selecting a video file sets its priority to TOP and all other files to IGNORE. Global sequential mode is disabled for playback because it would continue from the beginning after a seek.
-- `StreamPiecePlanner` maps an HTTP Range start/length to torrent piece indices using `fileOffset` and `pieceLength`. The current piece gets the closest deadline; following pieces receive increasing deadlines in an 8 MiB / 32-piece bounded window. A new seek replaces the previous window.
+- `StreamPiecePlanner` maps an HTTP Range start/length to torrent piece indices using `fileOffset` and `pieceLength`. The current piece gets the closest deadline; following pieces receive increasing deadlines in an 8 MiB / 32-piece bounded window. The initial byte-zero request may also schedule the file's final piece after the forward window to help containers whose index is stored at the tail. A new seek replaces the previous window.
 - This is deadline-based piece scheduling, not a hard guarantee that every peer will deliver pieces in strict order: peer availability and network conditions still apply. It does, however, prioritize the currently requested playback position ahead of the forward buffer.
 - `LocalStreamServer` listens only on `127.0.0.1`, probes ports 8090–8099, and validates Host and route.
 - Range responses are constructed by a pure `RangeResponseBuilder`; malformed and unsatisfiable ranges are rejected.
-- The server waits for the exact requested byte interval's pieces to be hash-checked and written to disk before reading that interval. It never requires the whole file to finish first.
+- The server waits for the exact requested byte interval's pieces to be hash-checked and written to disk before reading that interval. It never requires the whole file to finish first. Waiting is signaled by libtorrent `PIECE_FINISHED` alerts and a generation-checked condition, rather than a 120 ms polling sleep; pause, removal and session shutdown wake waiters immediately, and the shutdown state prevents workers from sleeping again before the native session stops. When a seek replaces the active priority window, its identity token invalidates older Range workers and wakes them so they fail fast instead of blocking on pieces from an obsolete position.
 - `StreamDiskCache` stores recent byte intervals in a 32 MiB LRU disk ring (maximum 256 KiB per segment). A seek that overlaps a cached interval can read the cached suffix; old slots are evicted as new segments arrive.
 - Cache reads allocate at most one segment per active HTTP worker. The cache file is temporary and deleted when the local server closes.
 - The disk ring stores disposable playback copies only. Verified torrent data is never removed by cache eviction, preserving hash-check state, seeding data and fast-resume consistency.
@@ -102,9 +105,12 @@ Resume data is asynchronous and periodic: abruptly killing the process can lose 
 
 ## Foreground-service lifecycle
 
+- The libtorrent session caps connections at 80 on Android devices that report low RAM and 200 otherwise.
 - Idle/background transfer uses `dataSync`.
 - Active in-app torrent playback switches the foreground service to `mediaPlayback`.
 - Android 15+ can time-limit `dataSync`. If the time limit arrives with no active playback, the service saves resume data and stops rather than claiming infinite background seeding.
+- On Android 12+, the player requests the source video's frame rate on its `SurfaceView` only while playback is actively rendering, using fixed-source compatibility and the long-form `CHANGE_FRAME_RATE_ALWAYS` strategy. Media3's own frame-rate calls are disabled to avoid competing requests; the request is reset on pause/stop and when the view is detached.
+- Audio extension renderers are preferred so the matching LGPL FFmpeg AAR can decode supported tracks when Android's platform `MediaCodec` cannot. Devices before API 31 keep the system-selected rate.
 - The player releases ExoPlayer and stores position when its screen is left; the download service and torrent session remain alive unless Android stops them or the user removes/stops the task.
 
 ## UI and device profiles
@@ -124,7 +130,7 @@ Resume data is asynchronous and periodic: abruptly killing the process can lose 
 
 ## Automated tests
 
-The JVM suite includes XML fixtures for RSS/Torznab, release-name heuristics, queue codec round-trips, Range parsing / response headers, byte-range-to-piece planning, forward-window limits, disk-cache LRU eviction, overlapping-range cache hits and route / Host policy checks. JNI torrent streaming, actual file-piece availability, Android foreground-service behavior and TV remote navigation require device-level acceptance tests.
+The JVM suite includes XML fixtures for RSS/Torznab, release-name heuristics, queue codec round-trips, Range parsing / response headers, byte-range-to-piece planning, forward-window and tail-prefetch deadlines, piece-completion signaling, frame-rate normalization, disk-cache LRU eviction, overlapping-range cache hits and route / Host policy checks. JNI torrent streaming, actual file-piece availability, Android foreground-service behavior and TV remote navigation require device-level acceptance tests.
 
 
 ## Consolidated source, stream and navigation safeguards
