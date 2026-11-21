@@ -155,10 +155,14 @@ class HdRezkaCatalogClientTest {
     }
 
     @Test
-    fun buildsCurrentEngineAjaxSearchEndpoint() {
+    fun buildsCurrentEngineAjaxSearchPostRequest() {
         assertEquals(
-            "https://hdrezka.example/engine/ajax/search.php?q=Interstellar+2024",
-            HdRezkaCatalogClient.buildSearchUrl("https://hdrezka.example", "Interstellar 2024")
+            "https://hdrezka.example/engine/ajax/search.php",
+            HdRezkaCatalogClient.buildSearchUrl("https://hdrezka.example")
+        )
+        assertEquals(
+            "q=Interstellar+2024",
+            HdRezkaCatalogClient.buildSearchBody("Interstellar 2024")
         )
     }
 

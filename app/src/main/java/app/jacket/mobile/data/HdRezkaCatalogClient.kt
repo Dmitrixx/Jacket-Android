@@ -64,8 +64,17 @@ object HdRezkaCatalogClient {
     ): List<SourceResult> {
         require(query.isNotBlank()) { "Введите название для поиска HDRezka" }
         val mirror = HdRezkaLoginClient.validateMirror(settings.mirror)
-        val searchUrl = buildSearchUrl(mirror, query)
-        val html = requestText(mirror, searchUrl, "GET", null, "$mirror/", settings)
+        val searchUrl = buildSearchUrl(mirror)
+        val searchBody = buildSearchBody(query)
+        val html = requestText(
+            mirror,
+            searchUrl,
+            "POST",
+            searchBody,
+            "$mirror/",
+            settings,
+            "application/x-www-form-urlencoded; charset=UTF-8"
+        )
         val entries = parseSearchEntries(html, mirror).distinctBy { it.pageUrl }.take(MAX_SEARCH_RESULTS)
         return buildList {
             entries.forEach entryLoop@{ entry ->
@@ -145,8 +154,13 @@ object HdRezkaCatalogClient {
         }.distinctBy { it.id }.take(80)
     }
 
-    internal fun buildSearchUrl(mirror: String, query: String): String =
-        "$mirror/engine/ajax/search.php?q=${encode(query.trim().take(160))}"
+    internal fun buildSearchUrl(mirror: String): String =
+        "$mirror/engine/ajax/search.php"
+
+    internal fun buildSearchBody(query: String): String {
+        require(query.isNotBlank()) { "Введите название для поиска HDRezka" }
+        return "q=${encode(query.trim().take(160))}"
+    }
 
     internal fun parseSearchEntries(html: String, mirror: String): List<HdRezkaSearchEntry> {
         val document = Jsoup.parse(html, mirror)
