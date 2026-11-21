@@ -1769,6 +1769,8 @@ private fun formatReleaseDate(value: String): String {
 private fun DownloadsScreen(onBack: () -> Unit) {
     val context = LocalContext.current
     val downloads by TorrentEngine.snapshots.collectAsState()
+    var showAddLinkDialog by rememberSaveable { mutableStateOf(false) }
+    var manualTorrentInput by rememberSaveable { mutableStateOf("") }
     val importTorrent = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) {
             runCatching {
@@ -1798,6 +1800,60 @@ private fun DownloadsScreen(onBack: () -> Unit) {
         }
     }
 
+    if (showAddLinkDialog) {
+        AlertDialog(
+            onDismissRequest = { showAddLinkDialog = false },
+            title = { Text("Добавить торрент по ссылке") },
+            text = {
+                OutlinedTextField(
+                    value = manualTorrentInput,
+                    onValueChange = { manualTorrentInput = it.take(16_384) },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("magnet:? или HTTPS / локальный URL .torrent") },
+                    placeholder = { Text("Вставьте ссылку") },
+                    minLines = 2,
+                    maxLines = 5
+                )
+            },
+            confirmButton = {
+                Button(onClick = {
+                    val input = manualTorrentInput.trim()
+                    runCatching {
+                        require(input.isNotBlank()) { "Введите magnet-ссылку или URL .torrent" }
+                        if (input.startsWith("magnet:", ignoreCase = true)) {
+                            val magnet = Uri.parse(input)
+                            require(magnet.scheme.equals("magnet", ignoreCase = true) &&
+                                !magnet.getQueryParameter("xt").isNullOrBlank()) {
+                                "Некорректная magnet-ссылка: отсутствует xt"
+                            }
+                            val title = magnet.getQueryParameter("dn")
+                                ?.takeIf { it.isNotBlank() }?.take(160) ?: "Magnet-загрузка"
+                            TorrentDownloadService.add(context, input, title)
+                        } else {
+                            require(app.jacket.mobile.data.LocalNetwork.isAllowedUrl(input)) {
+                                "Разрешён HTTPS или HTTP-адрес локального сервера"
+                            }
+                            TorrentDownloadService.addTorrentUrl(context, input, "Торрент по ссылке")
+                        }
+                    }.onSuccess {
+                        showAddLinkDialog = false
+                        manualTorrentInput = ""
+                        Toast.makeText(context, "Торрент добавлен в очередь", Toast.LENGTH_SHORT).show()
+                    }.onFailure {
+                        Toast.makeText(
+                            context,
+                            it.message ?: "Не удалось добавить торрент",
+                            Toast.LENGTH_LONG
+                        ).show()
+                    }
+                }) { Text("Добавить") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showAddLinkDialog = false }) { Text("Отмена") }
+            }
+        )
+    }
+
     LaunchedEffect(Unit) { TorrentDownloadService.restore(context) }
 
     Scaffold(
@@ -1810,6 +1866,9 @@ private fun DownloadsScreen(onBack: () -> Unit) {
                     }
                 },
                 actions = {
+                    TextButton(onClick = { showAddLinkDialog = true }) {
+                        Text("Ссылка")
+                    }
                     IconButton(onClick = { importTorrent.launch(arrayOf("application/x-bittorrent", "application/octet-stream", "*/*")) }) {
                         Icon(Icons.Default.Add, contentDescription = "Импортировать .torrent")
                     }
