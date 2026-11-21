@@ -1,18 +1,16 @@
 # Changelog
 
-## Next
-
-- Match the Android 12+ display refresh rate to the active video frame rate on SurfaceView playback; clear the request when playback pauses or stops and when the surface is detached. Older Android versions remain unchanged.
-- Replace torrent piece polling with a condition signal driven by libtorrent piece-finished alerts; pause/removal also wake waiting stream workers.
-- Add a tail-piece deadline to the initial torrent byte-range plan, after the bounded forward window, and lower the global peer-connection ceiling on low-RAM Android devices.
-- Shrink release resources and produce ABI-specific APKs for arm64-v8a, armeabi-v7a, x86 and x86_64 while retaining a universal APK.
-
 ## 2.8.0
 
 - Consolidated native Filmix and HDRezka search/player adapters, encrypted account state, provider diagnostics and the unified detail-card source picker.
 - Added the native optional Jackett indexer catalogue, dynamic per-indexer configuration/testing, private-indexer support and richer torrent release cards. Jackett remains user-managed and is not bundled.
 - Added a ten-provider catalogue in priority order. Only Filmix and HDRezka have direct adapters; ColdFilm, Baskino, Kinogo, VideoCDN, Collaps, Kinobase, CDNMovies and Lordfilm remain unconnected descriptors pending a compatible verified integration.
 - Added completion-order partial tracker results, bounded detail-page resolution, a 25-second aggregate deadline and protection against stale search callbacks.
+- Match the Android 12+ display refresh rate to the active video frame rate on SurfaceView playback; clear the request when playback pauses or stops and when the surface is detached. Older Android versions remain unchanged.
+- Replace torrent piece polling with a condition signal driven by libtorrent piece-finished alerts; pause/removal also wake waiting stream workers.
+- Add a tail-piece deadline to the initial torrent byte-range plan, after the bounded forward window, and lower the global peer-connection ceiling on low-RAM Android devices.
+- Shrink release resources and produce ABI-specific APKs for arm64-v8a, armeabi-v7a, x86 and x86_64 while retaining a universal APK.
+
 - Restricted built-in HTML tracker requests, redirects and parsed download URLs to public HTTPS targets, including non-public IPv6 rejection. DNS rebinding is not fully prevented.
 - Made initial torrent byte-range failures retryable with a sanitized HTTP 503 and Retry-After header before a successful response is committed.
 - Hardened torrent persistence with bounded validation, per-record queue recovery, legacy migration, serialized resume checkpoints and AtomicFile backup recovery.
