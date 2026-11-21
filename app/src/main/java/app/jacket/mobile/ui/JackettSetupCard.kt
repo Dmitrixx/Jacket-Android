@@ -31,6 +31,9 @@ fun JackettSetupCard(
     saved: IndexerConfig?,
     status: String?,
     onSave: (address: String, apiKey: String, indexer: String, dashboardCookie: String) -> Unit,
+    onLogin: (adminPassword: String) -> Unit,
+    loginStatus: String?,
+    loginBusy: Boolean,
     onTest: () -> Unit,
     onRemove: () -> Unit
 ) {
@@ -40,6 +43,7 @@ fun JackettSetupCard(
     var address by remember(saved?.id, parsed?.baseUrl) { mutableStateOf(parsed?.baseUrl.orEmpty()) }
     var apiKey by remember(saved?.id, saved?.apiKey) { mutableStateOf(saved?.apiKey.orEmpty()) }
     var dashboardCookie by remember(saved?.id, saved?.cookie) { mutableStateOf(saved?.cookie.orEmpty()) }
+    var adminPassword by remember(saved?.id) { mutableStateOf("") }
     var indexer by remember(saved?.id, parsed?.indexer) {
         mutableStateOf(parsed?.indexer ?: JackettUrl.DEFAULT_INDEXER)
     }
@@ -76,6 +80,34 @@ fun JackettSetupCard(
                 modifier = Modifier.fillMaxWidth()
             )
             OutlinedTextField(
+                value = adminPassword,
+                onValueChange = { adminPassword = it.take(512) },
+                label = { Text("Пароль администратора Jackett") },
+                singleLine = true,
+                enabled = saved != null && !loginBusy,
+                visualTransformation = PasswordVisualTransformation(),
+                modifier = Modifier.fillMaxWidth()
+            )
+            Button(
+                onClick = {
+                    val value = adminPassword
+                    adminPassword = ""
+                    onLogin(value)
+                },
+                enabled = saved != null && !loginBusy && adminPassword.isNotBlank(),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(if (loginBusy) "Входим…" else "Войти по паролю и сохранить Cookie")
+            }
+            loginStatus?.let {
+                Text(
+                    it,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (it.startsWith("Ошибка")) MaterialTheme.colorScheme.error
+                    else MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            OutlinedTextField(
                 value = dashboardCookie,
                 onValueChange = { dashboardCookie = it.replace(Regex("[\\r\\n]"), "").take(8192) },
                 label = { Text("Cookie панели Jackett (необязательно)") },
@@ -85,7 +117,7 @@ fun JackettSetupCard(
                 modifier = Modifier.fillMaxWidth()
             )
             Text(
-                "Cookie нужна для просмотра и сохранения настроек приватных индексаторов, если панель требует вход. Она шифруется на устройстве и отправляется только указанному серверу; для внешнего сервера используйте HTTPS.",
+                "Пароль используется только для входа на указанный сервер и не сохраняется. Полученный Jackett Cookie шифруется на устройстве и отправляется только этому серверу; для удалённого сервера используйте HTTPS.",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
