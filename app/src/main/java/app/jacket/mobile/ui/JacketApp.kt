@@ -2111,6 +2111,8 @@ private fun SettingsScreen(
     val jackettIndexers by viewModel.jackettIndexers.collectAsState()
     val loadingJackettIndexers by viewModel.isLoadingJackettIndexers.collectAsState()
     val jackettCatalogStatus by viewModel.jackettCatalogStatus.collectAsState()
+    val jackettLoginStatus by viewModel.jackettLoginStatus.collectAsState()
+    val isJackettLoginBusy by viewModel.isJackettLoginBusy.collectAsState()
     val testingJackettIndexerId by viewModel.testingJackettIndexerId.collectAsState()
     val savedJackett = indexers.firstOrNull { it.protocol == IndexerProtocol.JACKETT }
     val jackettConfigIndexerId by viewModel.jackettConfigIndexerId.collectAsState()
@@ -3072,6 +3074,9 @@ private fun SettingsScreen(
                     saved = savedJackett,
                     status = savedJackett?.let { statuses[it.id] },
                     onSave = viewModel::saveJackett,
+                    onLogin = viewModel::loginJackettDashboard,
+                    loginStatus = jackettLoginStatus,
+                    loginBusy = isJackettLoginBusy,
                     onTest = { savedJackett?.let { viewModel.testIndexer(it.id) } },
                     onRemove = { savedJackett?.let { viewModel.removeIndexer(it.id) } }
                 )
