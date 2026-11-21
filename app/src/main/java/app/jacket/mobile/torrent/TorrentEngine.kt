@@ -603,6 +603,10 @@ object TorrentEngine {
                         "Запрос диапазона отменён после новой перемотки"
                     )
                 }
+                // stop() may publish its wake-up between the first loop check and
+                // generation capture. Recheck immediately before parking to avoid
+                // sleeping again after the shutdown notification has already fired.
+                check(!stopping) { "Торрент-сессия завершает работу" }
                 pieceCompletionSignal.awaitChange(generation, remainingNanos)
             }
         }
@@ -663,6 +667,9 @@ object TorrentEngine {
         // Wake any HTTP Range workers before the native session disappears; they must not
         // remain parked on a condition signal after the service has stopped its engine.
         stopping = true
+        // Invalidate the leases before notifying workers. A range handler that
+        // races the signal must either observe stopping or a stale window.
+        activeStreamWindows.clear()
         pieceCompletionSignal.signal()
         val saved = saveAllResumeDataAndAwait(timeoutMs)
         current.removeListener(alertListener)
