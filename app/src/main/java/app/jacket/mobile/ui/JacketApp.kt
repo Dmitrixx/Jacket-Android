@@ -99,6 +99,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -2380,28 +2381,45 @@ private fun SettingsScreen(
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                             Text("API-сервер", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                val compactApiButtonPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp)
                                 if (filmixApiBase == FilmixDeviceAuth.DEFAULT_API_BASE) {
-                                    Button(onClick = {}, enabled = false, modifier = Modifier.weight(1f)) {
-                                        Text("Основной")
+                                    Button(
+                                        onClick = {},
+                                        enabled = false,
+                                        modifier = Modifier.weight(1f),
+                                        contentPadding = compactApiButtonPadding
+                                    ) {
+                                        Text("Основной", maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis)
                                     }
                                 } else {
                                     OutlinedButton(
                                         onClick = { viewModel.selectFilmixApiBase(FilmixDeviceAuth.DEFAULT_API_BASE) },
                                         enabled = !isFilmixPairing,
-                                        modifier = Modifier.weight(1f)
-                                    ) { Text("Основной") }
+                                        modifier = Modifier.weight(1f),
+                                        contentPadding = compactApiButtonPadding
+                                    ) {
+                                        Text("Основной", maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis)
+                                    }
                                 }
                                 if (filmixApiBase == FilmixDeviceAuth.ALTERNATE_API_BASE) {
-                                    Button(onClick = {}, enabled = false, modifier = Modifier.weight(1f)) {
-                                        Text("Альтернативный")
+                                    Button(
+                                        onClick = {},
+                                        enabled = false,
+                                        modifier = Modifier.weight(1f),
+                                        contentPadding = compactApiButtonPadding
+                                    ) {
+                                        Text("Резервный", maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis)
                                     }
                                 } else {
                                     OutlinedButton(
                                         onClick = { viewModel.selectFilmixApiBase(FilmixDeviceAuth.ALTERNATE_API_BASE) },
                                         enabled = !isFilmixPairing,
-                                        modifier = Modifier.weight(1f)
-                                    ) { Text("Альтернативный") }
+                                        modifier = Modifier.weight(1f),
+                                        contentPadding = compactApiButtonPadding
+                                    ) {
+                                        Text("Резервный", maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis)
+                                    }
                                 }
                             }
                             Text(
