@@ -50,6 +50,15 @@ class TorrentQueueCodecTest {
     }
 
     @Test
+    fun parsesRealBitTorrentInfoHashesWithoutAndroidUri() {
+        val btih = "0123456789abcdef0123456789abcdef01234567"
+        assertEquals(btih, TorrentQueueStore.idFor("magnet:?dn=Test&xt=urn%3Abtih%3A$btih"))
+
+        val btmh = "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"
+        assertEquals(btmh, TorrentQueueStore.idFor("magnet:?xt=urn:btmh:1220$btmh"))
+    }
+
+    @Test
     fun migratesLegacyMagnetWithInvalidIdAndDeduplicatesByCanonicalHash() {
         val hash = "0123456789abcdef0123456789abcdef01234567"
         val magnet = "magnet:?xt=urn:btih:$hash&dn=Old%20release"
