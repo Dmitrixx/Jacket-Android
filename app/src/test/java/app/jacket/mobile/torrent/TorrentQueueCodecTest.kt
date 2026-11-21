@@ -35,7 +35,7 @@ class TorrentQueueCodecTest {
 
     @Test
     fun rejectsOversizedQueueBeforeEncoding() {
-        val oversizedMagnet = "magnet:?" + "é".repeat(8_000)
+        val oversizedMagnet = "magnet:?" + "🦄".repeat(8_000)
         val items = (0 until 300).map { index ->
             QueuedTorrent(
                 id = index.toString(16).padStart(40, '0'),
