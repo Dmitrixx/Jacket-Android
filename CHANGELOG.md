@@ -1,5 +1,11 @@
 # Changelog
 
+## Next
+
+- Filmix AUTO mode checks the explicitly saved custom HTTPS API first (when present), then the official primary and reserve hosts; activation polling and catalog requests stay pinned to the host that issued the device code.
+- Allow an explicitly user-entered HTTPS Filmix API host with strict URL/host validation, normal certificate validation and no cross-host token forwarding.
+
+
 ## 2.8.0
 
 - Consolidated native Filmix and HDRezka search/player adapters, encrypted account state, provider diagnostics and the unified detail-card source picker.
