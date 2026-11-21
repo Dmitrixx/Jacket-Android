@@ -162,12 +162,13 @@ object LampacBridgeClient {
 
         routes.values.take(MAX_PROVIDER_ROUTES).forEach { route ->
             if (Thread.currentThread().isInterrupted) throw IOException("Поиск Lampac отменён")
+            val pageUrl = stripSensitiveQueryParams(route.url, base)
             val providerUrl = appendJsonModeAndAuth(route.url, settings, base)
             val payload = JSONObject(requestText(providerUrl, base))
             when (payload.optString("type").lowercase()) {
                 "movie" -> if (item.kind == MediaKind.MOVIE) {
                     results += parsePlayableEntries(
-                        payload.optJSONArray("data"), providerUrl, base, item, route.name, null, null
+                        payload.optJSONArray("data"), pageUrl, base, item, route.name, null, null
                     )
                 }
                 "season" -> if (item.kind == MediaKind.SERIES && targetSeason != null && targetEpisode != null) {
@@ -178,7 +179,7 @@ object LampacBridgeClient {
                     if (episodePayload.optString("type").equals("episode", true)) {
                         results += parsePlayableEntries(
                             episodePayload.optJSONArray("data"),
-                            safeSeasonUrl,
+                            stripSensitiveQueryParams(seasonUrl, base),
                             base,
                             item,
                             route.name,
@@ -190,7 +191,7 @@ object LampacBridgeClient {
                 "episode" -> if (item.kind == MediaKind.SERIES && targetSeason != null && targetEpisode != null) {
                     results += parsePlayableEntries(
                         payload.optJSONArray("data"),
-                        providerUrl,
+                        pageUrl,
                         base,
                         item,
                         route.name,
@@ -296,6 +297,24 @@ object LampacBridgeClient {
                 .ifBlank { entry.optString("plugin") }
                 .ifBlank { "Источник " + (index + 1) }
             target.putIfAbsent(url, ProviderRoute(name.take(100), url))
+        }
+    }
+
+    /**
+     * Provider requests need account parameters, but page metadata must never retain
+     * account identifiers or credentials that can be exposed in links or diagnostics.
+     */
+    internal fun stripSensitiveQueryParams(url: String, baseUrl: String): String {
+        val safe = validateSameOriginUrl(url, baseUrl)
+        val uri = URI(safe)
+        val sensitive = setOf("account_email", "uid", "token", "password", "cookie", "api_key")
+        val query = uri.rawQuery.orEmpty().split('&').filter { part ->
+            part.isNotBlank() && decode(part.substringBefore('=')).lowercase() !in sensitive
+        }.joinToString("&")
+        val path = uri.rawPath.orEmpty()
+        return buildString {
+            append(uri.scheme).append("://").append(uri.rawAuthority).append(path)
+            if (query.isNotBlank()) append('?').append(query)
         }
     }
 
