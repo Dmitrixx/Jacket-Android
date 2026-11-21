@@ -3599,7 +3599,7 @@ private fun SettingsScreen(
                         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
                     ) {
                         Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Text("JACKET 2.6", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Black)
+                            Text("JACKET 2.8", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Black)
                             Text("Единое приложение для Android, планшетов и Android TV.",
                                 color = MaterialTheme.colorScheme.onSurfaceVariant)
                             Text("Встроены поиск и поддерживаемое воспроизведение Filmix/HDRezka, а также RSS / Atom и Torznab. Результаты всех подключённых источников объединяются в карточке фильма; трекер-пресеты открываются в браузере.")
