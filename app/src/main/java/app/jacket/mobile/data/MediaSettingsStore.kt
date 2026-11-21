@@ -106,6 +106,9 @@ class MediaSettingsStore(context: Context) {
         val baseUrl = settings.baseUrl.trim().take(300).let {
             if (it.isBlank()) "" else LampacBridgeClient.normalizeBaseUrl(it)
         }
+        require(!settings.enabled || baseUrl.isNotBlank()) {
+            "Укажите адрес Lampac или отключите его использование в поиске"
+        }
         val email = settings.accountEmail.replace(Regex("[\\r\\n]"), "").trim().take(254)
         val uid = settings.uid.replace(Regex("[\\r\\n]"), "").trim().take(128)
         val token = settings.token.replace(Regex("[\\r\\n]"), "").trim().take(1024)
