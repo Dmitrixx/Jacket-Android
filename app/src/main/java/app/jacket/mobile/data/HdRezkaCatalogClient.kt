@@ -147,7 +147,11 @@ object HdRezkaCatalogClient {
             val title = anchor.attr("title").ifBlank { anchor.text() }.trim().takeIf { it.isNotBlank() }
                 ?: return@mapNotNull null
             val image = card.selectFirst(".b-content__inline_item-cover img, img")
-            val poster = image?.let { it.absUrl("src").ifBlank { it.absUrl("data-src") } }?.takeIf(::isHttpsUrl)
+            val poster = image?.let { element ->
+                sequenceOf("src", "data-src", "data-original")
+                    .map { element.absUrl(it) }
+                    .firstOrNull(::isHttpsUrl)
+            }
             val details = card.selectFirst(".b-content__inline_item-details, .b-content__inline_item-info")
                 ?.text()?.trim().orEmpty().take(500)
             HdRezkaSearchEntry(title, page, poster, details)
@@ -307,7 +311,10 @@ object HdRezkaCatalogClient {
                 qualityLabel = variant.qualityLabel,
                 translationName = translator.name,
                 subtitles = subtitles,
-                requestHeaders = mapOf("Referer" to pageUrl)
+                requestHeaders = mapOf(
+                    "Referer" to pageUrl,
+                    "User-Agent" to USER_AGENT
+                )
             )
         }
     }
@@ -467,7 +474,8 @@ object HdRezkaCatalogClient {
     private fun isSameOrigin(url: String, mirror: String): Boolean = runCatching {
         val target = URI(url)
         val base = URI(mirror)
-        target.scheme.equals("https", true) && target.host.equals(base.host, true) &&
+        target.scheme.equals("https", true) && target.rawUserInfo == null &&
+            target.host.equals(base.host, true) &&
             (if (target.port >= 0) target.port else 443) == (if (base.port >= 0) base.port else 443)
     }.getOrDefault(false)
 

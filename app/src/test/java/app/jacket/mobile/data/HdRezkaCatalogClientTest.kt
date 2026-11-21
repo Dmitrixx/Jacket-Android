@@ -14,7 +14,7 @@ class HdRezkaCatalogClientTest {
         val html = """
             <div class="b-content__inline_item">
               <a class="b-content__inline_item-link" href="https://hdrezka.example/film/123-demo.html" title="Демо">Демо</a>
-              <div class="b-content__inline_item-cover"><img src="https://hdrezka.example/poster.jpg"></div>
+              <div class="b-content__inline_item-cover"><img src="data:image/gif;base64,AA==" data-src="https://hdrezka.example/poster.jpg"></div>
               <div class="b-content__inline_item-details">2024</div>
             </div>
         """.trimIndent()
@@ -27,7 +27,14 @@ class HdRezkaCatalogClientTest {
 
     @Test
     fun ignoresExternalSearchResults() {
-        val html = """<div class="b-content__inline_item"><a class="b-content__inline_item-link" href="https://other.example/film.html">X</a></div>"""
+        val html = """
+            <div class="b-content__inline_item">
+              <a class="b-content__inline_item-link" href="https://other.example/film.html">X</a>
+            </div>
+            <div class="b-content__inline_item">
+              <a class="b-content__inline_item-link" href="https://user@hdrezka.example/film.html">Y</a>
+            </div>
+        """.trimIndent()
         assertTrue(HdRezkaCatalogClient.parseSearchEntries(html, "https://hdrezka.example").isEmpty())
     }
 
@@ -183,7 +190,13 @@ class HdRezkaCatalogClientTest {
         )
         assertEquals(1, results.size)
         assertEquals("Русская озвучка", results.single().translationName)
-        assertEquals(mapOf("Referer" to "https://hdrezka.example/film/demo.html"), results.single().requestHeaders)
+        assertEquals(
+            mapOf(
+                "Referer" to "https://hdrezka.example/film/demo.html",
+                "User-Agent" to "Jacket-Android/2.7 (Android media client)"
+            ),
+            results.single().requestHeaders
+        )
         assertNull(results.single().magnetUri)
     }
 }

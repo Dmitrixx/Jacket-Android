@@ -40,6 +40,7 @@ object FilmixCatalogClient {
     private const val LIVEHASH_TTL_MS = 2 * 60 * 60 * 1000L
     private val livehashPattern = Regex("/s/([^/]+)/")
     @Volatile private var cachedLivehash: String? = null
+    @Volatile private var cachedLivehashKey: String? = null
     @Volatile private var livehashExpiresAt = 0L
     private val livehashLock = Any()
     private val qualityListPattern = Regex("_\\[([0-9,]+)]\\.mp4", RegexOption.IGNORE_CASE)
@@ -120,16 +121,22 @@ object FilmixCatalogClient {
             ?.takeIf { it.matches(Regex("[A-Za-z0-9_-]{1,128}")) }
 
     private fun getLivehash(apiBase: String, deviceId: String, token: String): String? {
+        val cacheKey = "$apiBase|$deviceId"
         val now = System.currentTimeMillis()
-        cachedLivehash?.takeIf { now < livehashExpiresAt }?.let { return it }
+        if (cachedLivehashKey == cacheKey && now < livehashExpiresAt) {
+            cachedLivehash?.let { return it }
+        }
         synchronized(livehashLock) {
             val lockedNow = System.currentTimeMillis()
-            cachedLivehash?.takeIf { lockedNow < livehashExpiresAt }?.let { return it }
+            if (cachedLivehashKey == cacheKey && lockedNow < livehashExpiresAt) {
+                cachedLivehash?.let { return it }
+            }
             val post = runCatching {
                 getJson(buildApiUrl(apiBase, "post/$LIVEHASH_POST_ID", deviceId, token))
             }.getOrNull() ?: return null
             val fresh = extractLivehash(post) ?: return null
             cachedLivehash = fresh
+            cachedLivehashKey = cacheKey
             livehashExpiresAt = System.currentTimeMillis() + LIVEHASH_TTL_MS
             return fresh
         }
