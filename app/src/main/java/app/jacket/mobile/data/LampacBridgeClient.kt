@@ -8,6 +8,7 @@ import java.net.HttpURLConnection
 import java.net.URI
 import java.net.URL
 import java.net.URLEncoder
+import java.security.MessageDigest
 
 /**
  * Client for a Lampac instance operated by the user.
@@ -249,7 +250,7 @@ object LampacBridgeClient {
                 if (!quality.isNullOrBlank()) append(" • ").append(quality)
             }
             result += SourceResult(
-                id = "lampac:" + providerName.lowercase() + ":" + safeStream,
+                id = "lampac:" + providerName.lowercase() + ":" + stableStreamKey(safeStream),
                 title = title,
                 providerName = "Lampac",
                 streamUrl = safeStream,
@@ -325,6 +326,12 @@ object LampacBridgeClient {
 
     private fun decode(value: String): String =
         runCatching { java.net.URLDecoder.decode(value, Charsets.UTF_8.name()) }.getOrDefault(value)
+
+    private fun stableStreamKey(value: String): String =
+        MessageDigest.getInstance("SHA-256")
+            .digest(value.toByteArray(Charsets.UTF_8))
+            .take(12)
+            .joinToString("") { "%02x".format(it) }
 
     private fun safePlaybackHeaders(source: JSONObject?): Map<String, String> {
         if (source == null) return emptyMap()
