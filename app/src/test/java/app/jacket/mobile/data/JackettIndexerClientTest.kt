@@ -1,23 +1,3 @@
-
-private fun readHttpLine(input: BufferedInputStream): String {
-    val output = ByteArrayOutputStream()
-    while (true) {
-        val value = input.read()
-        if (value < 0) break
-        if (value == 13) {
-            val next = input.read()
-            if (next == 10) break
-            output.write(value)
-            if (next >= 0) output.write(next)
-        } else if (value == 10) {
-            break
-        } else {
-            output.write(value)
-        }
-    }
-    return output.toString(Charsets.ISO_8859_1.name())
-}
-
 package app.jacket.mobile.data
 
 import org.json.JSONArray
@@ -79,7 +59,7 @@ class JackettIndexerClientTest {
                 }
                 val bodySize = headers["content-length"]?.toIntOrNull() ?: 0
                 val body = input.readNBytes(bodySize).toString(Charsets.UTF_8)
-                capturedRequest += requestLine to body
+                capturedRequest.add(requestLine to body)
                 val response = (
                     "HTTP/1.1 302 Found\\r\\n" +
                         "Set-Cookie: OtherCookie=ignored; Path=/\\r\\n" +
@@ -400,4 +380,23 @@ class JackettIndexerClientTest {
     fun rejectsTraversalIndexerId() {
         JackettIndexerClient.buildIndexerConfigUrl("https://seedbox.example", "../admin")
     }
+}
+
+private fun readHttpLine(input: BufferedInputStream): String {
+    val output = ByteArrayOutputStream()
+    while (true) {
+        val value = input.read()
+        if (value < 0) break
+        if (value == 13) {
+            val next = input.read()
+            if (next == 10) break
+            output.write(value)
+            if (next >= 0) output.write(next)
+        } else if (value == 10) {
+            break
+        } else {
+            output.write(value)
+        }
+    }
+    return output.toString(Charsets.ISO_8859_1.name())
 }
