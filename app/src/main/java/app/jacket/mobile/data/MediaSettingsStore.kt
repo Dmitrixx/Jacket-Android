@@ -44,17 +44,55 @@ class MediaSettingsStore(context: Context) {
 
     fun filmixToken(): String = decrypt(preferences.getString(KEY_FILMIX_TOKEN, null))
 
+    /** The API origin last verified by device authorization; used for catalog requests. */
     fun filmixApiBase(): String = runCatching {
-        FilmixDeviceAuth.normalizeApiBase(
-            preferences.getString(KEY_FILMIX_API_BASE, FilmixDeviceAuth.DEFAULT_API_BASE)
-                ?: FilmixDeviceAuth.DEFAULT_API_BASE
-        )
+        val stored = preferences.getString(KEY_FILMIX_ACTIVE_API_BASE, null)
+            ?: preferences.getString(KEY_FILMIX_API_BASE, FilmixDeviceAuth.DEFAULT_API_BASE)
+            ?: FilmixDeviceAuth.DEFAULT_API_BASE
+        FilmixDeviceAuth.normalizeApiBase(stored, allowCustomHost = true)
     }.getOrDefault(FilmixDeviceAuth.DEFAULT_API_BASE)
+
+    /** Selection may be AUTO, an official endpoint, or the user's explicit custom HTTPS URL. */
+    fun filmixApiSelection(): String = runCatching {
+        val stored = preferences.getString(KEY_FILMIX_API_SELECTION, null)
+            ?: preferences.getString(KEY_FILMIX_API_BASE, FilmixDeviceAuth.DEFAULT_API_BASE)
+            ?: FilmixDeviceAuth.DEFAULT_API_BASE
+        FilmixDeviceAuth.normalizeApiSelection(stored)
+    }.getOrDefault(FilmixDeviceAuth.DEFAULT_API_BASE)
+
+    fun filmixCustomApiBase(): String = runCatching {
+        val value = preferences.getString(KEY_FILMIX_CUSTOM_API_BASE, null).orEmpty()
+        if (value.isBlank()) "" else FilmixDeviceAuth.normalizeApiBase(value, allowCustomHost = true)
+    }.getOrDefault("")
+
+    @Synchronized
+    fun saveFilmixApiSelection(value: String): String {
+        val normalized = FilmixDeviceAuth.normalizeApiSelection(value)
+        preferences.edit {
+            putString(KEY_FILMIX_API_SELECTION, normalized)
+            if (normalized != FilmixDeviceAuth.AUTO_API_BASE) {
+                putString(KEY_FILMIX_ACTIVE_API_BASE, normalized)
+                putString(KEY_FILMIX_API_BASE, normalized)
+            }
+        }
+        return normalized
+    }
+
+    @Synchronized
+    fun saveFilmixCustomApiBase(value: String): String {
+        val normalized = if (value.isBlank()) "" else
+            FilmixDeviceAuth.normalizeApiBase(value, allowCustomHost = true)
+        preferences.edit { putString(KEY_FILMIX_CUSTOM_API_BASE, normalized) }
+        return normalized
+    }
 
     @Synchronized
     fun saveFilmixApiBase(value: String): String {
-        val normalized = FilmixDeviceAuth.normalizeApiBase(value)
-        preferences.edit { putString(KEY_FILMIX_API_BASE, normalized) }
+        val normalized = FilmixDeviceAuth.normalizeApiBase(value, allowCustomHost = true)
+        preferences.edit {
+            putString(KEY_FILMIX_ACTIVE_API_BASE, normalized)
+            putString(KEY_FILMIX_API_BASE, normalized)
+        }
         return normalized
     }
 
@@ -455,6 +493,9 @@ class MediaSettingsStore(context: Context) {
         const val KEY_TMDB_TOKEN = "tmdb_token_enc"
         const val KEY_FILMIX_TOKEN = "filmix_device_token_enc"
         const val KEY_FILMIX_API_BASE = "filmix_api_base"
+        const val KEY_FILMIX_API_SELECTION = "filmix_api_selection"
+        const val KEY_FILMIX_ACTIVE_API_BASE = "filmix_active_api_base"
+        const val KEY_FILMIX_CUSTOM_API_BASE = "filmix_custom_api_base"
         const val KEY_FILMIX_DEVICE_ID = "filmix_device_id"
         const val KEY_HDREZKA_MIRROR = "hdrezka_mirror"
         const val KEY_HDREZKA_LOGIN = "hdrezka_login_enc"
