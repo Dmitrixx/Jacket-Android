@@ -82,6 +82,26 @@ class TorrentDownloadService : Service() {
                             )
                             TorrentEngine.addTorrent(applicationContext, file, title)
                         }
+                        ACTION_ADD_AND_PLAY_MAGNET -> {
+                            val magnet = intent?.getStringExtra(EXTRA_MAGNET).orEmpty()
+                            val title = intent?.getStringExtra(EXTRA_TITLE).orEmpty()
+                            require(magnet.startsWith("magnet:?", ignoreCase = true)) {
+                                "Для просмотра нужна magnet-ссылка"
+                            }
+                            TorrentEngine.add(applicationContext, magnet, title)
+                            addAndPlayWhenReady(TorrentQueueStore.idFor(magnet), title)
+                        }
+                        ACTION_ADD_AND_PLAY_TORRENT_URL -> {
+                            val url = intent?.getStringExtra(EXTRA_TORRENT_URL).orEmpty()
+                            val title = intent?.getStringExtra(EXTRA_TITLE).orEmpty()
+                            val file = downloadTorrentFile(
+                                url,
+                                title,
+                                intent?.getStringExtra(EXTRA_INDEXER_ID)
+                            )
+                            val queued = TorrentEngine.addTorrent(applicationContext, file, title)
+                            addAndPlayWhenReady(queued.id, title)
+                        }
                         ACTION_PAUSE -> TorrentEngine.pause(applicationContext, intent?.getStringExtra(EXTRA_ID).orEmpty())
                         ACTION_RESUME -> TorrentEngine.resume(applicationContext, intent?.getStringExtra(EXTRA_ID).orEmpty())
                         ACTION_SELECT_FILE -> TorrentEngine.selectFile(
@@ -120,6 +140,50 @@ class TorrentDownloadService : Service() {
             }
         }
         return START_STICKY
+    }
+
+    private suspend fun addAndPlayWhenReady(id: String, title: String) {
+        val videos = awaitPlayableFiles(id)
+        val selectedIndex = if (videos.size == 1) {
+            videos.single().index
+        } else {
+            TorrentPlaybackBus.awaitFileChoice(
+                torrentId = id,
+                title = title.ifBlank { "Выберите видеофайл" },
+                files = videos.take(80).map { file ->
+                    TorrentPlaybackFileOption(
+                        index = file.index,
+                        name = file.path,
+                        sizeBytes = file.sizeBytes
+                    )
+                }
+            )
+        }
+        if (selectedIndex != null) startTorrentPlayback(id, selectedIndex)
+    }
+
+    private suspend fun awaitPlayableFiles(id: String): List<TorrentFileSnapshot> {
+        val videoExtensions = setOf(
+            "mkv", "mp4", "m4v", "avi", "mov", "webm", "ts", "m2ts", "mpg", "mpeg", "wmv"
+        )
+        repeat(60) {
+            TorrentEngine.refresh()
+            val snapshot = TorrentEngine.snapshots.value.firstOrNull { it.id.equals(id, true) }
+            if (snapshot?.state == "WAITING_FOR_WIFI") {
+                throw IOException("Раздача добавлена, но включён режим «Только Wi-Fi»")
+            }
+            val videos = snapshot?.files.orEmpty().filter { file ->
+                val name = file.path.substringAfterLast('/').lowercase()
+                name.substringAfterLast('.', "") in videoExtensions &&
+                    !name.contains("sample") &&
+                    file.sizeBytes >= 2L * 1024L * 1024L
+            }
+            if (videos.isNotEmpty()) return videos.sortedBy { it.path.lowercase() }
+            delay(500)
+        }
+        throw java.net.SocketTimeoutException(
+            "Раздача добавлена, но список видеофайлов не получен за 30 секунд. Откройте «Загрузки» и проверьте состояние."
+        )
     }
 
     private suspend fun startTorrentPlayback(id: String, fileIndex: Int) {
@@ -487,6 +551,8 @@ class TorrentDownloadService : Service() {
         private const val ACTION_ADD = "app.jacket.action.ADD"
         private const val ACTION_ADD_TORRENT = "app.jacket.action.ADD_TORRENT"
         private const val ACTION_ADD_TORRENT_URL = "app.jacket.action.ADD_TORRENT_URL"
+        private const val ACTION_ADD_AND_PLAY_MAGNET = "app.jacket.action.ADD_AND_PLAY_MAGNET"
+        private const val ACTION_ADD_AND_PLAY_TORRENT_URL = "app.jacket.action.ADD_AND_PLAY_TORRENT_URL"
         private const val ACTION_PAUSE = "app.jacket.action.PAUSE"
         private const val ACTION_RESUME = "app.jacket.action.RESUME"
         private const val ACTION_SELECT_FILE = "app.jacket.action.SELECT_FILE"
@@ -520,6 +586,16 @@ class TorrentDownloadService : Service() {
             putExtra(EXTRA_TITLE, title)
             putExtra(EXTRA_INDEXER_ID, indexerId)
         }
+        fun addAndPlay(context: Context, magnet: String, title: String) = send(context, ACTION_ADD_AND_PLAY_MAGNET) {
+            putExtra(EXTRA_MAGNET, magnet)
+            putExtra(EXTRA_TITLE, title)
+        }
+        fun addTorrentUrlAndPlay(context: Context, url: String, title: String, indexerId: String? = null) =
+            send(context, ACTION_ADD_AND_PLAY_TORRENT_URL) {
+                putExtra(EXTRA_TORRENT_URL, url)
+                putExtra(EXTRA_TITLE, title)
+                putExtra(EXTRA_INDEXER_ID, indexerId)
+            }
         fun pause(context: Context, id: String) = send(context, ACTION_PAUSE) { putExtra(EXTRA_ID, id) }
         fun resume(context: Context, id: String) = send(context, ACTION_RESUME) { putExtra(EXTRA_ID, id) }
         fun selectFile(context: Context, id: String, fileIndex: Int) = send(context, ACTION_SELECT_FILE) {
