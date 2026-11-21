@@ -19,10 +19,9 @@ class PlaybackProgressStore(context: Context) {
     fun save(key: String, positionMs: Long, durationMs: Long) {
         if (key.isBlank()) return
         val position = positionMs.coerceAtLeast(0L)
-        if (durationMs > 0L && position >= durationMs * WATCHED_PERCENT / 100L) {
-            preferences.edit { remove(key) }
-        } else if (position > 0L) {
-            preferences.edit { putLong(key, position) }
+        when (PlaybackProgressPolicy.action(position, durationMs)) {
+            PlaybackProgressAction.CLEAR -> preferences.edit { remove(key) }
+            PlaybackProgressAction.SAVE -> preferences.edit { putLong(key, position) }
         }
         updateTorrentSession(key, position, durationMs)
     }
@@ -48,7 +47,6 @@ class PlaybackProgressStore(context: Context) {
 
     companion object {
         private const val PREFERENCES = "jacket_playback_positions"
-        private const val WATCHED_PERCENT = 90L
         private val INFO_HASH = Regex("(?i)([a-f0-9]{40}|[a-f0-9]{64})")
 
         fun torrentKey(infoHash: String, fileIndex: Int): String = "torrent:${infoHash.lowercase()}:$fileIndex"
