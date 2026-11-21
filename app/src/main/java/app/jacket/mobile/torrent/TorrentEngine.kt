@@ -1,5 +1,6 @@
 package app.jacket.mobile.torrent
 
+import android.app.ActivityManager
 import android.content.Context
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
@@ -29,6 +30,7 @@ import org.libtorrent4j.swig.torrent_flags_t
 import java.io.File
 import java.io.RandomAccessFile
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.TimeUnit
 
 /** Immutable file metadata suitable for UI; contains no native handles. */
 data class TorrentFileSnapshot(
@@ -76,8 +78,9 @@ object TorrentEngine {
     @Volatile private var appContext: Context? = null
     @Volatile private var alertListener: AlertListener? = null
 
-    private data class ActiveStreamWindow(val fileIndex: Int, val firstPiece: Int)
+    private data class ActiveStreamWindow(val fileIndex: Int, val firstPiece: Int, val lastPiece: Int)
 
+    private val pieceCompletionSignal = PieceCompletionSignal()
     private val errors = ConcurrentHashMap<String, String>()
     private val pendingResumeSaves = ConcurrentHashMap<String, CompletableDeferred<Boolean>>()
     private val activeStreamWindows = ConcurrentHashMap<String, ActiveStreamWindow>()
@@ -99,6 +102,7 @@ object TorrentEngine {
                 AlertType.SAVE_RESUME_DATA.swig(),
                 AlertType.SAVE_RESUME_DATA_FAILED.swig(),
                 AlertType.METADATA_RECEIVED.swig(),
+                AlertType.PIECE_FINISHED.swig(),
                 AlertType.TORRENT_ERROR.swig(),
                 AlertType.FILE_ERROR.swig(),
                 AlertType.HASH_FAILED.swig()
@@ -108,6 +112,7 @@ object TorrentEngine {
                 when (alert.type()) {
                     AlertType.SAVE_RESUME_DATA -> saveResumeAlert(alert as SaveResumeDataAlert)
                     AlertType.SAVE_RESUME_DATA_FAILED -> recordAlertError(alert)
+                    AlertType.PIECE_FINISHED -> pieceCompletionSignal.signal()
                     AlertType.METADATA_RECEIVED -> {
                         val received = alert as MetadataReceivedAlert
                         runCatching {
@@ -125,9 +130,11 @@ object TorrentEngine {
         instance.addListener(listener)
 
         val (downloadLimit, uploadLimit) = rateLimits(context)
+        val isLowRamDevice = context.getSystemService(ActivityManager::class.java)?.isLowRamDevice == true
         val settings = SettingsPack.defaultSettings()
             .downloadRateLimit(downloadLimit)
             .uploadRateLimit(uploadLimit)
+            .connectionsLimit(TorrentSessionPolicy.connectionsLimit(isLowRamDevice))
         instance.start(org.libtorrent4j.SessionParams(settings))
         instance.startDht()
         manager = instance
@@ -279,9 +286,10 @@ object TorrentEngine {
             requestStart = start,
             requestLength = length,
             firstFilePiece = storage.pieceIndexAtFile(fileIndex),
-            lastFilePiece = storage.lastPieceIndexAtFile(fileIndex)
+            lastFilePiece = storage.lastPieceIndexAtFile(fileIndex),
+            includeTailPiece = start == 0L
         )
-        val window = ActiveStreamWindow(fileIndex, plan.firstPiece)
+        val window = ActiveStreamWindow(fileIndex, plan.firstPiece, plan.lastPiece)
         if (activeStreamWindows[id] == window) return
 
         handle.clearPieceDeadlines()
@@ -296,6 +304,7 @@ object TorrentEngine {
     /** Clear playback-only deadlines when streaming stops or the task is paused. */
     @Synchronized
     fun clearStreamPriorities(id: String) {
+        pieceCompletionSignal.signal()
         activeStreamWindows.remove(id)
         findHandle(id)?.let { handle ->
             runCatching { handle.clearPieceDeadlines() }
@@ -304,6 +313,7 @@ object TorrentEngine {
 
     @Synchronized
     fun pause(context: Context, id: String) {
+        pieceCompletionSignal.signal()
         clearStreamPriorities(id)
         TorrentQueueStore(context).setPaused(id, true)
         findHandle(id)?.let(::pauseHandle)
@@ -334,6 +344,7 @@ object TorrentEngine {
     /** Removes only the task from the queue. The downloaded data is preserved. */
     @Synchronized
     fun remove(context: Context, id: String, deleteFiles: Boolean = false) {
+        pieceCompletionSignal.signal()
         val item = TorrentQueueStore(context).get(id)
         val handle = findHandle(id)
         // Capture metadata while the handle is still valid; this works for magnet and .torrent tasks.
@@ -546,16 +557,25 @@ object TorrentEngine {
             prioritizeStreamRange(id, handle, storage, fileIndex, start, length)
         }
 
+        val queueStore = TorrentQueueStore(appContext!!)
         for (piece in firstPiece..lastPiece) {
-            val began = System.currentTimeMillis()
-            while (!handle.havePiece(piece)) {
-                if (TorrentQueueStore(appContext!!).isPaused(id)) {
-                    throw IllegalStateException("Загрузка приостановлена")
-                }
-                if (System.currentTimeMillis() - began > timeoutPerPieceMs) {
+            val beganNanos = System.nanoTime()
+            val timeoutNanos = TimeUnit.MILLISECONDS.toNanos(timeoutPerPieceMs.coerceAtLeast(1L))
+            while (true) {
+                if (!handle.isValid) throw IllegalStateException("Торрент больше не активен")
+                if (handle.havePiece(piece)) break
+                if (queueStore.isPaused(id)) throw IllegalStateException("Загрузка приостановлена")
+
+                val remainingNanos = timeoutNanos - (System.nanoTime() - beganNanos)
+                if (remainingNanos <= 0L) {
                     throw java.net.SocketTimeoutException("Ожидание части торрента превысило 25 секунд")
                 }
-                Thread.sleep(120)
+                val generation = pieceCompletionSignal.generation()
+                // Recheck after observing the generation so a completion that races
+                // with the wait cannot be lost between havePiece() and awaitChange().
+                if (handle.havePiece(piece)) break
+                if (queueStore.isPaused(id)) throw IllegalStateException("Загрузка приостановлена")
+                pieceCompletionSignal.awaitChange(generation, remainingNanos)
             }
         }
         val root = File(handle.savePath()).canonicalFile
