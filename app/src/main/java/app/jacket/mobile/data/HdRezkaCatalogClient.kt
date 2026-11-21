@@ -322,7 +322,7 @@ object HdRezkaCatalogClient {
             ?: return null
         if (bytes.isEmpty() || bytes.size > MAX_OBFUSCATED_URL_CHARS) return null
         val decoded = bytes.toString(Charsets.UTF_8)
-        if (decoded.any { it.isISOControl() && it !in '\t' && it !in '\r' && it !in '\n' }) {
+        if (decoded.any { it.isISOControl() && it != '\t' && it != '\r' && it != '\n' }) {
             return null
         }
         return decoded.takeIf { it.contains("https://", ignoreCase = true) }
