@@ -125,3 +125,13 @@ Resume data is asynchronous and periodic: abruptly killing the process can lose 
 ## Automated tests
 
 The JVM suite includes XML fixtures for RSS/Torznab, release-name heuristics, queue codec round-trips, Range parsing / response headers, byte-range-to-piece planning, forward-window limits, disk-cache LRU eviction, overlapping-range cache hits and route / Host policy checks. JNI torrent streaming, actual file-piece availability, Android foreground-service behavior and TV remote navigation require device-level acceptance tests.
+
+
+## Consolidated source, stream and navigation safeguards
+
+- Built-in HTML tracker fetches validate the initial HTTPS URL, each manual redirect and every resolved detail/download URL. Cookies are attached only to the original tracker host. This hostname policy does not resolve and pin DNS addresses, so DNS rebinding remains a limitation.
+- IPv4 and IPv6 loopback, private, link-local, multicast and documentation ranges are rejected for public tracker requests; user-managed local Jackett endpoints continue to use their separate local-network policy.
+- Tracker searches publish completed providers in completion order under one aggregate deadline. Detail-page resolution is separately bounded; a newer search generation invalidates stale result and loading-state callbacks.
+- The loopback media server primes the first requested byte segment before sending successful 200/206 headers. A temporarily unavailable first piece produces a sanitized retryable 503 with Retry-After.
+- Compose saveable-state providers retain the main shell, detail/settings/download/player screens and each home/movies/series/search/library tab. Physical Android TV remote acceptance remains required.
+- Filmix and HDRezka integrations use HTTPS and supported request/response formats. Unsupported or rotated player payloads fail closed. No CAPTCHA, Cloudflare/Anubis, DRM, paywall or regional restriction bypass is implemented.

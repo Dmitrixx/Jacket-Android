@@ -1,4 +1,4 @@
-# Jacket — Android media center 2.6.0
+# Jacket — Android media center 2.7.0
 
 Jacket is a single Android application for phones, tablets and Android TV / Google TV. It combines a poster-based media catalog, a user-configurable indexer cabinet, an integrated BitTorrent engine and a loopback HTTP media server.
 
@@ -12,26 +12,28 @@ The project is under active development. CI verifies JVM unit tests and APK asse
 - **Search** — catalog search with a short debounce; configurable website-search shortcuts open the matching query in the external browser.
 - **Series details** — TMDB seasons and episode lists; an episode search adds its `SxxExx` code to the indexer query.
 - **My library** — favorites and recently opened cards.
-- **Sources** — native Jackett indexer catalogue, per-tracker search for configured indexers, direct RSS/Torznab connectors, rich release cards and in-app `.torrent` queue actions. Unsupported video services are shown as not connected until a verified adapter exists.
+- **Sources** — manual search, indexer management, connectivity tests, source errors and quality filters.
 - **Downloads** — magnet and `.torrent` tasks, file list, selected-file priorities, pause/resume, speed and progress.
-- **Player** — Media3 / ExoPlayer, seek controls, audio/subtitle track selection, downloaded sidecar subtitles, external-player handoff, progressive video, HLS and DASH playback.
+- **Player** — fullscreen Media3 / ExoPlayer for phone and Android TV: overlay controls, 10-second seek, speed, fit/fill/zoom, sleep timer, audio and subtitle selection, picture-in-picture, sidecar subtitles, external-player handoff, progressive video, HLS and DASH.
 - **Settings** — LAMPA-inspired control center for Filmix device-code pairing, HDRezka account/session, built-in tracker shortcuts, torrent indexers, catalog metadata and network limits.
-
-## Video source catalogue
-
-The in-app source registry preserves the requested priority order for HDRezka, Filmix, ColdFilm, Baskino, Kinogo, VideoCDN, Collaps, Kinobase, CDNMovies and Lordfilm. Filmix and HDRezka have direct search/player adapters; the other eight descriptors remain unconnected until a compatible adapter is verified. Connector status is shown explicitly in the UI.
 
 ## Filmix and HDRezka accounts
 
-- **Filmix** uses a device-code flow against the documented HTTPS API host: Jacket requests a short-lived code, the user confirms it on the Filmix device page, and the app polls for activation. The permanent device token is encrypted using Android Keystore. No Filmix password is requested. Undocumented hosts and cleartext HTTP fallback are not used.
-- **HDRezka** has an explicit HTTPS source field, email/login, password and manual Cookie-session fields. Login responses are inspected through a bounded preview so large HTML pages do not cause a false oversized-response error. The app does not choose or rotate mirrors automatically, and it stops on CAPTCHA, Cloudflare or interactive challenges.
+- **Filmix** uses a device-code flow: Jacket requests a short-lived code, the user confirms it on the Filmix device page, and the app polls for activation. The permanent device token is encrypted using Android Keystore. No Filmix password is requested.
+- **HDRezka** has HTTPS mirror, email/login, password and manual Cookie-session fields. The app attempts the normal site sign-in and saves returned cookies encrypted using Android Keystore. If a mirror presents CAPTCHA, Cloudflare or an interactive browser challenge, Jacket stops and does not attempt to bypass it; a session cookie can be entered manually after signing in through the user's regular browser.
 - Credentials and cookies stay on the device and are not included in diagnostics or tracker exports.
 
-The Filmix and HDRezka adapters resolve only the providers' known search/player responses into HTTPS media URLs. This is not universal HTML player extraction: unknown or changed stream formats fail closed, and Jacket does not bypass DRM, paywalls, CAPTCHA/Anubis or regional restrictions.
+Filmix search includes catalogue results, translations, series episodes and plan-aware quality options; expiring CDN references are refreshed by the adapter. HDRezka search uses the current DLE AJAX form request and supports only the known player payload/quality formats. Unknown or rotated encodings fail closed. HDRezka uses the user-configured HTTPS mirror; there is no automatic mirror rotation or cross-origin Cookie forwarding. These flows still require real-device/network acceptance tests.
 
-## Built-in tracker shortcuts
+## Built-in tracker search
 
-The first run seeds search shortcuts for RuTracker, NNM-Club, Rutor, Kinozal, 1337x, The Pirate Bay and Internet Archive. The user can enable, disable, edit or delete them and restore the preset list later. These shortcuts open the selected website in the external browser. They are not site-specific HTML scrapers or native torrent adapters. For in-app structured results, add a Torznab/Newznab or RSS endpoint under Torrent Sources.
+The first run seeds search shortcuts for RuTracker, NNM-Club, Rutor, Kinozal, 1337x, The Pirate Bay and Internet Archive. Jacket includes in-app HTML result parsers for RuTracker, NNM-Club, Rutor, Kinozal, 1337x and The Pirate Bay. Matching magnets and direct .torrent links are shown in the native release list and can be queued or opened in the built-in player. Internet Archive uses its structured metadata API.
+
+Tracker pages can change markup or require an account, CAPTCHA, Cloudflare or another anti-bot challenge. User-supplied Cookie sessions are stored encrypted and sent only to the configured tracker origin. Jacket does not solve challenges or bypass access controls. Other user-added website shortcuts remain ordinary browser links.
+
+## Video source catalogue
+
+The source picker keeps the requested priority order: HDRezka, Filmix, ColdFilm, Baskino, Kinogo, VideoCDN, Collaps, Kinobase, CDNMovies and Lordfilm. Direct search/player adapters are implemented for Filmix and HDRezka. The other eight entries are catalogue descriptors only and remain visibly unconnected until a compatible, verified API or feed adapter is available. No live connector is claimed for Kinogo or Lordfilm.
 
 ## Indexer cabinet and optional Jackett connector
 
@@ -39,8 +41,7 @@ Add user-owned endpoints:
 
 - RSS / Atom feeds and Torznab / Newznab-compatible endpoints over HTTPS.
 - HTTP endpoints only when they target a private / loopback / link-local IP or a local DNS suffix such as `.local` or `.lan`; this is intended for a Jackett server on your own network.
-- A native Jackett REST catalogue using `GET /api/v2.0/indexers`, showing public/private type, language, categories, configured status and source links. Configured trackers can be tested and searched individually; their releases remain native Jacket cards and magnet/`.torrent` actions use Jacket's own queue.
-- Dynamic per-indexer setup forms use Jackett's `GET/POST /api/v2.0/indexers/{id}/config` endpoints. The API key is used for Torznab search; a separate optional dashboard session Cookie is used only for authenticated setup operations. The Cookie is encrypted at rest and sent only to the configured Jackett host. If the dashboard does not require login, the Cookie can be left blank.
+- An optional Jackett setup card with server address, API key, tracker filter (`all` by default), connection test and disconnect. Jacket probes Jackett with `t=caps`, then searches its selected tracker set. Jackett remains external and is never installed or bundled.
 - API key, HTTP Basic username/password, or a manually supplied session cookie.
 - Categories, tags, Freeleech flag, sort field and sort order.
 - Enable/disable, edit, individual test, test all and a per-indexer probe search.
@@ -59,7 +60,7 @@ Search templates include `{query}`; `{apikey}` is optional. Public indexers must
 
 Release labels such as 720p / 1080p / 2160p, HDR / DV, HEVC / x264 and common audio/dubbing tags are extracted heuristically from the release title. They are not authoritative tracker metadata. Filters operate on the current results and do not issue another request.
 
-The app does not ship private tracker credentials or site-specific page scrapers. Jackett's own authenticated setup UI/API stores the credentials for each private tracker; Jacket sends only the configuration values you explicitly enter into the Jackett-provided form. CAPTCHA, anti-bot challenges, proprietary sign-in flows and interactive 2FA remain under Jackett's supported configuration flow and are not bypassed by Jacket.
+The app does not ship tracker credentials. The built-in tracker adapters parse supported listing/detail markup only; user-added website shortcuts remain browser links. CAPTCHA, anti-bot challenges, proprietary sign-in flows and interactive 2FA are not automated. A manually entered cookie may work where the source permits it.
 
 ## User-configured website search
 
@@ -71,7 +72,7 @@ Example template shape:
 https://your-authorized-site.example/search?q={query}
 ```
 
-Website shortcuts remain link-based and open the site in the browser. In-app playback is provided by supported RSS/Atom media enclosures and the explicit Filmix/HDRezka adapters. HDRezka supports its known `#h` playlist payload format; unknown or rotated encodings are rejected. Jacket does not scrape arbitrary pages, unpack arbitrary obfuscated scripts, automate CAPTCHA, bypass DRM or paywalls, or circumvent regional access restrictions. Use only services and media you are authorized to access.
+Website shortcuts remain link-based and open the site in the browser. Structured in-app playback is supported when a source explicitly publishes a direct HTTPS media URL in an RSS/Atom enclosure or Media RSS `media:content`. Jacket does not scrape arbitrary HTML pages, unpack obfuscated player scripts, automate private logins or CAPTCHA, extract hidden streams, bypass DRM, or circumvent regional access restrictions. Use only services and media you are authorized to access. For a licensed provider, prefer its documented API or feed.
 
 ## Torrent engine and local stream server
 
@@ -105,13 +106,13 @@ Downloaded files remain in the app-specific `Downloads` directory. “Remove fro
 - Direct Internet Archive video playback remains HTTPS and is offered only when the source metadata contains a recognized Creative Commons / public-domain license URL. Review the source item's actual terms.
 - Playback position is stored locally every few seconds; a torrent position is keyed by infohash and file index, and a direct stream position by a non-reversible URL hash. Positions at or beyond about 90% of a known duration are cleared.
 - Audio and text tracks can be selected from those available in the media. A matching `.srt` / `.vtt` file already fully downloaded in the same torrent can be offered as a sidecar subtitle.
-- The player includes 10-second seek controls, D-pad left/right and play/pause, keeps the display awake and can hand the loopback URL to an external player.
+- The player is fullscreen. Overlay controls hide during playback. D-pad left/right seeks 10 seconds while the overlay is hidden; Back dismisses the overlay before leaving the player. Speed (0.5×–2×) and fit / fill / zoom are remembered on the device. A sleep timer can stop playback after 15, 30, 45 or 60 minutes. Phones can enter picture-in-picture. The screen stays awake and can hand the loopback URL to an external player.
 
 While watching a torrent, the service uses foreground-service type `mediaPlayback`. Background downloading uses `dataSync`. Android 15+ applies a cumulative time limit to `dataSync`; when that limit is reached without active playback, Jacket saves resume data and stops the background session. **Uninterrupted all-day downloading or seeding is not promised.** Reopen Jacket to restore the queued work.
 
 ## Android TV
 
-The same APK declares Leanback support as optional and touchscreen as not required. Android TV / Google TV has a Leanback launcher entry and banner, a navigation rail, larger poster cards, visible focus states and D-pad navigation. The player handles Back, play/pause and left/right seeking.
+The same APK declares Leanback support as optional and touchscreen as not required. Android TV / Google TV has a Leanback launcher entry and banner, a navigation rail, larger poster cards, visible focus states and D-pad navigation. The fullscreen player handles Back, play/pause and left/right seeking without requiring a touchscreen.
 
 ## Requirements and build
 
@@ -136,12 +137,13 @@ The JVM test suite covers:
 - Queue serialization and restoration independent of JNI.
 - Range parsing and 200 / 206 response headers.
 - Local-stream route and Host validation.
+- Player chrome: speed cycle, sleep timer, picture fit and clock formatting.
 
 These tests do not replace manual streaming tests on physical Android 9+, Android 14/15 and Android TV devices. In particular, verify a real torrent's piece availability, container seek behavior and process recovery on hardware.
 
 ## Security and scope
 
-- No tracker presets, credentials or piracy-site lists are embedded.
+- No tracker credentials or private account cookies are embedded. Public tracker parser profiles contain no account secrets.
 - Public indexer endpoints require HTTPS. HTTP is accepted only for explicit local/private addresses and approved local DNS suffixes; ambiguous single-label hosts and URL user-info are rejected.
 - API keys, usernames/passwords and cookies are encrypted at rest; JSON exports exclude them.
 - Torrent HTTP streaming binds only to loopback and is not a local-network media server.
