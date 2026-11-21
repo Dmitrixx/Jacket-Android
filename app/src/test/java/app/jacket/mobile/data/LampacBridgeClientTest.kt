@@ -28,18 +28,14 @@ class LampacBridgeClientTest {
     )
 
     @Test
-    fun acceptsHttpsAndPrivateLanHttpOnly() {
+    fun acceptsHttpsAndConfiguredLoopbackHttpOnly() {
         assertEquals(
             "https://lampac.example",
             LampacBridgeClient.normalizeBaseUrl("https://lampac.example/")
         )
         assertEquals(
-            "http://192.168.1.20:9118",
-            LampacBridgeClient.normalizeBaseUrl("http://192.168.1.20:9118")
-        )
-        assertEquals(
-            "http://lampac.lan:9118",
-            LampacBridgeClient.normalizeBaseUrl("http://lampac.lan:9118")
+            "http://127.0.0.1:9118",
+            LampacBridgeClient.normalizeBaseUrl("http://127.0.0.1:9118")
         )
     }
 
@@ -47,6 +43,8 @@ class LampacBridgeClientTest {
     fun rejectsPublicCleartextHttpAndUrlsWithCredentialsOrPaths() {
         listOf(
             "http://lampac.example:9118",
+            "http://192.168.1.20:9118",
+            "http://lampac.lan:9118",
             "https://user:password@lampac.example",
             "https://lampac.example/base",
             "https://lampac.example/?token=secret",
