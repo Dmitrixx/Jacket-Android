@@ -1092,6 +1092,7 @@ private fun DetailScreen(
     var minSeeders by rememberSaveable { mutableStateOf("0") }
     var qualityFilter by rememberSaveable { mutableStateOf("Все") }
     var hdrOnly by rememberSaveable { mutableStateOf(false) }
+    var hideScreenCopies by rememberSaveable { mutableStateOf(false) }
     var magnetOnly by rememberSaveable { mutableStateOf(false) }
     var torrentOnly by rememberSaveable { mutableStateOf(false) }
     val minSeedersValue = minSeeders.toIntOrNull()?.coerceAtLeast(0) ?: 0
@@ -1101,6 +1102,7 @@ private fun DetailScreen(
             (source.seeders ?: 0) >= minSeedersValue) &&
             (qualityFilter == "Все" || (source.qualityLabel ?: release.quality) == qualityFilter) &&
             (!hdrOnly || release.hdr || release.dolbyVision) &&
+            (!hideScreenCopies || !release.screenCopy) &&
             (!magnetOnly || source.magnetUri != null) &&
             (!torrentOnly || source.downloadUrl != null)
     }
@@ -1607,6 +1609,14 @@ private fun DetailScreen(
                                 torrentOnly = !torrentOnly
                                 if (torrentOnly) magnetOnly = false
                             }) { Text(if (torrentOnly) "✓ .torrent" else ".torrent") }
+                        }
+                        Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                            OutlinedButton(onClick = { hideScreenCopies = !hideScreenCopies }) {
+                                Text(
+                                    if (hideScreenCopies) "✓ Без CAM / TS / TC / SCR"
+                                    else "Скрыть CAM / TS / TC / SCR"
+                                )
+                            }
                         }
                     }
 
