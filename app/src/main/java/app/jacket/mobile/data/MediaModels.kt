@@ -81,6 +81,7 @@ enum class MediaSourceType {
     TORRENT,
     FILMIX,
     HDREZKA,
+    LAMPAC,
     LICENSED_DIRECT
 }
 
@@ -100,6 +101,15 @@ data class HdRezkaSettings(
     val connected: Boolean = false,
     /** Explicit opt-in for a user-owned HTTPS mirror outside the known Rezka host patterns. */
     val allowCustomMirror: Boolean = false
+)
+
+/** Optional connection to a Lampac instance operated by the user. Secrets are encrypted locally. */
+data class LampacSettings(
+    val baseUrl: String = "",
+    val accountEmail: String = "",
+    val uid: String = "",
+    val token: String = "",
+    val enabled: Boolean = false
 )
 
 data class SourceResult(

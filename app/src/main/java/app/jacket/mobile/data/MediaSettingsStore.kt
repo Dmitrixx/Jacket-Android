@@ -93,6 +93,35 @@ class MediaSettingsStore(context: Context) {
         )
     }
 
+    fun lampacSettings(): LampacSettings = LampacSettings(
+        baseUrl = preferences.getString(KEY_LAMPAC_BASE_URL, "") ?: "",
+        accountEmail = decrypt(preferences.getString(KEY_LAMPAC_ACCOUNT_EMAIL, null)),
+        uid = decrypt(preferences.getString(KEY_LAMPAC_UID, null)),
+        token = decrypt(preferences.getString(KEY_LAMPAC_TOKEN, null)),
+        enabled = preferences.getBoolean(KEY_LAMPAC_ENABLED, false)
+    )
+
+    @Synchronized
+    fun saveLampacSettings(settings: LampacSettings): LampacSettings {
+        val baseUrl = settings.baseUrl.trim().take(300).let {
+            if (it.isBlank()) "" else LampacBridgeClient.normalizeBaseUrl(it)
+        }
+        require(!settings.enabled || baseUrl.isNotBlank()) {
+            "Укажите адрес Lampac или отключите его использование в поиске"
+        }
+        val email = settings.accountEmail.replace(Regex("[\\r\\n]"), "").trim().take(254)
+        val uid = settings.uid.replace(Regex("[\\r\\n]"), "").trim().take(128)
+        val token = settings.token.replace(Regex("[\\r\\n]"), "").trim().take(1024)
+        preferences.edit {
+            putString(KEY_LAMPAC_BASE_URL, baseUrl)
+            putString(KEY_LAMPAC_ACCOUNT_EMAIL, encrypt(email))
+            putString(KEY_LAMPAC_UID, encrypt(uid))
+            putString(KEY_LAMPAC_TOKEN, encrypt(token))
+            putBoolean(KEY_LAMPAC_ENABLED, settings.enabled && baseUrl.isNotBlank())
+        }
+        return lampacSettings()
+    }
+
     @Synchronized
     fun saveHdRezkaSettings(settings: HdRezkaSettings) {
         val mirror = settings.mirror.trim().take(300).let {
@@ -462,6 +491,11 @@ class MediaSettingsStore(context: Context) {
         const val KEY_HDREZKA_COOKIE = "hdrezka_cookie_enc"
         const val KEY_HDREZKA_CONNECTED = "hdrezka_connected"
         const val KEY_HDREZKA_ALLOW_CUSTOM_MIRROR = "hdrezka_allow_custom_mirror"
+        const val KEY_LAMPAC_BASE_URL = "lampac_base_url"
+        const val KEY_LAMPAC_ACCOUNT_EMAIL = "lampac_account_email_enc"
+        const val KEY_LAMPAC_UID = "lampac_uid_enc"
+        const val KEY_LAMPAC_TOKEN = "lampac_token_enc"
+        const val KEY_LAMPAC_ENABLED = "lampac_enabled"
         const val KEY_INDEXERS = "rss_indexers"
         const val KEY_WEB_SEARCH_PROVIDERS = "web_search_providers"
         const val KEY_TRACKER_PRESETS_SEEDED = "tracker_presets_seeded"
