@@ -1292,7 +1292,7 @@ private fun DetailScreen(
                                                     ) {
                                                         Icon(Icons.Default.PlayArrow, contentDescription = null)
                                                         Spacer(Modifier.width(6.dp))
-                                                        Text("Смотреть серию")
+                                                        Text("Найти источники серии")
                                                     }
                                                 }
                                             }
@@ -1352,7 +1352,7 @@ private fun DetailScreen(
                             Icon(Icons.Default.Search, contentDescription = null)
                             Spacer(Modifier.width(8.dp))
                         }
-                        Text(if (searchingSources) "Ищем источники…" else "Поиск источников")
+                        Text(if (searchingSources) "Ищем торренты и видео…" else "Поиск торрентов и онлайн-источников")
                     }
 
                     OutlinedButton(
