@@ -157,6 +157,7 @@ fun JacketApp(viewModel: MainViewModel) {
     val context = LocalContext.current
     val screenStateHolder = rememberSaveableStateHolder()
     val torrentPlayback by TorrentPlaybackBus.active.collectAsState()
+    val torrentFileSelection by TorrentPlaybackBus.fileSelection.collectAsState()
     val details by viewModel.selectedDetails.collectAsState()
     val isTv = (LocalConfiguration.current.uiMode and android.content.res.Configuration.UI_MODE_TYPE_MASK) == android.content.res.Configuration.UI_MODE_TYPE_TELEVISION
     val loading by viewModel.isLoading.collectAsState()
@@ -197,6 +198,46 @@ fun JacketApp(viewModel: MainViewModel) {
     LaunchedEffect(Unit) {
         viewModel.loadHome()
         if (TorrentQueueStore(context).all().isNotEmpty()) TorrentDownloadService.restore(context)
+    }
+
+    torrentFileSelection?.let { request ->
+        AlertDialog(
+            onDismissRequest = { TorrentPlaybackBus.cancelFileSelection(request.torrentId) },
+            title = { Text("Выберите видеофайл") },
+            text = {
+                Column(
+                    modifier = Modifier.fillMaxWidth().heightIn(max = 420.dp).verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text(
+                        "В раздаче найдено несколько видео. Выберите фильм или нужную серию.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    request.files.forEach { file ->
+                        OutlinedButton(
+                            onClick = { TorrentPlaybackBus.chooseFile(request.torrentId, file.index) },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(Modifier.fillMaxWidth()) {
+                                Text(file.name.substringAfterLast('/'), maxLines = 2)
+                                Text(
+                                    formatBytes(file.sizeBytes),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {},
+            dismissButton = {
+                TextButton(onClick = { TorrentPlaybackBus.cancelFileSelection(request.torrentId) }) {
+                    Text("Отмена")
+                }
+            }
+        )
     }
 
     if (playerUrl != null) {
@@ -921,6 +962,12 @@ private fun SearchScreen(
                             TorrentDownloadService.addTorrentUrl(context, url, source.title, source.indexerId)
                             Toast.makeText(context, "Торрент добавлен в очередь", Toast.LENGTH_SHORT).show()
                         },
+                        onPlayTorrent = {
+                            source.magnetUri?.let { TorrentDownloadService.addAndPlay(context, it, source.title) }
+                                ?: source.downloadUrl?.let {
+                                    TorrentDownloadService.addTorrentUrlAndPlay(context, it, source.title, source.indexerId)
+                                }
+                        },
                         onPage = { openExternal(context, it) }
                     )
                 }
@@ -1597,6 +1644,12 @@ private fun DetailScreen(
                                     TorrentDownloadService.addTorrentUrl(context, url, source.title, source.indexerId)
                                     Toast.makeText(context, "Добавлено в загрузки", Toast.LENGTH_SHORT).show()
                                 },
+                                onPlayTorrent = {
+                                    source.magnetUri?.let { TorrentDownloadService.addAndPlay(context, it, source.title) }
+                                        ?: source.downloadUrl?.let {
+                                            TorrentDownloadService.addTorrentUrlAndPlay(context, it, source.title, source.indexerId)
+                                        }
+                                },
                                 onPage = { url -> openExternal(context, url) }
                             )
                         }
@@ -1632,6 +1685,7 @@ private fun SourceCard(
     onPlay: (String) -> Unit,
     onMagnet: (String) -> Unit,
     onTorrent: (String) -> Unit,
+    onPlayTorrent: () -> Unit,
     onPage: (String) -> Unit
 ) {
     val release = ReleaseHeuristics.classify(source.title)
@@ -1723,15 +1777,41 @@ private fun SourceCard(
                         Spacer(Modifier.width(6.dp))
                         Text("Смотреть")
                     }
-                    source.magnetUri != null -> Button(onClick = { onMagnet(source.magnetUri) }) {
-                        Icon(Icons.Default.Download, contentDescription = null)
-                        Spacer(Modifier.width(6.dp))
-                        Text("Добавить")
+                    source.magnetUri != null -> {
+                        Button(
+                            onClick = { onMagnet(source.magnetUri) },
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Icon(Icons.Default.Download, contentDescription = null)
+                            Spacer(Modifier.width(6.dp))
+                            Text("Добавить", maxLines = 1)
+                        }
+                        OutlinedButton(
+                            onClick = onPlayTorrent,
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Icon(Icons.Default.PlayArrow, contentDescription = null)
+                            Spacer(Modifier.width(6.dp))
+                            Text("Смотреть", maxLines = 1)
+                        }
                     }
-                    source.downloadUrl != null -> Button(onClick = { onTorrent(source.downloadUrl) }) {
-                        Icon(Icons.Default.Download, contentDescription = null)
-                        Spacer(Modifier.width(6.dp))
-                        Text("Загрузить")
+                    source.downloadUrl != null -> {
+                        Button(
+                            onClick = { onTorrent(source.downloadUrl) },
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Icon(Icons.Default.Download, contentDescription = null)
+                            Spacer(Modifier.width(6.dp))
+                            Text("Загрузить", maxLines = 1)
+                        }
+                        OutlinedButton(
+                            onClick = onPlayTorrent,
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Icon(Icons.Default.PlayArrow, contentDescription = null)
+                            Spacer(Modifier.width(6.dp))
+                            Text("Смотреть", maxLines = 1)
+                        }
                     }
                     source.requiresSubscription && source.pageUrl != null -> OutlinedButton(onClick = { onPage(source.pageUrl) }) {
                         Icon(Icons.Default.OpenInNew, contentDescription = null)
@@ -3469,6 +3549,12 @@ private fun SettingsScreen(
                         onTorrent = { url ->
                             TorrentDownloadService.addTorrentUrl(context, url, source.title, source.indexerId)
                             Toast.makeText(context, "Торрент добавлен во встроенную очередь", Toast.LENGTH_SHORT).show()
+                        },
+                        onPlayTorrent = {
+                            source.magnetUri?.let { TorrentDownloadService.addAndPlay(context, it, source.title) }
+                                ?: source.downloadUrl?.let {
+                                    TorrentDownloadService.addTorrentUrlAndPlay(context, it, source.title, source.indexerId)
+                                }
                         },
                         onPage = { url -> openExternal(context, url) }
                     )
