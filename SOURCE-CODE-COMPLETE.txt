@@ -636,3 +636,920 @@ FILE: app/src/main/AndroidManifest.xml
 </manifest>
 
 END FILE: app/src/main/AndroidManifest.xml
+
+
+========================================================================================
+FILE: app/src/main/java/app/jacket/mobile/MainActivity.kt
+========================================================================================
+
+package app.jacket.mobile
+
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
+import android.provider.OpenableColumns
+import android.content.Intent
+import android.os.Bundle
+import android.net.Uri
+import android.widget.Toast
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.setContent
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
+import androidx.lifecycle.viewmodel.compose.viewModel
+import app.jacket.mobile.data.TorrentEntry
+import app.jacket.mobile.torrent.TorrentDownloadService
+import app.jacket.mobile.torrent.TorrentQueueStore
+import java.io.File
+import app.jacket.mobile.ui.JacketApp
+import app.jacket.mobile.ui.MainViewModel
+import app.jacket.mobile.ui.theme.JacketTheme
+
+class MainActivity : ComponentActivity() {
+    var pipModeListener: ((Boolean) -> Unit)? = null
+
+    override fun onPictureInPictureModeChanged(
+        isInPictureInPictureMode: Boolean,
+        newConfig: android.content.res.Configuration
+    ) {
+        super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
+        pipModeListener?.invoke(isInPictureInPictureMode)
+    }
+
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        requestNotificationPermissionIfNeeded()
+        setContent {
+            JacketTheme {
+                Surface(
+                    modifier = androidx.compose.ui.Modifier.fillMaxSize(),
+                    color = MaterialTheme.colorScheme.background
+                ) {
+                    val viewModel: MainViewModel = viewModel()
+                    JacketApp(viewModel = viewModel)
+                }
+            }
+        }
+        handleIncomingIntent(intent)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleIncomingIntent(intent)
+    }
+
+    private fun requestNotificationPermissionIfNeeded() {
+        if (android.os.Build.VERSION.SDK_INT >= 33 &&
+            androidx.core.content.ContextCompat.checkSelfPermission(
+                this,
+                android.Manifest.permission.POST_NOTIFICATIONS
+            ) != android.content.pm.PackageManager.PERMISSION_GRANTED
+        ) {
+            androidx.core.app.ActivityCompat.requestPermissions(
+                this,
+                arrayOf(android.Manifest.permission.POST_NOTIFICATIONS),
+                4102
+            )
+        }
+    }
+
+    private fun handleIncomingIntent(incoming: Intent?) {
+        if (incoming == null) return
+        val sharedText = when (incoming.action) {
+            Intent.ACTION_VIEW -> incoming.dataString
+            Intent.ACTION_SEND -> incoming.getStringExtra(Intent.EXTRA_TEXT)
+            else -> null
+        }?.trim().orEmpty()
+
+        val magnet = Regex("magnet:\\?[^\\s]+", RegexOption.IGNORE_CASE).find(sharedText)?.value
+        if (magnet != null) {
+            val title = runCatching { Uri.parse(magnet).getQueryParameter("dn") }
+                .getOrNull()?.takeIf { it.isNotBlank() } ?: "Magnet-загрузка"
+            TorrentDownloadService.add(applicationContext, magnet, title)
+            Toast.makeText(this, "Торрент добавлен в Jacket", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        val sharedUri = when (incoming.action) {
+            Intent.ACTION_VIEW -> incoming.data
+            Intent.ACTION_SEND -> if (android.os.Build.VERSION.SDK_INT >= 33) {
+                incoming.getParcelableExtra(Intent.EXTRA_STREAM, Uri::class.java)
+            } else {
+                @Suppress("DEPRECATION")
+                incoming.getParcelableExtra(Intent.EXTRA_STREAM) as? Uri
+            }
+            else -> null
+        }
+        val remoteTorrent = sharedText.takeIf {
+            runCatching { Uri.parse(it).scheme == "https" && Uri.parse(it).path.orEmpty().endsWith(".torrent", true) }.getOrDefault(false)
+        }
+        if (remoteTorrent != null) {
+            TorrentDownloadService.addTorrentUrl(applicationContext, remoteTorrent, "Торрент-файл")
+            Toast.makeText(this, "Загружаю .torrent в Jacket", Toast.LENGTH_SHORT).show()
+            return
+        }
+        if (sharedUri != null) {
+            importTorrentUri(sharedUri)
+        }
+    }
+
+    private fun importTorrentUri(uri: Uri) {
+        Thread {
+            val result = runCatching {
+                val directory = File(filesDir, "torrent-imports").apply { mkdirs() }
+                val name = contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+                    val column = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                    if (column >= 0 && cursor.moveToFirst()) cursor.getString(column) else null
+                }?.takeIf { it.endsWith(".torrent", true) } ?: "shared.torrent"
+                val target = File.createTempFile("incoming_", ".torrent", directory)
+                contentResolver.openInputStream(uri).use { input ->
+                    requireNotNull(input) { "Не удалось открыть файл" }
+                    target.outputStream().use { output ->
+                        val buffer = ByteArray(8192)
+                        var total = 0L
+                        while (true) {
+                            val count = input.read(buffer)
+                            if (count < 0) break
+                            total += count
+                            require(total <= TorrentQueueStore.MAX_TORRENT_BYTES) { "Файл .torrent превышает 8 МиБ" }
+                            output.write(buffer, 0, count)
+                        }
+                    }
+                }
+                target to name
+            }
+            runOnUiThread {
+                result.onSuccess { (file, name) ->
+                    TorrentDownloadService.addTorrentFile(applicationContext, file.absolutePath, name.removeSuffix(".torrent"))
+                    Toast.makeText(this, ".torrent добавлен во встроенную очередь", Toast.LENGTH_SHORT).show()
+                }.onFailure { error ->
+                    Toast.makeText(this, "Не удалось импортировать .torrent: ${error.message}", Toast.LENGTH_LONG).show()
+                }
+            }
+        }.start()
+    }
+}
+
+fun openTorrent(context: Context, entry: TorrentEntry) {
+    val target = entry.openUri
+    if (target.isNullOrBlank()) {
+        Toast.makeText(context, "Для этого результата нет magnet-ссылки или URL", Toast.LENGTH_LONG).show()
+        return
+    }
+
+    val intent = Intent(Intent.ACTION_VIEW, Uri.parse(target)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    try {
+        context.startActivity(Intent.createChooser(intent, "Открыть торрент через…").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+    } catch (_: Exception) {
+        copyToClipboard(context, target)
+        Toast.makeText(context, "Подходящий торрент-клиент не найден. Ссылка скопирована.", Toast.LENGTH_LONG).show()
+    }
+}
+
+fun copyToClipboard(context: Context, text: String) {
+    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+    clipboard.setPrimaryClip(ClipData.newPlainText("Magnet link", text))
+    Toast.makeText(context, "Ссылка скопирована", Toast.LENGTH_SHORT).show()
+}
+
+END FILE: app/src/main/java/app/jacket/mobile/MainActivity.kt
+
+
+========================================================================================
+FILE: app/src/main/java/app/jacket/mobile/data/CompletionOrderCollector.kt
+========================================================================================
+
+package app.jacket.mobile.data
+
+import java.io.IOException
+import java.util.concurrent.Callable
+import java.util.concurrent.ExecutorCompletionService
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
+
+/**
+ * Consumes concurrent work as soon as each task finishes and cancels unfinished
+ * tasks after a shared deadline. One slow request cannot block already-completed work.
+ */
+internal object CompletionOrderCollector {
+    fun <T> collect(
+        tasks: List<Callable<T>>,
+        timeoutMs: Long,
+        maxConcurrency: Int,
+        onResult: (Result<T>) -> Unit
+    ): Int {
+        if (tasks.isEmpty()) return 0
+        require(timeoutMs > 0L) { "Timeout must be positive" }
+        require(maxConcurrency > 0) { "Concurrency must be positive" }
+
+        val executor = Executors.newFixedThreadPool(minOf(maxConcurrency, tasks.size))
+        val completion = ExecutorCompletionService<T>(executor)
+        val futures = tasks.map { task -> completion.submit(task) }
+        val deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMs)
+        var completed = 0
+        try {
+            while (completed < tasks.size) {
+                val remainingNanos = deadline - System.nanoTime()
+                if (remainingNanos <= 0L) break
+                val future = completion.poll(remainingNanos, TimeUnit.NANOSECONDS) ?: break
+                val result = try {
+                    Result.success(future.get())
+                } catch (error: Exception) {
+                    Result.failure(error.cause ?: error)
+                }
+                completed++
+                onResult(result)
+            }
+        } catch (interrupted: InterruptedException) {
+            Thread.currentThread().interrupt()
+            throw IOException("Ожидание параллельных запросов прервано", interrupted)
+        } finally {
+            futures.filterNot { it.isDone }.forEach { it.cancel(true) }
+            executor.shutdownNow()
+        }
+        return completed
+    }
+}
+
+END FILE: app/src/main/java/app/jacket/mobile/data/CompletionOrderCollector.kt
+
+
+========================================================================================
+FILE: app/src/main/java/app/jacket/mobile/data/FilmixCatalogClient.kt
+========================================================================================
+
+package app.jacket.mobile.data
+
+import org.json.JSONArray
+import org.json.JSONObject
+import org.json.JSONTokener
+import java.io.ByteArrayOutputStream
+import java.io.IOException
+import java.net.HttpURLConnection
+import java.net.URI
+import java.net.URL
+import java.net.URLEncoder
+
+data class FilmixSearchEntry(
+    val id: Int,
+    val title: String,
+    val originalTitle: String,
+    val year: Int?,
+    val isSeries: Boolean,
+    val pageUrl: String?
+)
+
+data class FilmixQualityVariant(
+    val quality: Int?,
+    val url: String
+)
+
+/**
+ * Direct Filmix v2 client authenticated with the user's device token.
+ *
+ * It deliberately uses only the API base explicitly selected in settings:
+ * no mirror discovery, proxy, cleartext fallback or TLS relaxation.
+ */
+object FilmixCatalogClient {
+    private const val MAX_RESPONSE_BYTES = 4 * 1024 * 1024
+    private const val MAX_SEARCH_ITEMS = 8
+    private const val MAX_TRANSLATIONS = 12
+    private const val MAX_EPISODES_PER_SEASON = 100
+    private const val USER_AGENT = "JacketAndroid/2.7 (Filmix v2 client)"
+    private const val LIVEHASH_POST_ID = 171042
+    private const val LIVEHASH_TTL_MS = 2 * 60 * 60 * 1000L
+    private val livehashPattern = Regex("/s/([^/]+)/")
+    @Volatile private var cachedLivehash: String? = null
+    @Volatile private var cachedLivehashKey: String? = null
+    @Volatile private var livehashExpiresAt = 0L
+    private val livehashLock = Any()
+    private val qualityListPattern = Regex("_\\[([0-9,]+)]\\.mp4", RegexOption.IGNORE_CASE)
+    private val qualityPlaceholderPattern = Regex("_%s\\.mp4", RegexOption.IGNORE_CASE)
+    private val episodeCodePattern = Regex("(?i)S(\\d{1,2})E(\\d{1,3})")
+
+    fun searchSources(
+        apiBase: String,
+        deviceId: String,
+        token: String,
+        query: String,
+        kind: MediaKind,
+        episodeCode: String? = null
+    ): List<SourceResult> {
+        require(query.isNotBlank()) { "Введите название для поиска Filmix" }
+        require(token.isNotBlank()) { "Сначала привяжите устройство Filmix" }
+        val safeBase = FilmixDeviceAuth.normalizeApiBase(apiBase)
+        val safeDeviceId = deviceId.takeIf { it.matches(Regex("[a-fA-F0-9]{16}")) }
+            ?: throw IllegalArgumentException("Некорректный ID устройства Filmix")
+
+        val searchJson = getJson(
+            buildApiUrl(safeBase, "search", safeDeviceId, token, mapOf("story" to query.trim().take(160)))
+        )
+        val entries = parseSearchEntries(searchJson)
+            .asSequence()
+            .filter { when (kind) {
+                MediaKind.MOVIE -> !it.isSeries
+                MediaKind.SERIES -> it.isSeries
+                MediaKind.VIDEO -> true
+            } }
+            .distinctBy { it.id }
+            .take(MAX_SEARCH_ITEMS)
+            .toList()
+        if (entries.isEmpty()) return emptyList()
+
+        val maxQuality = loadMaxQuality(safeBase, safeDeviceId, token)
+        val parsed = buildList {
+            entries.forEach { entry ->
+                val post = runCatching {
+                    getJson(buildApiUrl(safeBase, "post/${entry.id}", safeDeviceId, token))
+                }.getOrNull() ?: return@forEach
+                addAll(
+                    parsePostSources(
+                        post = post,
+                        entry = entry,
+                        episodeCode = episodeCode,
+                        maxQuality = maxQuality
+                    )
+                )
+            }
+        }.distinctBy { it.id }.take(80)
+
+        // Some Filmix CDN URLs contain a rotating /s/{livehash}/ prefix. Refresh
+        // it from the public reference post only when a selected result needs it.
+        if (parsed.none { livehashPattern.containsMatchIn(it.streamUrl.orEmpty()) }) return parsed
+        val livehash = getLivehash(safeBase, safeDeviceId, token) ?: return parsed
+        return parsed.map { source ->
+            val url = source.streamUrl ?: return@map source
+            source.copy(streamUrl = replaceLivehash(url, livehash))
+        }
+    }
+
+    internal fun buildApiUrl(
+        apiBase: String,
+        endpoint: String,
+        deviceId: String,
+        token: String,
+        query: Map<String, String> = emptyMap()
+    ): String = FilmixDeviceAuth.buildAuthenticatedApiUrl(apiBase, endpoint, deviceId, token, query)
+
+    internal fun replaceLivehash(url: String, livehash: String): String {
+        require(livehash.matches(Regex("[A-Za-z0-9_-]{1,128}"))) { "Некорректный Filmix livehash" }
+        return livehashPattern.replace(url, "/s/$livehash/")
+    }
+
+    internal fun extractLivehash(post: JSONObject): String? =
+        livehashPattern.find(post.toString())?.groupValues?.getOrNull(1)
+            ?.takeIf { it.matches(Regex("[A-Za-z0-9_-]{1,128}")) }
+
+    private fun getLivehash(apiBase: String, deviceId: String, token: String): String? {
+        val cacheKey = "$apiBase|$deviceId"
+        val now = System.currentTimeMillis()
+        if (cachedLivehashKey == cacheKey && now < livehashExpiresAt) {
+            cachedLivehash?.let { return it }
+        }
+        synchronized(livehashLock) {
+            val lockedNow = System.currentTimeMillis()
+            if (cachedLivehashKey == cacheKey && lockedNow < livehashExpiresAt) {
+                cachedLivehash?.let { return it }
+            }
+            val post = runCatching {
+                getJson(buildApiUrl(apiBase, "post/$LIVEHASH_POST_ID", deviceId, token))
+            }.getOrNull() ?: return null
+            val fresh = extractLivehash(post) ?: return null
+            cachedLivehash = fresh
+            cachedLivehashKey = cacheKey
+            livehashExpiresAt = System.currentTimeMillis() + LIVEHASH_TTL_MS
+            return fresh
+        }
+    }
+
+    internal fun parseSearchEntries(json: JSONObject): List<FilmixSearchEntry> {
+        val array = when {
+            json.has("data") -> json.optJSONArray("data")
+            json.has("results") -> json.optJSONArray("results")
+            json.has("items") -> json.optJSONArray("items")
+            else -> null
+        } ?: JSONArray()
+        return (0 until array.length()).mapNotNull { index ->
+            val item = array.optJSONObject(index) ?: return@mapNotNull null
+            val id = item.optInt("id").takeIf { it > 0 } ?: return@mapNotNull null
+            val title = item.optString("title").trim().takeIf { it.isNotBlank() } ?: return@mapNotNull null
+            val section = item.optInt("section", -1)
+            val isSeries = section == 7
+            val slug = item.optString("alt_name").trim()
+            val page = slug.takeIf { it.matches(Regex("[\\p{L}\\p{N}._-]{1,180}")) }?.let {
+                "${FilmixDeviceAuth.SITE_BASE}/${if (isSeries) "seria" else "film"}/$id-$it.html"
+            }
+            FilmixSearchEntry(
+                id = id,
+                title = title,
+                originalTitle = item.optString("original_title").trim(),
+                year = item.optInt("year").takeIf { it in 1888..2200 },
+                isSeries = isSeries,
+                pageUrl = page
+            )
+        }.take(100)
+    }
+
+    internal fun parsePostSources(
+        post: JSONObject,
+        entry: FilmixSearchEntry,
+        episodeCode: String?,
+        maxQuality: Int
+    ): List<SourceResult> {
+        val data = post.optJSONObject("data") ?: post
+        val playerLinks = data.optJSONObject("player_links") ?: JSONObject()
+        val title = data.optString("title").takeIf { it.isNotBlank() } ?: entry.title
+        if (!entry.isSeries) {
+            val movies = playerLinks.optJSONArray("movie") ?: JSONArray()
+            return buildList {
+                for (i in 0 until minOf(movies.length(), MAX_TRANSLATIONS)) {
+                    val translation = movies.optJSONObject(i) ?: continue
+                    val name = translation.optString("translation").ifBlank { "Оригинал" }
+                    val link = translation.optString("link")
+                    addAll(
+                        variantsToSources(
+                            entry = entry,
+                            title = title,
+                            translation = name,
+                            link = link,
+                            explicitQualities = translation.optJSONArray("qualities"),
+                            maxQuality = maxQuality,
+                            episodeCode = null
+                        )
+                    )
+                }
+            }
+        }
+
+        val episodeMatch = episodeCodePattern.find(episodeCode.orEmpty())
+        if (episodeMatch == null) {
+            val translations = linkedSetOf<String>()
+            val playlist = playerLinks.optJSONObject("playlist") ?: JSONObject()
+            val seasonKeys = playlist.keys()
+            while (seasonKeys.hasNext() && translations.size < MAX_TRANSLATIONS) {
+                val season = playlist.optJSONObject(seasonKeys.next()) ?: continue
+                val names = season.keys()
+                while (names.hasNext() && translations.size < MAX_TRANSLATIONS) translations += names.next()
+            }
+            return translations.map { translation ->
+                SourceResult(
+                    id = "filmix:${entry.id}:$translation",
+                    title = title,
+                    providerName = "Filmix",
+                    pageUrl = entry.pageUrl,
+                    sourceType = MediaSourceType.FILMIX,
+                    translationName = translation
+                )
+            }
+        }
+
+        val wantedSeason = episodeMatch.groupValues[1].toIntOrNull() ?: return emptyList()
+        val wantedEpisode = episodeMatch.groupValues[2].toIntOrNull() ?: return emptyList()
+        val playlist = playerLinks.optJSONObject("playlist") ?: return emptyList()
+        val season = playlist.optJSONObject(wantedSeason.toString()) ?: return emptyList()
+        return buildList {
+            val translations = season.keys()
+            var count = 0
+            while (translations.hasNext() && count++ < MAX_TRANSLATIONS) {
+                val translationName = translations.next()
+                val value = season.opt(translationName)
+                val episode = findEpisode(value, wantedEpisode) ?: continue
+                addAll(
+                    variantsToSources(
+                        entry = entry,
+                        title = "$title • $episodeCode",
+                        translation = translationName,
+                        link = episode.optString("link"),
+                        explicitQualities = episode.optJSONArray("qualities"),
+                        maxQuality = maxQuality,
+                        episodeCode = episodeCode
+                    )
+                )
+            }
+        }
+    }
+
+    internal fun parseQualityVariants(link: String, explicitQualities: JSONArray? = null): List<FilmixQualityVariant> {
+        val safeLink = link.trim()
+        if (safeLink.isBlank()) return emptyList()
+        val parsedQualities = buildSet {
+            if (explicitQualities != null) {
+                for (index in 0 until explicitQualities.length()) {
+                    val quality = explicitQualities.optInt(index).takeIf { it in 144..4320 }
+                    if (quality != null) add(quality)
+                }
+            }
+            qualityListPattern.find(safeLink)?.groupValues?.getOrNull(1)
+                ?.split(',')
+                ?.mapNotNull { it.toIntOrNull()?.takeIf { q -> q in 144..4320 } }
+                ?.forEach(::add)
+        }.sortedDescending()
+
+        if (parsedQualities.isNotEmpty()) {
+            return parsedQualities.mapNotNull { quality ->
+                val resolved = when {
+                    qualityListPattern.containsMatchIn(safeLink) ->
+                        qualityListPattern.replace(safeLink, "_$quality.mp4")
+                    qualityPlaceholderPattern.containsMatchIn(safeLink) ->
+                        qualityPlaceholderPattern.replace(safeLink, "_$quality.mp4")
+                    else -> safeLink
+                }
+                resolved.takeIf(::isHttpsUrl)?.let { FilmixQualityVariant(quality, it) }
+            }
+        }
+        if (qualityListPattern.containsMatchIn(safeLink) || qualityPlaceholderPattern.containsMatchIn(safeLink)) {
+            return emptyList()
+        }
+        return listOfNotNull(safeLink.takeIf(::isHttpsUrl)?.let { FilmixQualityVariant(null, it) })
+    }
+
+    internal fun maxQualityFromProfile(profile: JSONObject): Int {
+        fun flag(name: String): Boolean {
+            val value = profile.opt(name)
+            return when (value) {
+                is Boolean -> value
+                is Number -> value.toInt() != 0
+                is String -> value == "1" || value.equals("true", true)
+                else -> false
+            }
+        }
+        return when {
+            flag("is_pro_plus") -> 2160
+            flag("is_pro") -> 1080
+            else -> 720
+        }
+    }
+
+    private fun variantsToSources(
+        entry: FilmixSearchEntry,
+        title: String,
+        translation: String,
+        link: String,
+        explicitQualities: JSONArray?,
+        maxQuality: Int,
+        episodeCode: String?
+    ): List<SourceResult> {
+        val variants = parseQualityVariants(link, explicitQualities)
+        if (variants.isEmpty()) return emptyList()
+        val eligible = variants.filter { it.quality == null || it.quality <= maxQuality }
+        return eligible.map { variant ->
+            val qualityText = variant.quality?.let { "${it}p" }
+            SourceResult(
+                id = "filmix:${entry.id}:${episodeCode.orEmpty()}:$translation:${variant.quality ?: "auto"}",
+                title = title,
+                providerName = "Filmix",
+                streamUrl = variant.url,
+                pageUrl = entry.pageUrl,
+                sourceType = MediaSourceType.FILMIX,
+                qualityLabel = qualityText,
+                translationName = translation,
+                requestHeaders = mapOf(
+                    "Referer" to (entry.pageUrl ?: FilmixDeviceAuth.SITE_BASE),
+                    "User-Agent" to USER_AGENT
+                )
+            )
+        }
+    }
+
+    private fun findEpisode(value: Any?, episodeNumber: Int): JSONObject? = when (value) {
+        is JSONArray -> value.optJSONObject(episodeNumber - 1)
+        is JSONObject -> value.optJSONObject(episodeNumber.toString())
+            ?: value.optJSONObject(episodeNumber.toString().padStart(2, '0'))
+        else -> null
+    }
+
+    private fun loadMaxQuality(apiBase: String, deviceId: String, token: String): Int = runCatching {
+        maxQualityFromProfile(getJson(buildApiUrl(apiBase, "user_profile", deviceId, token)))
+    }.getOrDefault(720)
+
+    private fun getJson(requestUrl: String): JSONObject {
+        val uri = URI(requestUrl)
+        require(uri.scheme.equals("https", true) && uri.host in setOf("filmixapp.cyou", "fxapp.biz")) {
+            "API Filmix должен использовать выбранный HTTPS-сервер"
+        }
+        val connection = (URL(requestUrl).openConnection() as HttpURLConnection).apply {
+            requestMethod = "GET"
+            connectTimeout = 8_000
+            readTimeout = 15_000
+            instanceFollowRedirects = false
+            setRequestProperty("Accept", "application/json")
+            setRequestProperty("User-Agent", USER_AGENT)
+        }
+        try {
+            val status = connection.responseCode
+            if (status !in 200..299) {
+                throw IOException("Filmix API: HTTP $status (${uri.host}, ${uri.path})")
+            }
+            val declaredSize = connection.getHeaderFieldLong("Content-Length", -1L)
+            require(declaredSize <= MAX_RESPONSE_BYTES) { "Ответ Filmix API слишком большой" }
+            val bytes = connection.inputStream.use { input ->
+                val output = ByteArrayOutputStream()
+                val buffer = ByteArray(8192)
+                while (true) {
+                    val count = input.read(buffer)
+                    if (count < 0) break
+                    if (output.size() + count > MAX_RESPONSE_BYTES) throw IOException("Ответ Filmix API слишком большой")
+                    output.write(buffer, 0, count)
+                }
+                output.toByteArray()
+            }
+            val parsed = JSONTokener(bytes.toString(Charsets.UTF_8)).nextValue()
+            if (parsed is JSONObject) return parsed
+            if (parsed is JSONArray) return JSONObject().put("data", parsed)
+            throw IOException("Filmix API вернул неожиданный JSON")
+        } finally {
+            connection.disconnect()
+        }
+    }
+
+    private fun isHttpsUrl(value: String): Boolean = runCatching {
+        val uri = URI(value)
+        uri.scheme.equals("https", true) && !uri.host.isNullOrBlank() && uri.rawUserInfo == null
+    }.getOrDefault(false)
+}
+
+END FILE: app/src/main/java/app/jacket/mobile/data/FilmixCatalogClient.kt
+
+
+========================================================================================
+FILE: app/src/main/java/app/jacket/mobile/data/FilmixDeviceAuth.kt
+========================================================================================
+
+package app.jacket.mobile.data
+
+import org.json.JSONObject
+import java.io.ByteArrayOutputStream
+import java.io.IOException
+import java.net.HttpURLConnection
+import java.net.URI
+import java.net.URL
+import java.net.URLEncoder
+
+data class FilmixPendingDevice(
+    val code: String,
+    val temporaryToken: String,
+    val deviceId: String,
+    val activationUrl: String = FilmixDeviceAuth.ACTIVATION_URL,
+    val apiBase: String = FilmixDeviceAuth.DEFAULT_API_BASE
+)
+
+/**
+ * Filmix device-code authorization.
+ *
+ * The request fingerprint follows the known-compatible Android mobile API
+ * profile used by the upstream go-filmix client. All token-bearing requests
+ * still require normal HTTPS certificate validation.
+ */
+object FilmixDeviceAuth {
+    const val ACTIVATION_URL = "https://filmix.my/consoles"
+    const val SITE_BASE = "https://filmix.my"
+    const val DEFAULT_API_BASE = "https://filmixapp.cyou/api/v2"
+    const val ALTERNATE_API_BASE = "https://fxapp.biz/api/v2"
+
+    // Filmix support publishes fxapp.biz as an alternate API address for
+    // users whose network cannot reach the default endpoint. Keep the choice
+    // explicit: never send a device identifier or token to another host by
+    // automatic fallback.
+    private val API_BASE_CANDIDATES = listOf(DEFAULT_API_BASE, ALTERNATE_API_BASE)
+
+    // The upstream reference client documents this Android API-compatible
+    // fingerprint. The installation's unique device ID remains separate.
+    private const val API_DEVICE_NAME = "go-filmix"
+    private const val API_DEVICE_VENDOR = "Xiaomi"
+    private const val API_DEVICE_OS = "11"
+    private const val API_DEVICE_APK = "2.0.9"
+
+    private const val CHECK_UPDATE_DEVICE_ID = "abcdef0123456789"
+    private const val MAX_RESPONSE_BYTES = 256 * 1024
+    private const val MAX_PROBE_BYTES = 16 * 1024
+
+    fun requestCode(
+        deviceId: String,
+        apiBase: String = DEFAULT_API_BASE
+    ): FilmixPendingDevice {
+        require(deviceId.matches(Regex("[a-fA-F0-9]{16}"))) { "Некорректный ID устройства" }
+        val selectedBase = normalizeApiBase(apiBase)
+        val host = URI(selectedBase).host
+        try {
+            // Probe TLS and API compatibility before sending the installation ID.
+            probeApiBase(selectedBase)
+            val response = tokenRequest(selectedBase, deviceId)
+            val code = response.optString("user_code").trim()
+            if (code.length !in 4..8) {
+                throw IOException("token_request не вернул корректный код активации")
+            }
+            return FilmixPendingDevice(
+                code = code,
+                temporaryToken = response.optString("user_dev_token").trim(),
+                deviceId = deviceId,
+                apiBase = selectedBase
+            )
+        } catch (error: Exception) {
+            throw IOException(
+                "Filmix API недоступен по HTTPS ($host: ${describeFailure(error)}). " +
+                    "Проверка сертификата не отключается. Проверьте системную дату, " +
+                    "обновления безопасности Android и доступность выбранного сервера.",
+                error
+            )
+        }
+    }
+
+    /** Returns the permanent token once Filmix confirms the code, otherwise null. */
+    fun pollActivation(pending: FilmixPendingDevice): String? {
+        val response = tokenRequest(normalizeApiBase(pending.apiBase), pending.deviceId)
+        val token = response.optString("user_dev_token").trim()
+        return token.takeIf { it.isNotBlank() && it != pending.temporaryToken }
+    }
+
+    private fun probeApiBase(apiBase: String) {
+        val url = buildCheckUpdateUrl(apiBase)
+        val connection = (URL(url).openConnection() as HttpURLConnection).apply {
+            requestMethod = "GET"
+            connectTimeout = 5_000
+            readTimeout = 5_000
+            instanceFollowRedirects = false
+            setRequestProperty("Accept", "application/json")
+            setRequestProperty("User-Agent", "okhttp/3.10.0")
+        }
+        try {
+            val status = connection.responseCode
+            if (status !in 200..299) throw IOException("HTTP $status на /check_update")
+            val body = readLimited(connection.inputStream, MAX_PROBE_BYTES).toString(Charsets.UTF_8)
+            if (!isRecognizedCheckUpdateResponse(body)) {
+                throw IOException("HTTP $status, но ответ не похож на API Filmix")
+            }
+        } finally {
+            connection.disconnect()
+        }
+    }
+
+    internal fun isRecognizedCheckUpdateResponse(body: String): Boolean =
+        body.contains("\"version\"")
+
+    internal fun apiBaseCandidates(): List<String> = API_BASE_CANDIDATES
+
+    /** Accept only the two HTTPS API hosts published by Filmix support. */
+    fun normalizeApiBase(value: String): String {
+        val uri = runCatching { URI(value.trim()) }
+            .getOrElse { throw IllegalArgumentException("Некорректный адрес API Filmix", it) }
+        val host = uri.host?.lowercase()
+            ?: throw IllegalArgumentException("В адресе API Filmix отсутствует домен")
+        require(uri.scheme.equals("https", true)) { "API Filmix должен использовать HTTPS" }
+        require(uri.port == -1 || uri.port == 443) { "Для API Filmix разрешён только стандартный HTTPS-порт" }
+        require(uri.rawUserInfo == null && uri.rawQuery.isNullOrBlank() && uri.rawFragment.isNullOrBlank()) {
+            "Адрес API Filmix не должен содержать логин, пароль, query или fragment"
+        }
+        require(host in setOf("filmixapp.cyou", "fxapp.biz")) {
+            "Разрешены только известные HTTPS API-адреса Filmix"
+        }
+        require(uri.rawPath.isNullOrBlank() || uri.rawPath == "/" || uri.rawPath.trimEnd('/') == "/api/v2") {
+            "Путь API Filmix должен быть /api/v2"
+        }
+        return "https://$host/api/v2"
+    }
+
+    internal fun buildCheckUpdateUrl(apiBase: String): String = buildApiUrl(
+        apiBase,
+        "check_update",
+        CHECK_UPDATE_DEVICE_ID
+    )
+
+    internal fun buildTokenRequestUrl(deviceId: String): String =
+        buildTokenRequestUrl(DEFAULT_API_BASE, deviceId)
+
+    internal fun buildTokenRequestUrl(apiBase: String, deviceId: String): String =
+        buildApiUrl(apiBase, "token_request", deviceId)
+
+    /** Builds a token-authenticated Filmix v2 API URL without logging its secret query value. */
+    internal fun buildAuthenticatedApiUrl(
+        apiBase: String,
+        endpoint: String,
+        deviceId: String,
+        token: String,
+        extraQuery: Map<String, String> = emptyMap()
+    ): String {
+        require(token.isNotBlank() && token.length <= 4096) { "Токен Filmix отсутствует или имеет неверный размер" }
+        val safeBase = normalizeApiBase(apiBase)
+        require(endpoint.matches(Regex("[a-zA-Z0-9_/-]{1,80}")) && !endpoint.contains("..")) {
+            "Некорректный endpoint Filmix"
+        }
+        val params = linkedMapOf(
+            "user_dev_id" to deviceId,
+            "user_dev_name" to API_DEVICE_NAME,
+            "user_dev_vendor" to API_DEVICE_VENDOR,
+            "user_dev_os" to API_DEVICE_OS,
+            "user_dev_apk" to API_DEVICE_APK,
+            "user_dev_token" to token
+        )
+        extraQuery.forEach { (key, value) ->
+            require(key.matches(Regex("[a-zA-Z0-9_]{1,40}"))) { "Некорректный параметр Filmix" }
+            require(key !in params) { "Переопределение параметров авторизации запрещено" }
+            params[key] = value.take(300)
+        }
+        return safeBase + "/" + endpoint.trimStart('/') + "?" +
+            params.entries.joinToString("&") { "${encode(it.key)}=${encode(it.value)}" }
+    }
+
+    private fun buildApiUrl(apiBase: String, endpoint: String, deviceId: String): String {
+        val safeBase = normalizeApiBase(apiBase)
+        require(deviceId.matches(Regex("[a-fA-F0-9]{16}"))) { "Некорректный ID устройства" }
+        val params = linkedMapOf(
+            "user_dev_id" to deviceId,
+            "user_dev_name" to API_DEVICE_NAME,
+            "user_dev_vendor" to API_DEVICE_VENDOR,
+            "user_dev_os" to API_DEVICE_OS,
+            "user_dev_apk" to API_DEVICE_APK
+        )
+        return safeBase + "/" + endpoint.trimStart('/') + "?" +
+            params.entries.joinToString("&") { "${encode(it.key)}=${encode(it.value)}" }
+    }
+
+    private fun tokenRequest(apiBase: String, deviceId: String): JSONObject {
+        val url = buildTokenRequestUrl(apiBase, deviceId)
+        val connection = (URL(url).openConnection() as HttpURLConnection).apply {
+            requestMethod = "GET"
+            connectTimeout = 12_000
+            readTimeout = 12_000
+            instanceFollowRedirects = false
+            setRequestProperty("Accept", "application/json")
+            setRequestProperty("User-Agent", "okhttp/3.10.0")
+        }
+        try {
+            val status = connection.responseCode
+            val stream = if (status in 200..299) connection.inputStream else connection.errorStream
+            val body = stream?.use { readLimited(it, MAX_RESPONSE_BYTES) } ?: ByteArray(0)
+            if (status !in 200..299) throw IOException("HTTP $status на /token_request")
+            return runCatching { JSONObject(body.toString(Charsets.UTF_8)) }
+                .getOrElse { throw IOException("Filmix вернул некорректный JSON", it) }
+        } finally {
+            connection.disconnect()
+        }
+    }
+
+    private fun describeFailure(error: Throwable): String {
+        val chain = generateSequence(error) { it.cause }.take(8).toList()
+        return when {
+            chain.any { it is javax.net.ssl.SSLPeerUnverifiedException } ->
+                "TLS: сертификат не соответствует имени домена"
+            chain.any { it is java.security.cert.CertificateExpiredException } ->
+                "TLS: срок действия сертификата истёк"
+            chain.any {
+                it is java.security.cert.CertificateException ||
+                    it is java.security.cert.CertPathValidatorException
+            } -> "TLS: цепочка сертификатов не доверена или неполная"
+            chain.any { it is javax.net.ssl.SSLException } ->
+                "TLS: ошибка рукопожатия или сертификата"
+            chain.any { it is java.net.UnknownHostException } -> "ошибка DNS"
+            chain.any { it is java.net.SocketTimeoutException } -> "тайм-аут"
+            else -> error.message
+                ?.replace(Regex("[\\r\\n\\t]+"), " ")
+                ?.take(120)
+                ?.ifBlank { error.javaClass.simpleName }
+                ?: error.javaClass.simpleName
+        }
+    }
+
+    private fun readLimited(input: java.io.InputStream, maxBytes: Int): ByteArray {
+        input.use { source ->
+            val output = ByteArrayOutputStream()
+            val buffer = ByteArray(8_192)
+            while (true) {
+                val count = source.read(buffer)
+                if (count < 0) break
+                if (output.size() + count > maxBytes) throw IOException("Ответ Filmix слишком большой")
+                output.write(buffer, 0, count)
+            }
+            return output.toByteArray()
+        }
+    }
+
+    /** Hide raw certificate diagnostics while preserving safe per-host API status details. */
+    fun userFriendlyError(error: Throwable): String {
+        val message = error.message.orEmpty()
+        // Preserve safe per-host information even when the cause is an SSLException.
+        if (message.startsWith("Filmix API недоступен по HTTPS")) {
+            return message.replace(Regex("[\\r\\n\\t]+"), " ").take(320)
+        }
+        val chain = generateSequence(error) { it.cause }.take(8).toList()
+        if (chain.any {
+                it is javax.net.ssl.SSLHandshakeException ||
+                    it is javax.net.ssl.SSLPeerUnverifiedException ||
+                    it is javax.net.ssl.SSLException
+            } || chain.any {
+                it.message.orEmpty().contains("not verified", ignoreCase = true) ||
+                    it.message.orEmpty().contains("certificate", ignoreCase = true)
+            }
+        ) {
+            return "Filmix API: ошибка проверки HTTPS-сертификата. Проверьте адрес API или попробуйте позже."
+        }
+        return message.replace(Regex("[\\r\\n\\t]+"), " ").take(240)
+            .ifBlank { "Не удалось подключить Filmix" }
+    }
+
+    private fun encode(value: String): String =
+        URLEncoder.encode(value, Charsets.UTF_8.name()).replace("+", "%20")
+}
+
+END FILE: app/src/main/java/app/jacket/mobile/data/FilmixDeviceAuth.kt
