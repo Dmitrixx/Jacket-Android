@@ -4,6 +4,7 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import app.jacket.mobile.data.CatalogItem
+import app.jacket.mobile.data.CompletionOrderCollector
 import app.jacket.mobile.data.FilmixDeviceAuth
 import app.jacket.mobile.data.FilmixCatalogClient
 import app.jacket.mobile.data.FilmixPendingDevice
@@ -41,6 +42,16 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withContext
 import java.io.IOException
+import java.util.concurrent.Callable
+
+private const val COMBINED_SOURCE_SEARCH_TIMEOUT_MS = 60_000L
+
+private data class CombinedSourceGroupOutcome(
+    val groupId: String,
+    val results: List<SourceResult>,
+    val failures: List<IndexerFailure>,
+    val progressMessage: String? = null
+)
 
 /** UI state and orchestration for the self-contained catalog/indexer app. */
 class MainViewModel(application: Application) : AndroidViewModel(application) {
@@ -374,7 +385,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun runCombinedSourceSearch(query: String, item: CatalogItem, episode: MediaEpisode?) {
         // Torrent releases need the episode code, but streaming catalogues
-        // search the series by its title and resolve the episode separately.
+        // search the series by title and resolve the selected episode separately.
         val catalogueQuery = listOfNotNull(
             item.title,
             item.year.takeIf { it.matches(Regex("\\d{4}")) }
@@ -395,153 +406,231 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 val rezkaSettings = settings.hdRezkaSettings()
                 val lampacConfig = settings.lampacSettings()
 
-                val combined = runInterruptible(Dispatchers.IO) {
-                    val results = ArrayList<SourceResult>()
-                    val failures = ArrayList<IndexerFailure>()
+                val searchFilmix = filmixTokenValue.isNotBlank()
+                val searchRezka = rezkaSettings.mirror.isNotBlank()
+                val searchLampac = lampacConfig.enabled && lampacConfig.baseUrl.isNotBlank()
+                val groupCount = 1 +
+                    if (builtInTrackers.isNotEmpty()) 1 else 0 +
+                    if (searchFilmix) 1 else 0 +
+                    if (searchRezka) 1 else 0 +
+                    if (searchLampac) 1 else 0
+                val accumulator = SourceSearchAccumulator(groupCount)
 
-                    runCatching { indexers.searchDetailed(query, customIndexers, includeArchive = true) }
-                        .onSuccess { outcome ->
-                            results += outcome.results
-                            failures.addAll(outcome.failures)
+                fun publish(snapshot: SourceSearchSnapshot, final: Boolean = false) {
+                    if (!sourceSearchEpoch.isCurrent(searchEpoch)) return
+                    _sourceResults.value = snapshot.results
+                    _indexerErrors.value = snapshot.failures
+                    _message.value = if (!final) {
+                        buildString {
+                            append("Ищем источники • найдено: ${snapshot.results.size}")
+                            append(" • готово: ${snapshot.completedGroups}/${snapshot.totalGroups}")
+                            snapshot.progressMessages.takeLast(2).takeIf { it.isNotEmpty() }?.let {
+                                append(" • ")
+                                append(it.joinToString(" • "))
+                            }
+                            if (snapshot.timedOutMessage != null) {
+                                append(" • ")
+                                append(snapshot.timedOutMessage)
+                            } else if (snapshot.completedGroups < snapshot.totalGroups) {
+                                append(" • ожидаем остальные источники…")
+                            }
                         }
-                        .onFailure { error ->
-                        if (error is CancellationException || Thread.currentThread().isInterrupted) {
+                    } else {
+                        buildString {
+                            append(
+                                when {
+                                    snapshot.results.isNotEmpty() && snapshot.failures.isNotEmpty() ->
+                                        "Найдено источников: ${snapshot.results.size}. Недоступны: ${snapshot.failures.size}."
+                                    snapshot.results.isNotEmpty() ->
+                                        "Найдено источников: ${snapshot.results.size}."
+                                    snapshot.failures.isNotEmpty() ->
+                                        "Источники ответили с ошибками. Проверьте подключение и настройки."
+                                    else -> "Ничего не найдено. Проверьте название и подключённые источники."
+                                }
+                            )
+                            snapshot.timedOutMessage?.let { append(" ").append(it).append(".") }
+                        }
+                    }
+                    _isError.value = final && snapshot.results.isEmpty() && snapshot.failures.isNotEmpty()
+                }
+
+                fun sourceTask(
+                    groupId: String,
+                    groupName: String,
+                    errorMessage: (Throwable) -> String = ::safeProviderMessage,
+                    action: () -> CombinedSourceGroupOutcome
+                ): Callable<CombinedSourceGroupOutcome> = Callable {
+                    try {
+                        action()
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (error: Exception) {
+                        if (error is InterruptedException || Thread.currentThread().isInterrupted) {
+                            Thread.currentThread().interrupt()
                             throw CancellationException("Поиск источников отменён")
                         }
-                            failures += IndexerFailure("indexers", "Торрент-индексаторы", safeProviderMessage(error))
-                        }
+                        CombinedSourceGroupOutcome(
+                            groupId = groupId,
+                            results = emptyList(),
+                            failures = listOf(IndexerFailure(groupId, groupName, errorMessage(error)))
+                        )
+                    }
+                }
+
+                val tasks = buildList {
+                    add(sourceTask("indexers", "Торрент-индексаторы") {
+                        val outcome = indexers.searchDetailed(query, customIndexers, includeArchive = true)
+                        CombinedSourceGroupOutcome("indexers", outcome.results, outcome.failures)
+                    })
 
                     if (builtInTrackers.isNotEmpty()) {
-                        runCatching {
-                            TrackerSearchClient.searchAll(builtInTrackers, query) { partial ->
-                                if (sourceSearchEpoch.isCurrent(searchEpoch)) {
-                                    val partialResults = (results + partial.results)
-                                        .distinctBy { it.id }
-                                        .take(160)
-                                    _sourceResults.value = partialResults
-                                    val partialFailures = partial.failures.mapIndexed { index, message ->
-                                        IndexerFailure(
-                                            indexerId = "built-in-tracker-$index",
-                                            indexerName = "Встроенные трекеры",
-                                            message = message
-                                        )
-                                    }
-                                    _indexerErrors.value = (failures + partialFailures).distinctBy { it.indexerId }
-                                    _message.value = buildString {
-                                        append("Поступило раздач: ${partialResults.size}")
-                                        append(" • трекеров ответило: ${partial.completedProviders}/${partial.totalProviders}")
-                                        if (partial.failures.isNotEmpty()) append(" • ошибок: ${partial.failures.size}")
-                                        if (partial.timedOut) append(" • поиск остановлен по тайм-ауту")
-                                        else if (partial.completedProviders < partial.totalProviders) append(" • ищем дальше…")
-                                    }
-                                    _isError.value = false
+                        add(sourceTask("built-in-trackers", "Встроенные трекеры") {
+                            val outcome = TrackerSearchClient.searchAll(builtInTrackers, query) { partial ->
+                                val trackerFailures = partial.failures.mapIndexed { index, message ->
+                                    IndexerFailure(
+                                        indexerId = "built-in-tracker-$index",
+                                        indexerName = "Встроенные трекеры",
+                                        message = message
+                                    )
                                 }
-                            }
-                        }
-                            .onSuccess { outcome ->
-                                results += outcome.results
-                                failures.addAll(
-                                    outcome.failures.mapIndexed { index, message ->
-                                        IndexerFailure(
-                                            indexerId = "built-in-tracker-$index",
-                                            indexerName = "Встроенные трекеры",
-                                            message = message
-                                        )
-                                    }
+                                val progress = when {
+                                    partial.timedOut ->
+                                        "Встроенные трекеры: превышен лимит 25 секунд"
+                                    partial.completedProviders >= partial.totalProviders ->
+                                        "Встроенные трекеры: поиск завершён"
+                                    else ->
+                                        "Встроенные трекеры: ${partial.completedProviders}/${partial.totalProviders}"
+                                }
+                                val snapshot = accumulator.update(
+                                    groupId = "built-in-trackers",
+                                    results = partial.results,
+                                    failures = trackerFailures,
+                                    completed = partial.completedProviders >= partial.totalProviders || partial.timedOut,
+                                    progressMessage = progress
                                 )
+                                publish(snapshot, final = snapshot.completedGroups >= snapshot.totalGroups || snapshot.timedOut)
                             }
-                            .onFailure { error ->
-                        if (error is CancellationException || Thread.currentThread().isInterrupted) {
-                            throw CancellationException("Поиск источников отменён")
-                        }
-                                failures += IndexerFailure("built-in-trackers", "Встроенные трекеры", safeProviderMessage(error))
-                            }
+                            CombinedSourceGroupOutcome(
+                                groupId = "built-in-trackers",
+                                results = outcome.results,
+                                failures = outcome.failures.mapIndexed { index, message ->
+                                    IndexerFailure(
+                                        indexerId = "built-in-tracker-$index",
+                                        indexerName = "Встроенные трекеры",
+                                        message = message
+                                    )
+                                },
+                                progressMessage = "Встроенные трекеры: поиск завершён"
+                            )
+                        })
                     }
 
-                    if (filmixTokenValue.isNotBlank()) {
-                        runCatching {
-                            FilmixCatalogClient.searchSources(
-                                apiBase = filmixApiValue,
-                                deviceId = filmixDeviceValue,
-                                token = filmixTokenValue,
-                                query = catalogueQuery,
-                                kind = item.kind,
-                                episodeCode = episode?.releaseCode
+                    if (searchFilmix) {
+                        add(sourceTask(
+                            groupId = "filmix",
+                            groupName = "Filmix",
+                            errorMessage = FilmixDeviceAuth::userFriendlyError
+                        ) {
+                            CombinedSourceGroupOutcome(
+                                groupId = "filmix",
+                                results = FilmixCatalogClient.searchSources(
+                                    apiBase = filmixApiValue,
+                                    deviceId = filmixDeviceValue,
+                                    token = filmixTokenValue,
+                                    query = catalogueQuery,
+                                    kind = item.kind,
+                                    episodeCode = episode?.releaseCode
+                                ),
+                                failures = emptyList()
                             )
-                        }.onSuccess { results += it }
-                            .onFailure { error ->
-                        if (error is CancellationException || Thread.currentThread().isInterrupted) {
-                            throw CancellationException("Поиск источников отменён")
-                        }
-                                failures += IndexerFailure(
-                                    "filmix", "Filmix", FilmixDeviceAuth.userFriendlyError(error)
-                                )
-                            }
+                        })
                     }
 
-                    if (rezkaSettings.mirror.isNotBlank()) {
-                        runCatching {
-                            HdRezkaCatalogClient.searchSources(
-                                settings = rezkaSettings,
-                                query = catalogueQuery,
-                                kind = item.kind,
-                                episodeCode = episode?.releaseCode
+                    if (searchRezka) {
+                        add(sourceTask(
+                            groupId = "hdrezka",
+                            groupName = "HDRezka",
+                            errorMessage = HdRezkaLoginClient::userFriendlyError
+                        ) {
+                            CombinedSourceGroupOutcome(
+                                groupId = "hdrezka",
+                                results = HdRezkaCatalogClient.searchSources(
+                                    settings = rezkaSettings,
+                                    query = catalogueQuery,
+                                    kind = item.kind,
+                                    episodeCode = episode?.releaseCode
+                                ),
+                                failures = emptyList()
                             )
-                        }.onSuccess { results += it }
-                            .onFailure { error ->
-                        if (error is CancellationException || Thread.currentThread().isInterrupted) {
-                            throw CancellationException("Поиск источников отменён")
-                        }
-                                failures += IndexerFailure(
-                                    "hdrezka", "HDRezka", HdRezkaLoginClient.userFriendlyError(error)
-                                )
-                            }
+                        })
                     }
 
-                    if (lampacConfig.enabled && lampacConfig.baseUrl.isNotBlank()) {
-                        runCatching {
-                            LampacBridgeClient.searchSources(
-                                settings = lampacConfig,
-                                item = item,
-                                episodeCode = episode?.releaseCode
+                    if (searchLampac) {
+                        add(sourceTask("lampac", "Lampac") {
+                            CombinedSourceGroupOutcome(
+                                groupId = "lampac",
+                                results = LampacBridgeClient.searchSources(
+                                    settings = lampacConfig,
+                                    item = item,
+                                    episodeCode = episode?.releaseCode
+                                ),
+                                failures = emptyList()
                             )
-                        }.onSuccess { results += it }
-                            .onFailure { error ->
+                        })
+                    }
+                }
+
+                val completedTasks = runInterruptible(Dispatchers.IO) {
+                    CompletionOrderCollector.collect(
+                        tasks = tasks,
+                        timeoutMs = COMBINED_SOURCE_SEARCH_TIMEOUT_MS,
+                        maxConcurrency = tasks.size.coerceAtLeast(1)
+                    ) { result ->
+                        result.fold(
+                            onSuccess = { outcome ->
+                                val snapshot = accumulator.update(
+                                    groupId = outcome.groupId,
+                                    results = outcome.results,
+                                    failures = outcome.failures,
+                                    completed = true,
+                                    progressMessage = outcome.progressMessage ?: ""
+                                )
+                                publish(snapshot, final = snapshot.completedGroups >= snapshot.totalGroups || snapshot.timedOut)
+                            },
+                            onFailure = { error ->
                                 if (error is CancellationException || Thread.currentThread().isInterrupted) {
                                     throw CancellationException("Поиск источников отменён")
                                 }
-                                failures += IndexerFailure(
-                                    "lampac", "Lampac", safeProviderMessage(error)
+                                val snapshot = accumulator.update(
+                                    groupId = "collector-error",
+                                    results = emptyList(),
+                                    failures = listOf(
+                                        IndexerFailure(
+                                            "collector-error",
+                                            "Обработчик источников",
+                                            safeProviderMessage(error)
+                                        )
+                                    ),
+                                    completed = true
                                 )
+                                publish(snapshot)
                             }
+                        )
                     }
-
-                    val orderedResults = results.distinctBy { it.id }.sortedBy { source ->
-                        when (source.sourceType) {
-                            app.jacket.mobile.data.MediaSourceType.HDREZKA -> 0
-                            app.jacket.mobile.data.MediaSourceType.LAMPAC -> 1
-                            app.jacket.mobile.data.MediaSourceType.FILMIX -> 2
-                            app.jacket.mobile.data.MediaSourceType.TORRENT -> 3
-                            app.jacket.mobile.data.MediaSourceType.LICENSED_DIRECT -> 4
-                        }
-                    }.take(160)
-                    orderedResults to failures.distinctBy { it.indexerId }
                 }
 
-                if (sourceSearchEpoch.isCurrent(searchEpoch)) {
-                    _sourceResults.value = combined.first
-                    _indexerErrors.value = combined.second
-                    _message.value = when {
-                    combined.first.isNotEmpty() && combined.second.isNotEmpty() ->
-                        "Найдено источников: ${combined.first.size}. Недоступны: ${combined.second.size}."
-                    combined.first.isNotEmpty() ->
-                        "Найдено источников: ${combined.first.size}."
-                    combined.second.isNotEmpty() ->
-                        "Источники ответили с ошибками. Проверьте подключение и настройки."
-                    else -> "Ничего не найдено. Проверьте название и подключённые источники."
+                if (completedTasks < tasks.size) {
+                    accumulator.markTimedOut(
+                        "Часть источников не ответила за 60 секунд; показаны доступные результаты",
+                        IndexerFailure(
+                            indexerId = "source-search-deadline",
+                            indexerName = "Общий поиск",
+                            message = "Превышен общий лимит ожидания 60 секунд"
+                        )
+                    )
                 }
-                    _isError.value = combined.first.isEmpty() && combined.second.isNotEmpty()
-                }
+                val combined = accumulator.snapshot()
+                publish(combined, final = true)
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Exception) {
