@@ -9,6 +9,7 @@
 - Match the Android 12+ display refresh rate to the active video frame rate on SurfaceView playback; clear the request when playback pauses or stops and when the surface is detached. Older Android versions remain unchanged.
 - Replace torrent piece polling with a condition signal driven by libtorrent piece-finished alerts; pause/removal and session shutdown also wake waiting stream workers.
 - Add a tail-piece deadline to the initial torrent byte-range plan, after the bounded forward window, and lower the global peer-connection ceiling on low-RAM Android devices.
+- Add the Media3 1.11.1-matched LGPL FFmpeg audio extension for AC-3, E-AC-3, DTS, MLP and TrueHD fallback. Prefer extension renderers, preserve bundled license metadata, and expose the complete notices, LGPL text and exact source archive in the app.
 - Shrink release resources and produce ABI-specific APKs for arm64-v8a, armeabi-v7a, x86 and x86_64 while retaining a universal APK.
 
 - Restricted built-in HTML tracker requests, redirects and parsed download URLs to public HTTPS targets, including non-public IPv6 rejection. DNS rebinding is not fully prevented.
