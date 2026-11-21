@@ -43,8 +43,8 @@ object HdRezkaCatalogClient {
     private val qualityPattern = Regex("\\[([^\\]]+)](https://[^,\\s]+)", RegexOption.IGNORE_CASE)
     private val directUrlPattern = Regex("https://[^\\s,\\]<>\\\"']+", RegexOption.IGNORE_CASE)
     private val episodeCodePattern = Regex("(?i)S(\\d{1,2})E(\\d{1,3})")
-    private val seriesInitPattern = Regex("""initCDNSeriesEvents\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)""")
-    private val movieInitPattern = Regex("""initCDNMoviesEvents\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)""")
+    private val seriesInitPattern = Regex("""initCDNSeriesEvents\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)(?:\s*,|\s*\))""")
+    private val movieInitPattern = Regex("""initCDNMoviesEvents\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)(?:\s*,|\s*\))""")
     private val redirectCodes = setOf(301, 302, 303, 307, 308)
 
     fun searchSources(

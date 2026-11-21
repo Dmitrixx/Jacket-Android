@@ -102,6 +102,37 @@ class HdRezkaCatalogClientTest {
     }
 
     @Test
+    fun recognizesMovieBootstrapWithTrailingArguments() {
+        val html = """<script>player.initCDNMoviesEvents(7712, 17, 1, 0, 1, true);</script>"""
+        val page = HdRezkaCatalogClient.parsePageContext(
+            html,
+            "https://hdrezka.example/film/demo.html"
+        )
+        assertNotNull(page)
+        assertEquals("7712", page?.postId)
+        assertFalse(page?.isSeries ?: true)
+        assertEquals("17", page?.translators?.single()?.id)
+        assertEquals("1", page?.translators?.single()?.isCamrip)
+        assertEquals("0", page?.translators?.single()?.isAds)
+        assertEquals("1", page?.translators?.single()?.isDirector)
+    }
+
+    @Test
+    fun recognizesSeriesBootstrapWithTrailingArguments() {
+        val html = """<script>player.initCDNSeriesEvents(991, 7, 3, 105, true);</script>"""
+        val page = HdRezkaCatalogClient.parsePageContext(
+            html,
+            "https://hdrezka.example/serial/demo.html"
+        )
+        assertNotNull(page)
+        assertTrue(page?.isSeries ?: false)
+        assertEquals("991", page?.postId)
+        assertEquals("7", page?.translators?.single()?.id)
+        assertEquals("3", page?.defaultSeasonId)
+        assertEquals("105", page?.defaultEpisodeId)
+    }
+
+    @Test
     fun mapsSeasonAndEpisodeIdsFromEpisodesResponse() {
         val response = JSONObject().put(
             "episodes",
