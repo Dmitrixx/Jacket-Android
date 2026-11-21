@@ -23,11 +23,17 @@ The project is under active development. CI verifies JVM unit tests and APK asse
 - **HDRezka** has HTTPS mirror, email/login, password and manual Cookie-session fields. The app attempts the normal site sign-in and saves returned cookies encrypted using Android Keystore. If a mirror presents CAPTCHA, Cloudflare or an interactive browser challenge, Jacket stops and does not attempt to bypass it; a session cookie can be entered manually after signing in through the user's regular browser.
 - Credentials and cookies stay on the device and are not included in diagnostics or tracker exports.
 
-These account screens manage authentication state. They do not claim universal playback support for arbitrary protected HTML player pages; direct media playback continues to require a source-published direct URL or a supported feed.
+Filmix search includes catalogue results, translations, series episodes and plan-aware quality options; expiring CDN references are refreshed by the adapter. HDRezka search uses the current DLE AJAX form request and supports only the known player payload/quality formats. Unknown or rotated encodings fail closed. HDRezka uses the user-configured HTTPS mirror; there is no automatic mirror rotation or cross-origin Cookie forwarding. These flows still require real-device/network acceptance tests.
 
-## Built-in tracker shortcuts
+## Built-in tracker search
 
-The first run seeds search shortcuts for RuTracker, NNM-Club, Rutor, Kinozal, 1337x, The Pirate Bay and Internet Archive. The user can enable, disable, edit or delete them and restore the preset list later. These shortcuts open the selected website in the external browser. They are not site-specific HTML scrapers or native torrent adapters. For in-app structured results, add a Torznab/Newznab or RSS endpoint under Torrent Sources.
+The first run seeds search shortcuts for RuTracker, NNM-Club, Rutor, Kinozal, 1337x, The Pirate Bay and Internet Archive. Jacket includes in-app HTML result parsers for RuTracker, NNM-Club, Rutor, Kinozal, 1337x and The Pirate Bay. Matching magnets and direct .torrent links are shown in the native release list and can be queued or opened in the built-in player. Internet Archive uses its structured metadata API.
+
+Tracker pages can change markup or require an account, CAPTCHA, Cloudflare or another anti-bot challenge. User-supplied Cookie sessions are stored encrypted and sent only to the configured tracker origin. Jacket does not solve challenges or bypass access controls. Other user-added website shortcuts remain ordinary browser links.
+
+## Video source catalogue
+
+The source picker keeps the requested priority order: HDRezka, Filmix, ColdFilm, Baskino, Kinogo, VideoCDN, Collaps, Kinobase, CDNMovies and Lordfilm. Direct search/player adapters are implemented for Filmix and HDRezka. The other eight entries are catalogue descriptors only and remain visibly unconnected until a compatible, verified API or feed adapter is available. No live connector is claimed for Kinogo or Lordfilm.
 
 ## Indexer cabinet and optional Jackett connector
 
@@ -54,7 +60,7 @@ Search templates include `{query}`; `{apikey}` is optional. Public indexers must
 
 Release labels such as 720p / 1080p / 2160p, HDR / DV, HEVC / x264 and common audio/dubbing tags are extracted heuristically from the release title. They are not authoritative tracker metadata. Filters operate on the current results and do not issue another request.
 
-The app does not ship private tracker credentials or site-specific page scrapers. CAPTCHA, anti-bot challenges, proprietary sign-in flows and interactive 2FA are not automated. A manually entered cookie may work where the source permits it.
+The app does not ship tracker credentials. The built-in tracker adapters parse supported listing/detail markup only; user-added website shortcuts remain browser links. CAPTCHA, anti-bot challenges, proprietary sign-in flows and interactive 2FA are not automated. A manually entered cookie may work where the source permits it.
 
 ## User-configured website search
 
@@ -137,7 +143,7 @@ These tests do not replace manual streaming tests on physical Android 9+, Androi
 
 ## Security and scope
 
-- No tracker presets, credentials or piracy-site lists are embedded.
+- No tracker credentials or private account cookies are embedded. Public tracker parser profiles contain no account secrets.
 - Public indexer endpoints require HTTPS. HTTP is accepted only for explicit local/private addresses and approved local DNS suffixes; ambiguous single-label hosts and URL user-info are rejected.
 - API keys, usernames/passwords and cookies are encrypted at rest; JSON exports exclude them.
 - Torrent HTTP streaming binds only to loopback and is not a local-network media server.

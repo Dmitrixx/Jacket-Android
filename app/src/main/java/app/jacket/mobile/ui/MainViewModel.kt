@@ -5,13 +5,18 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import app.jacket.mobile.data.CatalogItem
 import app.jacket.mobile.data.FilmixDeviceAuth
+import app.jacket.mobile.data.FilmixCatalogClient
 import app.jacket.mobile.data.FilmixPendingDevice
+import app.jacket.mobile.data.HdRezkaCatalogClient
 import app.jacket.mobile.data.HdRezkaLoginClient
 import app.jacket.mobile.data.HdRezkaSettings
 import app.jacket.mobile.data.IndexerConfig
 import app.jacket.mobile.data.IndexerFailure
 import app.jacket.mobile.data.IndexerRegistry
 import app.jacket.mobile.data.JackettUrl
+import app.jacket.mobile.data.JackettIndexerClient
+import app.jacket.mobile.data.JackettIndexerEntry
+import app.jacket.mobile.data.JackettConfigField
 import app.jacket.mobile.data.MediaCatalogClient
 import app.jacket.mobile.data.MediaDetails
 import app.jacket.mobile.data.MediaSection
@@ -28,6 +33,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runInterruptible
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withContext
@@ -39,6 +45,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val indexers = IndexerRegistry(catalog)
     private var catalogJob: Job? = null
     private var sourcesJob: Job? = null
+    private val sourceSearchEpoch = SourceSearchEpoch()
+    private var jackettCatalogJob: Job? = null
+    private var jackettConfigJob: Job? = null
+    private var jackettTestJob: Job? = null
     private var indexerTestJob: Job? = null
     private var episodeJob: Job? = null
     private var filmixPairingJob: Job? = null
@@ -56,6 +66,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _filmixToken = MutableStateFlow(settings.filmixToken())
     val filmixToken: StateFlow<String> = _filmixToken.asStateFlow()
 
+    private val _filmixApiBase = MutableStateFlow(settings.filmixApiBase())
+    val filmixApiBase: StateFlow<String> = _filmixApiBase.asStateFlow()
+
     private val _filmixCode = MutableStateFlow<String?>(null)
     val filmixCode: StateFlow<String?> = _filmixCode.asStateFlow()
 
@@ -71,7 +84,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val hdRezkaSettings: StateFlow<HdRezkaSettings> = _hdRezkaSettings.asStateFlow()
 
     private val _hdRezkaStatus = MutableStateFlow(
-        if (_hdRezkaSettings.value.connected) "Сессия HDRezka сохранена" else "Не авторизовано"
+        if (_hdRezkaSettings.value.connected) "Cookie-сессия сохранена; серверная проверка не выполнялась" else "Не авторизовано"
     )
     val hdRezkaStatus: StateFlow<String> = _hdRezkaStatus.asStateFlow()
 
@@ -114,8 +127,57 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _sourceResults = MutableStateFlow<List<SourceResult>>(emptyList())
     val sourceResults: StateFlow<List<SourceResult>> = _sourceResults.asStateFlow()
 
+    private val _jackettIndexers = MutableStateFlow<List<JackettIndexerEntry>>(emptyList())
+    val jackettIndexers: StateFlow<List<JackettIndexerEntry>> = _jackettIndexers.asStateFlow()
+
+    private val _isLoadingJackettIndexers = MutableStateFlow(false)
+    val isLoadingJackettIndexers: StateFlow<Boolean> = _isLoadingJackettIndexers.asStateFlow()
+
+    private val _jackettCatalogStatus = MutableStateFlow<String?>(null)
+    val jackettCatalogStatus: StateFlow<String?> = _jackettCatalogStatus.asStateFlow()
+
+    private val _testingJackettIndexerId = MutableStateFlow<String?>(null)
+    val testingJackettIndexerId: StateFlow<String?> = _testingJackettIndexerId.asStateFlow()
+
+    private val _jackettConfigIndexerId = MutableStateFlow<String?>(null)
+    val jackettConfigIndexerId: StateFlow<String?> = _jackettConfigIndexerId.asStateFlow()
+
+    private val _jackettConfigFields = MutableStateFlow<List<JackettConfigField>>(emptyList())
+    val jackettConfigFields: StateFlow<List<JackettConfigField>> = _jackettConfigFields.asStateFlow()
+
+    private val _isLoadingJackettConfig = MutableStateFlow(false)
+    val isLoadingJackettConfig: StateFlow<Boolean> = _isLoadingJackettConfig.asStateFlow()
+
+    private val _isSavingJackettConfig = MutableStateFlow(false)
+    val isSavingJackettConfig: StateFlow<Boolean> = _isSavingJackettConfig.asStateFlow()
+
+    private val _jackettConfigStatus = MutableStateFlow<String?>(null)
+    val jackettConfigStatus: StateFlow<String?> = _jackettConfigStatus.asStateFlow()
+
+
     private val _isLoading = MutableStateFlow(false)
     val isLoading: StateFlow<Boolean> = _isLoading.asStateFlow()
+
+    private fun beginSourceSearch(): Long {
+        val epoch = sourceSearchEpoch.next()
+        sourcesJob?.cancel()
+        _isSearchingSources.value = true
+        return epoch
+    }
+
+    private fun cancelSourceSearch() {
+        sourceSearchEpoch.next()
+        sourcesJob?.cancel()
+        sourcesJob = null
+        _isSearchingSources.value = false
+    }
+
+    private fun finishSourceSearch(epoch: Long) {
+        if (sourceSearchEpoch.isCurrent(epoch)) {
+            sourcesJob = null
+            _isSearchingSources.value = false
+        }
+    }
 
     private val _isSearchingSources = MutableStateFlow(false)
     val isSearchingSources: StateFlow<Boolean> = _isSearchingSources.asStateFlow()
@@ -153,7 +215,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun clearSearch() {
         catalogJob?.cancel()
-        sourcesJob?.cancel()
+        cancelSourceSearch()
         _items.value = emptyList()
         _sourceResults.value = emptyList()
         _indexerErrors.value = emptyList()
@@ -170,10 +232,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             _isError.value = true
             return
         }
-        sourcesJob?.cancel()
+        cancelSourceSearch()
         _sourceResults.value = emptyList()
         _indexerErrors.value = emptyList()
-        _isSearchingSources.value = false
         loadList { catalog.search(clean, _tmdbToken.value) }
     }
 
@@ -272,6 +333,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    /**
+     * Federates the detail-card search across torrent indexers, built-in trackers,
+     * Filmix, HDRezka and license-gated Internet Archive results.
+     */
     fun findSources(item: CatalogItem, episode: MediaEpisode? = null) {
         val year = item.year.takeIf { it.matches(Regex("\\d{4}")) }
         val query = if (episode != null) {
@@ -279,8 +344,175 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         } else {
             listOfNotNull(item.title, year).joinToString(" ")
         }
-        runSourceSearch(query, includeArchive = true)
+        runCombinedSourceSearch(query, item, episode)
     }
+
+    private fun runCombinedSourceSearch(query: String, item: CatalogItem, episode: MediaEpisode?) {
+        // Torrent releases need the episode code, but streaming catalogues
+        // search the series by its title and resolve the episode separately.
+        val catalogueQuery = listOfNotNull(
+            item.title,
+            item.year.takeIf { it.matches(Regex("\\d{4}")) }
+        ).joinToString(" ")
+        val searchEpoch = beginSourceSearch()
+        sourcesJob = viewModelScope.launch {
+            _sourceResults.value = emptyList()
+            _indexerErrors.value = emptyList()
+            clearMessage()
+            try {
+                val customIndexers = _customIndexers.value
+                val builtInTrackers = _webSearchProviders.value.filter {
+                    it.enabled && TrackerSearchClient.supports(it.id)
+                }
+                val filmixTokenValue = settings.filmixToken()
+                val filmixApiValue = settings.filmixApiBase()
+                val filmixDeviceValue = settings.filmixDeviceId()
+                val rezkaSettings = settings.hdRezkaSettings()
+
+                val combined = runInterruptible(Dispatchers.IO) {
+                    val results = ArrayList<SourceResult>()
+                    val failures = ArrayList<IndexerFailure>()
+
+                    runCatching { indexers.searchDetailed(query, customIndexers, includeArchive = true) }
+                        .onSuccess { outcome ->
+                            results += outcome.results
+                            failures.addAll(outcome.failures)
+                        }
+                        .onFailure { error ->
+                        if (error is CancellationException || Thread.currentThread().isInterrupted) {
+                            throw CancellationException("Поиск источников отменён")
+                        }
+                            failures += IndexerFailure("indexers", "Торрент-индексаторы", safeProviderMessage(error))
+                        }
+
+                    if (builtInTrackers.isNotEmpty()) {
+                        runCatching {
+                            TrackerSearchClient.searchAll(builtInTrackers, query) { partial ->
+                                if (sourceSearchEpoch.isCurrent(searchEpoch)) {
+                                    val partialResults = (results + partial.results)
+                                        .distinctBy { it.id }
+                                        .take(160)
+                                    _sourceResults.value = partialResults
+                                    val partialFailures = partial.failures.mapIndexed { index, message ->
+                                        IndexerFailure(
+                                            indexerId = "built-in-tracker-$index",
+                                            indexerName = "Встроенные трекеры",
+                                            message = message
+                                        )
+                                    }
+                                    _indexerErrors.value = (failures + partialFailures).distinctBy { it.indexerId }
+                                    _message.value = buildString {
+                                        append("Поступило раздач: ${partialResults.size}")
+                                        append(" • трекеров ответило: ${partial.completedProviders}/${partial.totalProviders}")
+                                        if (partial.failures.isNotEmpty()) append(" • ошибок: ${partial.failures.size}")
+                                        if (partial.timedOut) append(" • поиск остановлен по тайм-ауту")
+                                        else if (partial.completedProviders < partial.totalProviders) append(" • ищем дальше…")
+                                    }
+                                    _isError.value = false
+                                }
+                            }
+                        }
+                            .onSuccess { outcome ->
+                                results += outcome.results
+                                failures.addAll(
+                                    outcome.failures.mapIndexed { index, message ->
+                                        IndexerFailure(
+                                            indexerId = "built-in-tracker-$index",
+                                            indexerName = "Встроенные трекеры",
+                                            message = message
+                                        )
+                                    }
+                                )
+                            }
+                            .onFailure { error ->
+                        if (error is CancellationException || Thread.currentThread().isInterrupted) {
+                            throw CancellationException("Поиск источников отменён")
+                        }
+                                failures += IndexerFailure("built-in-trackers", "Встроенные трекеры", safeProviderMessage(error))
+                            }
+                    }
+
+                    if (filmixTokenValue.isNotBlank()) {
+                        runCatching {
+                            FilmixCatalogClient.searchSources(
+                                apiBase = filmixApiValue,
+                                deviceId = filmixDeviceValue,
+                                token = filmixTokenValue,
+                                query = catalogueQuery,
+                                kind = item.kind,
+                                episodeCode = episode?.releaseCode
+                            )
+                        }.onSuccess { results += it }
+                            .onFailure { error ->
+                        if (error is CancellationException || Thread.currentThread().isInterrupted) {
+                            throw CancellationException("Поиск источников отменён")
+                        }
+                                failures += IndexerFailure(
+                                    "filmix", "Filmix", FilmixDeviceAuth.userFriendlyError(error)
+                                )
+                            }
+                    }
+
+                    if (rezkaSettings.mirror.isNotBlank()) {
+                        runCatching {
+                            HdRezkaCatalogClient.searchSources(
+                                settings = rezkaSettings,
+                                query = catalogueQuery,
+                                kind = item.kind,
+                                episodeCode = episode?.releaseCode
+                            )
+                        }.onSuccess { results += it }
+                            .onFailure { error ->
+                        if (error is CancellationException || Thread.currentThread().isInterrupted) {
+                            throw CancellationException("Поиск источников отменён")
+                        }
+                                failures += IndexerFailure(
+                                    "hdrezka", "HDRezka", HdRezkaLoginClient.userFriendlyError(error)
+                                )
+                            }
+                    }
+
+                    val orderedResults = results.distinctBy { it.id }.sortedBy { source ->
+                        when (source.sourceType) {
+                            app.jacket.mobile.data.MediaSourceType.HDREZKA -> 0
+                            app.jacket.mobile.data.MediaSourceType.FILMIX -> 1
+                            app.jacket.mobile.data.MediaSourceType.TORRENT -> 2
+                            app.jacket.mobile.data.MediaSourceType.LICENSED_DIRECT -> 3
+                        }
+                    }.take(160)
+                    orderedResults to failures.distinctBy { it.indexerId }
+                }
+
+                if (sourceSearchEpoch.isCurrent(searchEpoch)) {
+                    _sourceResults.value = combined.first
+                    _indexerErrors.value = combined.second
+                    _message.value = when {
+                    combined.first.isNotEmpty() && combined.second.isNotEmpty() ->
+                        "Найдено источников: ${combined.first.size}. Недоступны: ${combined.second.size}."
+                    combined.first.isNotEmpty() ->
+                        "Найдено источников: ${combined.first.size}."
+                    combined.second.isNotEmpty() ->
+                        "Источники ответили с ошибками. Проверьте подключение и настройки."
+                    else -> "Ничего не найдено. Проверьте название и подключённые источники."
+                }
+                    _isError.value = combined.first.isEmpty() && combined.second.isNotEmpty()
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                if (sourceSearchEpoch.isCurrent(searchEpoch)) {
+                    showError(error.message ?: "Не удалось найти источники")
+                }
+            } finally {
+                finishSourceSearch(searchEpoch)
+            }
+        }
+    }
+
+    private fun safeProviderMessage(error: Throwable): String =
+        error.message?.replace(Regex("[\\r\\n\\t]+"), " ")?.take(220)
+            ?.ifBlank { "Источник временно недоступен" }
+            ?: "Источник временно недоступен"
 
     /** Fetches and parses releases from one selected tracker inside Jacket. */
     fun searchTracker(provider: WebSearchProvider, query: String) {
@@ -288,14 +520,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             showError("Введите название для поиска")
             return
         }
-        sourcesJob?.cancel()
+        val searchEpoch = beginSourceSearch()
         sourcesJob = viewModelScope.launch {
-            _isSearchingSources.value = true
             _sourceResults.value = emptyList()
             _indexerErrors.value = emptyList()
             clearMessage()
             try {
-                val results = withContext(Dispatchers.IO) {
+                val results = runInterruptible(Dispatchers.IO) {
                     if (provider.id == "tracker-archive") {
                         catalog.archiveSources(query.trim())
                     } else {
@@ -312,9 +543,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Exception) {
-                showError(error.message ?: "Не удалось разобрать результаты трекера")
+                if (sourceSearchEpoch.isCurrent(searchEpoch)) {
+                    showError(error.message ?: "Не удалось разобрать результаты трекера")
+                }
             } finally {
-                _isSearchingSources.value = false
+                finishSourceSearch(searchEpoch)
             }
         }
     }
@@ -332,21 +565,37 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             showError("Включите хотя бы один встроенный трекер в настройках сайтов")
             return
         }
-        sourcesJob?.cancel()
+        val searchEpoch = beginSourceSearch()
         sourcesJob = viewModelScope.launch {
-            _isSearchingSources.value = true
             _sourceResults.value = emptyList()
             _indexerErrors.value = emptyList()
             clearMessage()
             try {
-                val outcome = withContext(Dispatchers.IO) {
-                    TrackerSearchClient.searchAll(providers, query.trim())
+                val outcome = runInterruptible(Dispatchers.IO) {
+                    TrackerSearchClient.searchAll(providers, query.trim()) { partial ->
+                        if (sourceSearchEpoch.isCurrent(searchEpoch)) {
+                            _sourceResults.value = partial.results
+                            _message.value = buildString {
+                                append("Получено раздач: ${partial.results.size}")
+                                append(" • трекеров ответило: ${partial.completedProviders}/${partial.totalProviders}")
+                                if (partial.failures.isNotEmpty()) append(" • ошибок: ${partial.failures.size}")
+                                if (partial.timedOut) append(" • поиск остановлен по тайм-ауту")
+                                else if (partial.completedProviders < partial.totalProviders) append(" • ищем дальше…")
+                            }
+                            _isError.value = false
+                        }
+                    }
                 }
                 _sourceResults.value = outcome.results
-                val summary = if (outcome.results.isEmpty()) {
-                    "На включённых трекерах не найдено раздач с прямыми magnet или .torrent ссылками."
-                } else {
-                    "Найдено раздач: ${outcome.results.size} • трекеров ответило: ${providers.size - outcome.failures.size}/${providers.size}."
+                val summary = when {
+                    outcome.results.isEmpty() && outcome.timedOut ->
+                        "Поиск остановлен по тайм-ауту. Попробуйте повторить запрос позже."
+                    outcome.results.isEmpty() ->
+                        "На включённых трекерах не найдено раздач с прямыми magnet или .torrent ссылками."
+                    outcome.timedOut ->
+                        "Найдено раздач: ${outcome.results.size} • часть трекеров не успела ответить за 25 секунд."
+                    else ->
+                        "Найдено раздач: ${outcome.results.size} • трекеров ответило: ${providers.size - outcome.failures.size}/${providers.size}."
                 }
                 _message.value = if (outcome.failures.isEmpty()) summary else {
                     "$summary Ошибок: ${outcome.failures.size}."
@@ -355,22 +604,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Exception) {
-                showError(error.message ?: "Не удалось выполнить поиск по трекерам")
+                if (sourceSearchEpoch.isCurrent(searchEpoch)) {
+                    showError(error.message ?: "Не удалось выполнить поиск по трекерам")
+                }
             } finally {
-                _isSearchingSources.value = false
+                finishSourceSearch(searchEpoch)
             }
         }
     }
 
     /** Builds a release query from a catalog item and searches every enabled built-in tracker. */
     fun findSourcesOnAllTrackers(item: CatalogItem, episode: MediaEpisode? = null) {
-        val year = item.year.takeIf { it.matches(Regex("\\d{4}")) }
-        val query = if (episode != null) {
-            listOf(item.title, episode.releaseCode, episode.name).joinToString(" ")
-        } else {
-            listOfNotNull(item.title, year).joinToString(" ")
-        }
-        searchAllTrackers(query)
+        findSources(item, episode)
     }
 
     /** Manual search from the indexer dashboard; queries all enabled user indexers in parallel order. */
@@ -383,9 +628,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun runSourceSearch(query: String, includeArchive: Boolean) {
-        sourcesJob?.cancel()
+        val searchEpoch = beginSourceSearch()
         sourcesJob = viewModelScope.launch {
-            _isSearchingSources.value = true
             _sourceResults.value = emptyList()
             _indexerErrors.value = emptyList()
             clearMessage()
@@ -407,9 +651,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Exception) {
-                showError(error.message ?: "Ошибка поиска источников")
+                if (sourceSearchEpoch.isCurrent(searchEpoch)) {
+                    showError(error.message ?: "Ошибка поиска источников")
+                }
             } finally {
-                _isSearchingSources.value = false
+                finishSourceSearch(searchEpoch)
             }
         }
     }
@@ -458,14 +704,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /** Optional connection to the user's own Jackett server. Nothing is bundled in the APK. */
-    fun saveJackett(address: String, apiKey: String, indexerFilter: String) {
+    fun saveJackett(
+        address: String,
+        apiKey: String,
+        indexerFilter: String,
+        dashboardCookie: String = ""
+    ) {
         val base = JackettUrl.normalizeBase(address)
         if (base == null) {
             showError("Некорректный адрес Jackett. HTTP разрешён только для локального адреса.")
             return
         }
         if (apiKey.isBlank()) {
-            showError("Введите API-ключ из панели Jackett")
+            showError("Введите API-ключ Jackett для поиска Torznab")
             return
         }
         val existing = _customIndexers.value.firstOrNull {
@@ -476,14 +727,248 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             name = "Jackett",
             searchUrlTemplate = JackettUrl.searchTemplate(base, indexerFilter),
             protocol = app.jacket.mobile.data.IndexerProtocol.JACKETT,
-            apiKey = apiKey.trim()
+            apiKey = apiKey.trim(),
+            cookie = dashboardCookie.trim()
         )
         if (saveIndexer(config)) {
             _customIndexers.value.firstOrNull {
                 it.protocol == app.jacket.mobile.data.IndexerProtocol.JACKETT
-            }?.let { testIndexer(it.id) }
+            }?.let {
+                testIndexer(it.id)
+                _jackettCatalogStatus.value = if (dashboardCookie.isBlank()) {
+                    "Поиск Torznab подключён. Чтобы настраивать приватные индексаторы в приложении, добавьте Cookie авторизованной панели."
+                } else {
+                    "Подключено. Каталог обновится автоматически."
+                }
+            }
         }
     }
+    /** Loads Jackett's native REST indexer catalogue into the in-app settings screen. */
+    fun refreshJackettIndexers() {
+        val config = _customIndexers.value.firstOrNull {
+            it.protocol == app.jacket.mobile.data.IndexerProtocol.JACKETT
+        }
+        if (config == null) {
+            _jackettIndexers.value = emptyList()
+            _jackettCatalogStatus.value = "Сначала подключите свой сервер Jackett."
+            _isLoadingJackettIndexers.value = false
+            return
+        }
+        jackettCatalogJob?.cancel()
+        jackettCatalogJob = viewModelScope.launch {
+            _isLoadingJackettIndexers.value = true
+            _jackettCatalogStatus.value = "Загружаем список индексаторов Jackett…"
+            try {
+                val entries = withContext(Dispatchers.IO) {
+                    JackettIndexerClient.fetch(config)
+                }
+                _jackettIndexers.value = entries
+                val configured = entries.count { it.configured }
+                _jackettCatalogStatus.value =
+                    "Получено индексаторов: ${entries.size} • настроено на сервере: $configured."
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                _jackettCatalogStatus.value =
+                    error.message?.replace(Regex("[\\r\\n\\t]+"), " ")?.take(220)
+                        ?: "Не удалось загрузить каталог Jackett."
+            } finally {
+                _isLoadingJackettIndexers.value = false
+            }
+        }
+    }
+
+    /** Runs the server-side tracker test and refreshes its reported last_error status. */
+    fun testJackettIndexer(indexerId: String) {
+        val config = _customIndexers.value.firstOrNull {
+            it.protocol == app.jacket.mobile.data.IndexerProtocol.JACKETT
+        } ?: run {
+            _jackettCatalogStatus.value = "Сначала подключите Jackett."
+            return
+        }
+        if (_testingJackettIndexerId.value != null) return
+        jackettTestJob?.cancel()
+        jackettTestJob = viewModelScope.launch {
+            _testingJackettIndexerId.value = indexerId
+            _jackettCatalogStatus.value = "Проверяем «$indexerId» на сервере Jackett…"
+            var testFailure: Exception? = null
+            try {
+                withContext(Dispatchers.IO) {
+                    JackettIndexerClient.testIndexer(config, indexerId)
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                testFailure = error
+            }
+
+            try {
+                val entries = withContext(Dispatchers.IO) {
+                    JackettIndexerClient.fetch(config)
+                }
+                _jackettIndexers.value = entries
+                val entryError = entries.firstOrNull { it.id == indexerId }?.lastError
+                _jackettCatalogStatus.value = if (testFailure == null) {
+                    "Проверка «$indexerId» прошла успешно."
+                } else {
+                    val reason = entryError ?: testFailure?.message ?: "неизвестная ошибка"
+                    "Проверка «$indexerId» не пройдена: ${reason.replace(Regex("[\\r\\n\\t]+"), " ").take(200)}"
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (refreshError: Exception) {
+                val reason = testFailure?.message ?: refreshError.message ?: "ошибка сервера"
+                _jackettCatalogStatus.value =
+                    "Не удалось обновить статус «$indexerId»: ${reason.replace(Regex("[\\r\\n\\t]+"), " ").take(200)}"
+            } finally {
+                _testingJackettIndexerId.value = null
+            }
+        }
+    }
+
+    /** Loads Jackett's dynamic setup fields for one public or private indexer. */
+    fun loadJackettIndexerConfig(indexerId: String) {
+        val config = _customIndexers.value.firstOrNull {
+            it.protocol == app.jacket.mobile.data.IndexerProtocol.JACKETT
+        } ?: run {
+            _jackettConfigStatus.value = "Сначала подключите Jackett."
+            return
+        }
+        jackettConfigJob?.cancel()
+        _jackettConfigIndexerId.value = indexerId
+        _jackettConfigFields.value = emptyList()
+        jackettConfigJob = viewModelScope.launch {
+            _isLoadingJackettConfig.value = true
+            _jackettConfigStatus.value = "Загружаем поля настройки…"
+            try {
+                val fields = withContext(Dispatchers.IO) {
+                    JackettIndexerClient.fetchIndexerConfig(config, indexerId)
+                }
+                _jackettConfigFields.value = fields
+                _jackettConfigStatus.value = if (fields.isEmpty()) {
+                    "Для этого индексатора Jackett не вернул настраиваемых полей."
+                } else {
+                    "Полей настройки: ${fields.count { it.type !in setOf("displayinfo", "displayimage") }}."
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                _jackettConfigStatus.value =
+                    error.message?.replace(Regex("[\\r\\n\\t]+"), " ")?.take(240)
+                        ?: "Не удалось получить настройки индексатора."
+            } finally {
+                _isLoadingJackettConfig.value = false
+            }
+        }
+    }
+
+    fun updateJackettConfigField(fieldId: String, value: String) {
+        _jackettConfigFields.value = _jackettConfigFields.value.map { field ->
+            if (field.id == fieldId) field.copy(value = value) else field
+        }
+    }
+
+    fun updateJackettConfigValues(fieldId: String, values: List<String>) {
+        _jackettConfigFields.value = _jackettConfigFields.value.map { field ->
+            if (field.id == fieldId) field.copy(values = values.distinct()) else field
+        }
+    }
+
+    fun closeJackettIndexerConfig() {
+        jackettConfigJob?.cancel()
+        jackettConfigJob = null
+        _jackettConfigIndexerId.value = null
+        _jackettConfigFields.value = emptyList()
+        _jackettConfigStatus.value = null
+        _isLoadingJackettConfig.value = false
+        _isSavingJackettConfig.value = false
+    }
+
+    fun saveJackettIndexerConfig() {
+        val indexerId = _jackettConfigIndexerId.value ?: return
+        val config = _customIndexers.value.firstOrNull {
+            it.protocol == app.jacket.mobile.data.IndexerProtocol.JACKETT
+        } ?: run {
+            _jackettConfigStatus.value = "Сначала подключите Jackett."
+            return
+        }
+        val fields = _jackettConfigFields.value
+        if (fields.isEmpty()) {
+            _jackettConfigStatus.value = "Нет полей настройки для сохранения."
+            return
+        }
+        jackettConfigJob?.cancel()
+        jackettConfigJob = viewModelScope.launch {
+            _isSavingJackettConfig.value = true
+            _jackettConfigStatus.value = "Сохраняем настройки в Jackett…"
+            try {
+                withContext(Dispatchers.IO) {
+                    JackettIndexerClient.updateIndexerConfig(config, indexerId, fields)
+                }
+                _jackettConfigStatus.value = "Настройки сохранены. Обновляем статус индексатора…"
+                _jackettConfigIndexerId.value = null
+                _jackettConfigFields.value = emptyList()
+                refreshJackettIndexers()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                _jackettConfigStatus.value =
+                    error.message?.replace(Regex("[\\r\\n\\t]+"), " ")?.take(240)
+                        ?: "Не удалось сохранить настройки индексатора."
+            } finally {
+                _isSavingJackettConfig.value = false
+            }
+        }
+    }
+
+    /** Searches one configured Jackett tracker and keeps the results in Jacket's native list. */
+    fun searchJackettIndexer(indexerId: String, query: String) {
+        val base = _customIndexers.value.firstOrNull {
+            it.protocol == app.jacket.mobile.data.IndexerProtocol.JACKETT
+        } ?: run {
+            showError("Сначала подключите Jackett")
+            return
+        }
+        if (query.isBlank()) {
+            showError("Введите название для поиска")
+            return
+        }
+        val target = try {
+            JackettIndexerClient.searchConfig(base, indexerId)
+        } catch (error: Exception) {
+            showError(error.message ?: "Некорректный индексатор Jackett")
+            return
+        }
+        sourcesJob?.cancel()
+        sourcesJob = viewModelScope.launch {
+            _isSearchingSources.value = true
+            _sourceResults.value = emptyList()
+            _indexerErrors.value = emptyList()
+            clearMessage()
+            try {
+                val results = withContext(Dispatchers.IO) {
+                    indexers.searchOne(target, query.trim())
+                }
+                _sourceResults.value = results
+                _message.value = if (results.isEmpty()) {
+                    "В «${target.name}» ничего не найдено"
+                } else {
+                    "Найдено в «${target.name}»: ${results.size}"
+                }
+                _isError.value = false
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                _indexerErrors.value = listOf(
+                    IndexerFailure(target.id, target.name, error.message ?: "Ошибка поиска Jackett")
+                )
+                showError("«${target.name}»: ${error.message ?: "ошибка поиска"}")
+            } finally {
+                _isSearchingSources.value = false
+            }
+        }
+    }
+
     fun saveWebSearchProvider(provider: WebSearchProvider): Boolean {
         return try {
             settings.saveWebSearchProvider(provider)
@@ -517,8 +1002,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             _filmixStatus.value = "Запрашиваем код у Filmix…"
             try {
                 val deviceId = settings.filmixDeviceId()
+                val selectedApi = settings.filmixApiBase()
                 val pending = withContext(Dispatchers.IO) {
-                    FilmixDeviceAuth.requestCode(deviceId)
+                    FilmixDeviceAuth.requestCode(deviceId, selectedApi)
                 }
                 _filmixCode.value = pending.code
                 _filmixStatus.value = "Введите код на странице устройств Filmix. Проверяем подтверждение автоматически."
@@ -558,6 +1044,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun selectFilmixApiBase(value: String) {
+        if (_isFilmixPairing.value) return
+        runCatching { settings.saveFilmixApiBase(value) }
+            .onSuccess { normalized ->
+                _filmixApiBase.value = normalized
+                val host = normalized.substringAfter("://").substringBefore('/')
+                _filmixStatus.value = "Выбран API-сервер $host. TLS будет проверен перед выдачей кода."
+            }
+            .onFailure { _filmixStatus.value = it.message ?: "Не удалось сохранить API Filmix" }
+    }
+
     fun cancelFilmixPairing() {
         filmixPairingJob?.cancel()
         filmixPairingJob = null
@@ -575,10 +1072,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun saveHdRezkaSettings(config: HdRezkaSettings) {
         try {
-            val saved = config.copy(connected = config.cookie.isNotBlank())
+            val sessionCookieValid = HdRezkaLoginClient.hasAuthenticatedCookie(config.cookie)
+            val saved = config.copy(connected = sessionCookieValid)
             settings.saveHdRezkaSettings(saved)
             _hdRezkaSettings.value = settings.hdRezkaSettings()
-            _hdRezkaStatus.value = if (saved.connected) "Cookie-сессия сохранена" else "Данные сохранены; вход не выполнен"
+            _hdRezkaStatus.value = when {
+                sessionCookieValid -> "Cookie содержит пару авторизации DLE. Срок действия сессии сервером не проверен."
+                config.cookie.isNotBlank() -> "Cookie сохранена, но не распознана как сессия: нужны dle_user_id и dle_password."
+                else -> "Данные сохранены; вход не выполнен."
+            }
         } catch (error: Exception) {
             _hdRezkaStatus.value = error.message ?: "Не удалось сохранить настройки HDRezka"
         }
@@ -601,7 +1103,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 )
                 settings.saveHdRezkaSettings(saved)
                 _hdRezkaSettings.value = settings.hdRezkaSettings()
-                _hdRezkaStatus.value = "Авторизация подтверждена. Cookie-сессия сохранена."
+                _hdRezkaStatus.value = "HDRezka подтвердила вход. Cookie-сессия сохранена."
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Exception) {
@@ -687,25 +1189,26 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             showError("Введите название для пробного поиска")
             return
         }
-        sourcesJob?.cancel()
+        val searchEpoch = beginSourceSearch()
         sourcesJob = viewModelScope.launch {
-            _isSearchingSources.value = true
             _sourceResults.value = emptyList()
             _indexerErrors.value = emptyList()
             clearMessage()
             try {
-                val results = withContext(Dispatchers.IO) { indexers.searchOne(config, query) }
+                val results = runInterruptible(Dispatchers.IO) { indexers.searchOne(config, query) }
                 _sourceResults.value = results
                 _message.value = if (results.isEmpty()) "Пробный поиск: результатов нет" else "Пробный поиск: ${results.size} результатов"
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Exception) {
-                _indexerErrors.value = listOf(
-                    IndexerFailure(config.id, config.name, error.message ?: "Ошибка пробного поиска")
-                )
-                showError("Пробный поиск «${config.name}»: ${error.message ?: "ошибка источника"}")
+                if (sourceSearchEpoch.isCurrent(searchEpoch)) {
+                    _indexerErrors.value = listOf(
+                        IndexerFailure(config.id, config.name, error.message ?: "Ошибка пробного поиска")
+                    )
+                    showError("Пробный поиск «${config.name}»: ${error.message ?: "ошибка источника"}")
+                }
             } finally {
-                _isSearchingSources.value = false
+                finishSourceSearch(searchEpoch)
             }
         }
     }
