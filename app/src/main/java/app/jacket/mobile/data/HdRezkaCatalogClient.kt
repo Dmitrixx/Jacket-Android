@@ -42,16 +42,13 @@ object HdRezkaCatalogClient {
     private const val MAX_REDIRECTS = 4
     private const val MAX_OBFUSCATED_URL_CHARS = 512 * 1024
     private const val USER_AGENT = "Jacket-Android/2.7 (Android media client)"
-    private val qualityPattern = Regex("""^\\[([^\\]]+)](.+)$""", RegexOption.IGNORE_CASE)
+    private val qualityPattern = Regex("""^\[([^\]]+)](.+)$""", RegexOption.IGNORE_CASE)
     private val encodedTrashTokens = listOf(
         "JCQhIUAkJEBeIUAjJCRA",
         "QEBAQEAhIyMhXl5e",
         "IyMjI14hISMjIUBA",
         "Xl5eIUAjIyEhIyM=",
         "JCQjISFAIyFAIyM=",
-        "IUAjIyEhQCNAIQ==",
-        "ISMhIyMhQCQkQF4=",
-        "XiFAJEAhIyNeQCM="
     )
     private val directUrlPattern = Regex("https://[^\\s,\\]<>\\\"']+", RegexOption.IGNORE_CASE)
     private val episodeCodePattern = Regex("(?i)S(\\d{1,2})E(\\d{1,3})")
@@ -239,7 +236,7 @@ object HdRezkaCatalogClient {
         val favs = (
             document.selectFirst("input#ctrl_favs")?.attr("value")
                 ?: document.selectFirst("[data-favs]")?.attr("data-favs")
-                ?: Regex("""var\\s+sof\\s*=.*?\\.send\\([^,]+,\\s*['"]([^'"]+)['"]""", RegexOption.DOT_MATCHES_ALL)
+                ?: Regex("""var\s+sof\s*=.*?\.send\([^,]+,\s*['"]([^'"]+)['"]""", RegexOption.DOT_MATCHES_ALL)
                     .find(html)?.groupValues?.getOrNull(1)
                 ?: ""
         ).take(256)
@@ -325,7 +322,7 @@ object HdRezkaCatalogClient {
             ?: return null
         if (bytes.isEmpty() || bytes.size > MAX_OBFUSCATED_URL_CHARS) return null
         val decoded = bytes.toString(Charsets.UTF_8)
-        if (decoded.any { it.isISOControl() && it !in '\\t' && it !in '\\r' && it !in '\\n' }) {
+        if (decoded.any { it.isISOControl() && it !in '\t' && it !in '\r' && it !in '\n' }) {
             return null
         }
         return decoded.takeIf { it.contains("https://", ignoreCase = true) }
@@ -336,7 +333,7 @@ object HdRezkaCatalogClient {
         val parsed = value.split(',').mapNotNull { segment ->
             val match = qualityPattern.matchEntire(segment.trim()) ?: return@mapNotNull null
             val label = match.groupValues[1].trim().take(64)
-            val urls = match.groupValues[2].split(Regex("""\\s+or\\s+"""))
+            val urls = match.groupValues[2].split(Regex("""\s+or\s+"""))
             // HDRezka serves several alternative files for one quality; follow
             // the player convention and prefer the last (usually direct MP4) URL.
             val url = urls.asReversed().firstOrNull { candidate ->

@@ -29,7 +29,7 @@ No external Jackett or TorrServer process is started or packaged.
 ## Direct video sources
 
 - Filmix uses the explicitly selected allowlisted HTTPS API host and encrypted device token. Search, post details, account profile and plan-limited quality variants are resolved through Filmix v2.
-- HDRezka uses only the mirror explicitly configured by the user. The client parses `post_id`, `initCDN*Events`, translator flags, favorites token and series defaults; AJAX requests use movie flags or resolved season/episode IDs. DLE cookies are sent only to the configured mirror, never to media CDNs. CAPTCHA/Anubis, `#2` obfuscated manifests and cross-origin redirects are not bypassed.
+- HDRezka uses only the mirror explicitly configured by the user. The client parses the DLE AJAX search response, `post_id`, `initCDN*Events`, translator flags, favorites token and series defaults; AJAX requests use movie flags or resolved season/episode IDs. It decodes the known HDRezka `#h` stream payload locally and resolves quality fallbacks; unknown/rotated encodings fail closed. DLE cookies are sent only to the configured mirror, never to media CDNs. CAPTCHA/Anubis, paywalls, Filmix `#2` manifests and cross-origin redirects are not bypassed.
 - Media3 receives only non-secret `Referer`/`User-Agent` headers and parsed subtitle configurations. Account cookies are never copied into player request headers.
 - The detail-card source picker merges torrents, Filmix, HDRezka and license-gated Internet Archive results, isolates individual provider failures and displays source type/quality/translation metadata.
 

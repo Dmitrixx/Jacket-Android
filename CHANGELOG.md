@@ -2,6 +2,7 @@
 
 ## Next
 
+- HDRezka direct search now uses the current DLE AJAX search endpoint and resolves the known `#h` player payload/quality playlist format locally. Unsupported or rotated encodings remain unavailable; no CAPTCHA, paywall or cross-origin cookie forwarding is bypassed.
 - Federate the detail-card source picker across Filmix API v2, the configured HDRezka mirror, custom torrent indexers, built-in tracker adapters and license-gated Internet Archive media. Direct provider cards show source type, selected translation and server-provided quality; premium-only options link to their provider page.
 - Pass only allowlisted non-secret Referer/User-Agent headers and parsed subtitles to Media3. Never forward account cookies to media CDNs.
 

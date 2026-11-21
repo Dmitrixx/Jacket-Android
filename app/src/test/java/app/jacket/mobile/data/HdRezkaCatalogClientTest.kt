@@ -184,10 +184,7 @@ class HdRezkaCatalogClientTest {
             "//_//QEBAQEAhIyMhXl5e" +
             "//_//IyMjI14hISMjIUBA" +
             "//_//Xl5eIUAjIyEhIyM=" +
-            "//_//JCQjISFAIyFAIyM=" +
-            "//_//IUAjIyEhQCNAIQ==" +
-            "//_//ISMhIyMhQCQkQF4=" +
-            "//_//XiFAJEAhIyNeQCM="
+            "//_//JCQjISFAIyFAIyM="
         val decoded = HdRezkaCatalogClient.decodeStreamPayload(encoded)
         assertEquals(
             "[1080p]https://cdn.example/movie_1080.mp4,[720p]https://cdn.example/movie_720.mp4",
