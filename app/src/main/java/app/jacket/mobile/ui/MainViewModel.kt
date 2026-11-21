@@ -410,48 +410,54 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 val searchRezka = rezkaSettings.mirror.isNotBlank()
                 val searchLampac = lampacConfig.enabled && lampacConfig.baseUrl.isNotBlank()
                 val groupCount = 1 +
-                    if (builtInTrackers.isNotEmpty()) 1 else 0 +
-                    if (searchFilmix) 1 else 0 +
-                    if (searchRezka) 1 else 0 +
-                    if (searchLampac) 1 else 0
+                    (if (builtInTrackers.isNotEmpty()) 1 else 0) +
+                    (if (searchFilmix) 1 else 0) +
+                    (if (searchRezka) 1 else 0) +
+                    (if (searchLampac) 1 else 0)
                 val accumulator = SourceSearchAccumulator(groupCount)
+                val publicationLock = Any()
+                var finalized = false
 
                 fun publish(snapshot: SourceSearchSnapshot, final: Boolean = false) {
-                    if (!sourceSearchEpoch.isCurrent(searchEpoch)) return
-                    _sourceResults.value = snapshot.results
-                    _indexerErrors.value = snapshot.failures
-                    _message.value = if (!final) {
-                        buildString {
-                            append("Ищем источники • найдено: ${snapshot.results.size}")
-                            append(" • готово: ${snapshot.completedGroups}/${snapshot.totalGroups}")
-                            snapshot.progressMessages.takeLast(2).takeIf { it.isNotEmpty() }?.let {
-                                append(" • ")
-                                append(it.joinToString(" • "))
-                            }
-                            if (snapshot.timedOutMessage != null) {
-                                append(" • ")
-                                append(snapshot.timedOutMessage)
-                            } else if (snapshot.completedGroups < snapshot.totalGroups) {
-                                append(" • ожидаем остальные источники…")
-                            }
-                        }
-                    } else {
-                        buildString {
-                            append(
-                                when {
-                                    snapshot.results.isNotEmpty() && snapshot.failures.isNotEmpty() ->
-                                        "Найдено источников: ${snapshot.results.size}. Недоступны: ${snapshot.failures.size}."
-                                    snapshot.results.isNotEmpty() ->
-                                        "Найдено источников: ${snapshot.results.size}."
-                                    snapshot.failures.isNotEmpty() ->
-                                        "Источники ответили с ошибками. Проверьте подключение и настройки."
-                                    else -> "Ничего не найдено. Проверьте название и подключённые источники."
+                    synchronized(publicationLock) {
+                        if (!finalized && sourceSearchEpoch.isCurrent(searchEpoch)) {
+                            if (final) finalized = true
+                            _sourceResults.value = snapshot.results
+                            _indexerErrors.value = snapshot.failures
+                            _message.value = if (!final) {
+                                buildString {
+                                    append("Ищем источники • найдено: ${snapshot.results.size}")
+                                    append(" • готово: ${snapshot.completedGroups}/${snapshot.totalGroups}")
+                                    snapshot.progressMessages.takeLast(2).takeIf { it.isNotEmpty() }?.let {
+                                        append(" • ")
+                                        append(it.joinToString(" • "))
+                                    }
+                                    if (snapshot.timedOutMessage != null) {
+                                        append(" • ")
+                                        append(snapshot.timedOutMessage)
+                                    } else if (snapshot.completedGroups < snapshot.totalGroups) {
+                                        append(" • ожидаем остальные источники…")
+                                    }
                                 }
-                            )
-                            snapshot.timedOutMessage?.let { append(" ").append(it).append(".") }
+                            } else {
+                                buildString {
+                                    append(
+                                        when {
+                                            snapshot.results.isNotEmpty() && snapshot.failures.isNotEmpty() ->
+                                                "Найдено источников: ${snapshot.results.size}. Недоступны: ${snapshot.failures.size}."
+                                            snapshot.results.isNotEmpty() ->
+                                                "Найдено источников: ${snapshot.results.size}."
+                                            snapshot.failures.isNotEmpty() ->
+                                                "Источники ответили с ошибками. Проверьте подключение и настройки."
+                                            else -> "Ничего не найдено. Проверьте название и подключённые источники."
+                                        }
+                                    )
+                                    snapshot.timedOutMessage?.let { append(" ").append(it).append(".") }
+                                }
+                            }
+                            _isError.value = final && snapshot.results.isEmpty() && snapshot.failures.isNotEmpty()
                         }
                     }
-                    _isError.value = final && snapshot.results.isEmpty() && snapshot.failures.isNotEmpty()
                 }
 
                 fun sourceTask(
