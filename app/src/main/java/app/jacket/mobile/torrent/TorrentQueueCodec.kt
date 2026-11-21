@@ -102,12 +102,18 @@ object TorrentQueueCodec {
                 ?: path?.let { runCatching { TorrentQueueStore.idForFile(File(it)) }.getOrNull() }
                 ?: continue
             if (!seen.add(id.lowercase())) continue
+            val legacyTitle = if (item.has("title") && !item.isNull("title")) {
+                item.opt("title")?.toString().orEmpty()
+                    .takeUnless { it.equals("null", ignoreCase = true) }
+                    .orEmpty()
+            } else {
+                ""
+            }
             val migratedItem = QueuedTorrent(
                 id = id,
-                // org.json JVM and Android implementations differ for a missing key:
-                // some return the literal "null". Use an explicit empty fallback so
-                // legacy rows consistently receive a useful generated title.
-                title = item.optString("title", "").trim().take(MAX_TITLE_LENGTH)
+                // Read the raw value: org.json JVM and Android implementations differ
+                // in optString's handling of absent and JSON-null properties.
+                title = legacyTitle.trim().take(MAX_TITLE_LENGTH)
                     .ifBlank { "Торрент ${id.take(10)}" },
                 magnetUri = magnet,
                 torrentPath = path,
