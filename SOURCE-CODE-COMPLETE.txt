@@ -14509,3 +14509,584 @@ FILE: app/src/main/res/xml/network_security_config.xml
 </network-security-config>
 
 END FILE: app/src/main/res/xml/network_security_config.xml
+
+
+========================================================================================
+FILE: app/src/test/java/app/jacket/mobile/data/CompletionOrderCollectorTest.kt
+========================================================================================
+
+package app.jacket.mobile.data
+
+import org.junit.Assert.assertEquals
+import org.junit.Test
+import java.util.Collections
+import java.util.concurrent.Callable
+
+class CompletionOrderCollectorTest {
+    @Test
+    fun emitsFastTaskBeforeEarlierSlowTask() {
+        val emitted = Collections.synchronizedList(mutableListOf<String>())
+        val tasks = listOf(
+            Callable {
+                Thread.sleep(180)
+                "slow"
+            },
+            Callable { "fast" }
+        )
+
+        val completed = CompletionOrderCollector.collect(
+            tasks = tasks,
+            timeoutMs = 2_000,
+            maxConcurrency = 2
+        ) { result ->
+            emitted += result.getOrThrow()
+        }
+
+        assertEquals(2, completed)
+        assertEquals(listOf("fast", "slow"), emitted)
+    }
+
+    @Test
+    fun returnsCompletedPartialResultsWhenDeadlineExpires() {
+        val emitted = Collections.synchronizedList(mutableListOf<String>())
+        val tasks = listOf(
+            Callable {
+                Thread.sleep(1_000)
+                "too-late"
+            },
+            Callable { "ready" }
+        )
+
+        val completed = CompletionOrderCollector.collect(
+            tasks = tasks,
+            timeoutMs = 120,
+            maxConcurrency = 2
+        ) { result ->
+            emitted += result.getOrThrow()
+        }
+
+        assertEquals(1, completed)
+        assertEquals(listOf("ready"), emitted)
+    }
+}
+
+END FILE: app/src/test/java/app/jacket/mobile/data/CompletionOrderCollectorTest.kt
+
+
+========================================================================================
+FILE: app/src/test/java/app/jacket/mobile/data/FilmixCatalogClientTest.kt
+========================================================================================
+
+package app.jacket.mobile.data
+
+import org.json.JSONArray
+import org.json.JSONObject
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+class FilmixCatalogClientTest {
+    @Test
+    fun buildsAuthenticatedSearchUrlWithDeviceFingerprint() {
+        val url = FilmixCatalogClient.buildApiUrl(
+            FilmixDeviceAuth.DEFAULT_API_BASE,
+            "search",
+            "0123456789abcdef",
+            "private-token",
+            mapOf("story" to "Тест фильм")
+        )
+        assertTrue(url.startsWith("https://filmixapp.cyou/api/v2/search?"))
+        assertTrue(url.contains("user_dev_id=0123456789abcdef"))
+        assertTrue(url.contains("user_dev_token=private-token"))
+        assertTrue(url.contains("user_dev_name=go-filmix"))
+        assertTrue(url.contains("story="))
+        assertFalse(url.contains("Тест фильм"))
+    }
+
+    @Test
+    fun parsesSearchResultsAndBuildsCanonicalPageUrls() {
+        val parsed = FilmixCatalogClient.parseSearchEntries(JSONObject().put("data", JSONArray().put(
+            JSONObject()
+                .put("id", 42)
+                .put("title", "Тест")
+                .put("original_title", "Test")
+                .put("year", 2024)
+                .put("section", 7)
+                .put("alt_name", "test-serial")
+        )))
+        assertEquals(1, parsed.size)
+        assertTrue(parsed.single().isSeries)
+        assertEquals("https://filmix.my/seria/42-test-serial.html", parsed.single().pageUrl)
+    }
+
+    @Test
+    fun parsesMovieQualitiesWithoutGuessingMissingVariants() {
+        val parsed = FilmixCatalogClient.parseQualityVariants(
+            "https://cdn.example/video_[1080,720,480].mp4"
+        )
+        assertEquals(listOf(1080, 720, 480), parsed.mapNotNull { it.quality })
+        assertTrue(parsed.first().url.endsWith("video_1080.mp4"))
+        assertTrue(FilmixCatalogClient.parseQualityVariants("https://cdn.example/video_%s.mp4").isEmpty())
+    }
+
+    @Test
+    fun honorsExplicitQualityArrayForCurrentPlaceholderFormat() {
+        val parsed = FilmixCatalogClient.parseQualityVariants(
+            "https://cdn.example/video_%s.mp4",
+            JSONArray().put(1080).put(720)
+        )
+        assertEquals(listOf(1080, 720), parsed.mapNotNull { it.quality })
+    }
+
+    @Test
+    fun updatesOnlyLivehashPathSegmentWithoutChangingOtherUrlParts() {
+        val url = "https://cdn.example/s/old-hash/path/video.mp4?token=other"
+        assertEquals(
+            "https://cdn.example/s/new_hash-42/path/video.mp4?token=other",
+            FilmixCatalogClient.replaceLivehash(url, "new_hash-42")
+        )
+    }
+
+    @Test
+    fun extractsLivehashFromFilmixPlayerLinks() {
+        val post = JSONObject().put(
+            "player_links",
+            JSONObject().put("movie", JSONArray().put(
+                JSONObject().put("link", "https://cdn.example/s/active123/video_[1080,720].mp4")
+            ))
+        )
+        assertEquals("active123", FilmixCatalogClient.extractLivehash(post))
+    }
+
+    @Test
+    fun appliesAccountQualityLimits() {
+        assertEquals(720, FilmixCatalogClient.maxQualityFromProfile(JSONObject()))
+        assertEquals(1080, FilmixCatalogClient.maxQualityFromProfile(JSONObject().put("is_pro", true)))
+        assertEquals(2160, FilmixCatalogClient.maxQualityFromProfile(JSONObject().put("is_pro_plus", "1")))
+    }
+
+    @Test
+    fun buildsSeriesSourcesOnlyForTheRequestedEpisode() {
+        val entry = FilmixSearchEntry(7, "Сериал", "", 2024, true, null)
+        val post = JSONObject().put("player_links", JSONObject().put(
+            "playlist",
+            JSONObject().put(
+                "1",
+                JSONObject().put(
+                    "Озвучка",
+                    JSONArray()
+                        .put(JSONObject().put("link", "https://cdn.example/s01e01_[720,480].mp4"))
+                        .put(JSONObject().put("link", "https://cdn.example/s01e02_[720,480].mp4"))
+                )
+            )
+        ))
+        val results = FilmixCatalogClient.parsePostSources(post, entry, "S01E02", 720)
+        assertEquals(2, results.size)
+        assertTrue(results.all { it.title.contains("S01E02") })
+        assertTrue(results.all { it.streamUrl.orEmpty().contains("s01e02_") })
+    }
+
+    @Test
+    fun excludesQualitiesAboveTheAccountPlan() {
+        val entry = FilmixSearchEntry(1, "Фильм", "", 2024, false, null)
+        val post = JSONObject().put("player_links", JSONObject().put(
+            "movie",
+            JSONArray().put(
+                JSONObject()
+                    .put("translation", "Озвучка")
+                    .put("link", "https://cdn.example/movie_[2160,1080,720].mp4")
+            )
+        ))
+        val results = FilmixCatalogClient.parsePostSources(post, entry, null, 1080)
+        assertEquals(listOf("1080p", "720p"), results.map { it.qualityLabel })
+        assertEquals(
+            FilmixDeviceAuth.SITE_BASE,
+            results.first().requestHeaders["Referer"]
+        )
+        assertTrue(results.first().requestHeaders["User-Agent"].orEmpty().contains("Filmix v2"))
+    }
+}
+
+END FILE: app/src/test/java/app/jacket/mobile/data/FilmixCatalogClientTest.kt
+
+
+========================================================================================
+FILE: app/src/test/java/app/jacket/mobile/data/FilmixDeviceAuthTest.kt
+========================================================================================
+
+package app.jacket.mobile.data
+
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+class FilmixDeviceAuthTest {
+    @Test
+    fun buildsTokenRequestWithKnownCompatibleAndroidFingerprint() {
+        val url = FilmixDeviceAuth.buildTokenRequestUrl("0123456789abcdef")
+        assertTrue(url.startsWith("https://filmixapp.cyou/api/v2/token_request?"))
+        assertTrue(url.contains("user_dev_id=0123456789abcdef"))
+        assertTrue(url.contains("user_dev_name=go-filmix"))
+        assertTrue(url.contains("user_dev_vendor=Xiaomi"))
+        assertTrue(url.contains("user_dev_os=11"))
+        assertTrue(url.contains("user_dev_apk=2.0.9"))
+    }
+
+    @Test
+    fun buildsCheckUpdateWithSeparateNonAccountDeviceId() {
+        val url = FilmixDeviceAuth.buildCheckUpdateUrl("https://filmixapp.cyou/api/v2")
+        assertTrue(url.startsWith("https://filmixapp.cyou/api/v2/check_update?"))
+        assertTrue(url.contains("user_dev_id=abcdef0123456789"))
+        assertTrue(url.contains("user_dev_name=go-filmix"))
+    }
+
+    @Test
+    fun offersOnlyExplicitHttpsApiEndpointsAndOfficialActivationPage() {
+        assertTrue(FilmixDeviceAuth.apiBaseCandidates().all { it.startsWith("https://") })
+        assertEquals(
+            listOf(FilmixDeviceAuth.DEFAULT_API_BASE, FilmixDeviceAuth.ALTERNATE_API_BASE),
+            FilmixDeviceAuth.apiBaseCandidates()
+        )
+        assertEquals(
+            FilmixDeviceAuth.ALTERNATE_API_BASE,
+            FilmixDeviceAuth.normalizeApiBase("https://fxapp.biz/")
+        )
+        assertTrue(FilmixDeviceAuth.ACTIVATION_URL.startsWith("https://filmix.my/"))
+    }
+
+    @Test(expected = IllegalArgumentException::class)
+    fun rejectsCleartextFilmixApi() {
+        FilmixDeviceAuth.normalizeApiBase("http://fxapp.biz/api/v2")
+    }
+
+    @Test(expected = IllegalArgumentException::class)
+    fun rejectsUnknownFilmixApiHost() {
+        FilmixDeviceAuth.normalizeApiBase("https://unknown.example/api/v2")
+    }
+
+    @Test(expected = IllegalArgumentException::class)
+    fun rejectsUnexpectedApiPath() {
+        FilmixDeviceAuth.normalizeApiBase("https://fxapp.biz/custom")
+    }
+
+    @Test
+    fun alternateApiUsesSameDeviceFingerprintAndV2Routes() {
+        val url = FilmixDeviceAuth.buildTokenRequestUrl(
+            FilmixDeviceAuth.ALTERNATE_API_BASE,
+            "0123456789abcdef"
+        )
+        assertTrue(url.startsWith("https://fxapp.biz/api/v2/token_request?"))
+        assertTrue(url.contains("user_dev_id=0123456789abcdef"))
+        assertTrue(
+            FilmixDeviceAuth.buildCheckUpdateUrl(FilmixDeviceAuth.ALTERNATE_API_BASE)
+                .startsWith("https://fxapp.biz/api/v2/check_update?")
+        )
+    }
+
+    @Test
+    fun recognizesFilmixUpdateResponses() {
+        assertTrue(FilmixDeviceAuth.isRecognizedCheckUpdateResponse("""{"version":"2.2.13"}"""))
+        assertFalse(FilmixDeviceAuth.isRecognizedCheckUpdateResponse("""{"status":"ok"}"""))
+    }
+
+    @Test
+    fun reportsPerHostFailureDetailsWithoutLeakingRequestParameters() {
+        val message = FilmixDeviceAuth.userFriendlyError(
+            java.io.IOException(
+                "Filmix API недоступен по HTTPS (filmixapp.cyou: HTTP 405 на /check_update)."
+            )
+        )
+        assertTrue(message.contains("filmixapp.cyou: HTTP 405"))
+        assertFalse(message.contains("api.filmix.tv"))
+        assertFalse(message.contains("user_dev_id="))
+    }
+
+    @Test
+    fun tlsCertificateFailureIsShownAsActionableMessage() {
+        val error = javax.net.ssl.SSLPeerUnverifiedException(
+            "Hostname filmixapp.cyou not verified: certificate subject api.filmix.tv"
+        )
+        val message = FilmixDeviceAuth.userFriendlyError(
+            java.io.IOException(
+                "Filmix API недоступен по HTTPS (filmixapp.cyou: TLS: сертификат не соответствует имени домена)",
+                error
+            )
+        )
+        assertTrue(message.contains("TLS: сертификат не соответствует имени домена"))
+        assertFalse(message.contains("certificate subject"))
+    }
+
+    @Test(expected = IllegalArgumentException::class)
+    fun rejectsMalformedDeviceId() {
+        FilmixDeviceAuth.buildTokenRequestUrl("bad-id")
+    }
+}
+
+END FILE: app/src/test/java/app/jacket/mobile/data/FilmixDeviceAuthTest.kt
+
+
+========================================================================================
+FILE: app/src/test/java/app/jacket/mobile/data/HdRezkaCatalogClientTest.kt
+========================================================================================
+
+package app.jacket.mobile.data
+
+import org.json.JSONObject
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+class HdRezkaCatalogClientTest {
+    @Test
+    fun parsesSearchCardsAndKeepsResultsOnConfiguredOrigin() {
+        val html = """
+            <div class="b-content__inline_item">
+              <a class="b-content__inline_item-link" href="https://hdrezka.example/film/123-demo.html" title="Демо">Демо</a>
+              <div class="b-content__inline_item-cover"><img src="data:image/gif;base64,AA==" data-src="https://hdrezka.example/poster.jpg"></div>
+              <div class="b-content__inline_item-details">2024</div>
+            </div>
+        """.trimIndent()
+        val items = HdRezkaCatalogClient.parseSearchEntries(html, "https://hdrezka.example")
+        assertEquals(1, items.size)
+        assertEquals("Демо", items.single().title)
+        assertEquals("https://hdrezka.example/film/123-demo.html", items.single().pageUrl)
+        assertEquals("https://hdrezka.example/poster.jpg", items.single().posterUrl)
+    }
+
+    @Test
+    fun ignoresExternalSearchResults() {
+        val html = """
+            <div class="b-content__inline_item">
+              <a class="b-content__inline_item-link" href="https://other.example/film.html">X</a>
+            </div>
+            <div class="b-content__inline_item">
+              <a class="b-content__inline_item-link" href="https://user@hdrezka.example/film.html">Y</a>
+            </div>
+        """.trimIndent()
+        assertTrue(HdRezkaCatalogClient.parseSearchEntries(html, "https://hdrezka.example").isEmpty())
+    }
+
+    @Test
+    fun readsTranslatorsAndPostIdsFromPage() {
+        val html = """
+            <input id="post_id" value="7712">
+            <div id="translators-list">
+              <span data-translator_id="12" title="Профессиональный">Проф</span>
+              <span data-translator_id="14">Любительский</span>
+            </div>
+        """.trimIndent()
+        assertEquals("7712", HdRezkaCatalogClient.parsePostId(html, "https://hdrezka.example/film/demo.html"))
+        assertEquals(listOf("12", "14"), HdRezkaCatalogClient.parseTranslators(html).map { it.id })
+    }
+
+    @Test
+    fun parsesMovieBootstrapFlagsAndFavoritesToken() {
+        val html = """
+            <input id="ctrl_favs" value="fav-token-42">
+            <div id="translators-list">
+              <span data-translator_id="17" data-camrip="1" data-ads="0" data-director="1">Озвучка</span>
+            </div>
+            <script>initCDNMoviesEvents(7712, 17, 1, 0, 1);</script>
+        """.trimIndent()
+        val page = HdRezkaCatalogClient.parsePageContext(
+            html,
+            "https://hdrezka.example/film/demo.html"
+        )
+        assertNotNull(page)
+        assertEquals("7712", page?.postId)
+        assertEquals("fav-token-42", page?.favs)
+        assertFalse(page?.isSeries ?: true)
+        assertEquals("17", page?.translators?.single()?.id)
+        assertEquals("1", page?.translators?.single()?.isCamrip)
+        assertEquals("0", page?.translators?.single()?.isAds)
+        assertEquals("1", page?.translators?.single()?.isDirector)
+    }
+
+    @Test
+    fun parsesSeriesBootstrapSeasonAndEpisodeDefaults() {
+        val html = """
+            <script>initCDNSeriesEvents(991, 7, 3, 105);</script>
+            <div id="simple-episodes-tabs"></div>
+        """.trimIndent()
+        val page = HdRezkaCatalogClient.parsePageContext(
+            html,
+            "https://hdrezka.example/serial/demo.html"
+        )
+        assertNotNull(page)
+        assertEquals("991", page?.postId)
+        assertTrue(page?.isSeries ?: false)
+        assertEquals("3", page?.defaultSeasonId)
+        assertEquals("105", page?.defaultEpisodeId)
+        assertEquals("7", page?.translators?.single()?.id)
+    }
+
+    @Test
+    fun exposesPremiumTranslationAsSubscriptionPageInsteadOfBrokenStream() {
+        val entry = HdRezkaSearchEntry("Демо", "https://hdrezka.example/film/demo.html", null, "")
+        val result = HdRezkaCatalogClient.parseStreamSources(
+            JSONObject().put("success", false).put("premium_content", true),
+            entry,
+            HdRezkaTranslator("99", "Premium", isPremium = true),
+            entry.pageUrl,
+            null
+        )
+        assertEquals(1, result.size)
+        assertTrue(result.single().requiresSubscription)
+        assertEquals(entry.pageUrl, result.single().pageUrl)
+        assertNull(result.single().streamUrl)
+    }
+
+    @Test
+    fun recognizesMovieBootstrapWithTrailingArguments() {
+        val html = """<script>player.initCDNMoviesEvents(7712, 17, 1, 0, 1, true);</script>"""
+        val page = HdRezkaCatalogClient.parsePageContext(
+            html,
+            "https://hdrezka.example/film/demo.html"
+        )
+        assertNotNull(page)
+        assertEquals("7712", page?.postId)
+        assertFalse(page?.isSeries ?: true)
+        assertEquals("17", page?.translators?.single()?.id)
+        assertEquals("1", page?.translators?.single()?.isCamrip)
+        assertEquals("0", page?.translators?.single()?.isAds)
+        assertEquals("1", page?.translators?.single()?.isDirector)
+    }
+
+    @Test
+    fun recognizesSeriesBootstrapWithTrailingArguments() {
+        val html = """<script>player.initCDNSeriesEvents(991, 7, 3, 105, true);</script>"""
+        val page = HdRezkaCatalogClient.parsePageContext(
+            html,
+            "https://hdrezka.example/serial/demo.html"
+        )
+        assertNotNull(page)
+        assertTrue(page?.isSeries ?: false)
+        assertEquals("991", page?.postId)
+        assertEquals("7", page?.translators?.single()?.id)
+        assertEquals("3", page?.defaultSeasonId)
+        assertEquals("105", page?.defaultEpisodeId)
+    }
+
+    @Test
+    fun mapsSeasonAndEpisodeIdsFromEpisodesResponse() {
+        val response = JSONObject().put(
+            "episodes",
+            """
+                <div class="b-simple_episode__item" data-season_id="3" data-episode_id="101"></div>
+                <div class="b-simple_episode__item" data-season_id="3" data-episode_id="102"></div>
+                <div class="b-simple_episode__item" data-season_id="8" data-episode_id="201"></div>
+            """.trimIndent()
+        )
+        val ids = HdRezkaCatalogClient.resolveEpisodeIds(response, 1, 2)
+        assertNotNull(ids)
+        assertEquals(HdRezkaEpisodeIds("3", "102"), ids)
+    }
+
+    @Test
+    fun buildsCurrentEngineAjaxSearchPostRequest() {
+        assertEquals(
+            "https://hdrezka.example/engine/ajax/search.php",
+            HdRezkaCatalogClient.buildSearchUrl("https://hdrezka.example")
+        )
+        assertEquals(
+            "q=Interstellar+2024",
+            HdRezkaCatalogClient.buildSearchBody("Interstellar 2024")
+        )
+    }
+
+    @Test
+    fun parsesCurrentAjaxSearchAnchorsWithoutLegacyResultCards() {
+        val html = """
+            <ul>
+              <li><a href="/film/123-demo.html"><span class="enty">Демо</span> (Original, 2024)</a></li>
+              <li><a href="/search/?q=other">Search</a></li>
+            </ul>
+        """.trimIndent()
+        val entries = HdRezkaCatalogClient.parseSearchEntries(html, "https://hdrezka.example")
+        assertEquals(1, entries.size)
+        assertEquals("Демо", entries.single().title)
+        assertEquals("https://hdrezka.example/film/123-demo.html", entries.single().pageUrl)
+    }
+
+    @Test
+    fun decodesHdRezkaTrashPayloadAndSelectsDirectQualityFallback() {
+        val encoded = "#hWzEwODBwXWh0dHBzOi8vY2RuLmV4YW1wbGUv" +
+            "//_//JCQhIUAkJEBeIUAjJCRA" +
+            "bW92aWVfMTA4MC5tcDQsWzcyMHBdaHR0cHM6Ly9jZG4uZXhhbXBsZS9tb3ZpZV83MjAubXA0" +
+            "//_//QEBAQEAhIyMhXl5e" +
+            "//_//IyMjI14hISMjIUBA" +
+            "//_//Xl5eIUAjIyEhIyM=" +
+            "//_//JCQjISFAIyFAIyM="
+        val decoded = HdRezkaCatalogClient.decodeStreamPayload(encoded)
+        assertEquals(
+            "[1080p]https://cdn.example/movie_1080.mp4,[720p]https://cdn.example/movie_720.mp4",
+            decoded
+        )
+        val variants = HdRezkaCatalogClient.parseQualityVariants(encoded)
+        assertEquals(listOf("1080p", "720p"), variants.map { it.qualityLabel })
+        assertEquals("https://cdn.example/movie_1080.mp4", variants.first().url)
+    }
+
+    @Test
+    fun prefersMp4OverHlsRegardlessOfAlternativeOrder() {
+        val variants = HdRezkaCatalogClient.parseQualityVariants(
+            "[1080p Ultra]https://cdn.example/file.mp4 or https://cdn.example/master.m3u8"
+        )
+        assertEquals(1, variants.size)
+        assertEquals("1080p", variants.single().qualityLabel)
+        assertEquals("https://cdn.example/file.mp4", variants.single().url)
+    }
+
+    @Test
+    fun parsesQualityVariantsAndSubtitleLanguages() {
+        val variants = HdRezkaCatalogClient.parseQualityVariants(
+            "[1080p]https://cdn.example/movie_1080.m3u8,[720p]https://cdn.example/movie_720.m3u8"
+        )
+        assertEquals(listOf("1080p", "720p"), variants.map { it.qualityLabel })
+        val subtitles = HdRezkaCatalogClient.parseSubtitles(
+            JSONObject()
+                .put("subtitle", "[ru]https://cdn.example/ru.vtt,[en]https://cdn.example/en.srt")
+                .put("subtitle_lns", JSONObject().put("ru", "Русский").put("en", "English"))
+                .put("subtitle_def", "ru")
+        )
+        assertEquals(2, subtitles.size)
+        assertEquals("Русский", subtitles.first().label)
+        assertEquals("application/x-subrip", subtitles.last().mimeType)
+    }
+
+    @Test
+    fun rejectsObfuscatedAndCleartextUrlsRatherThanGuessing() {
+        assertTrue(HdRezkaCatalogClient.parseQualityVariants("#2opaque").isEmpty())
+        assertTrue(HdRezkaCatalogClient.parseQualityVariants("http://cdn.example/video.mp4").isEmpty())
+        assertFalse(HdRezkaCatalogClient.parseQualityVariants("https://cdn.example/video.mp4").isEmpty())
+    }
+
+    @Test
+    fun streamSourcesCarryOnlyRefererAndNeverAccountCookie() {
+        val entry = HdRezkaSearchEntry("Демо", "https://hdrezka.example/film/demo.html", null, "")
+        val results = HdRezkaCatalogClient.parseStreamSources(
+            JSONObject().put("url", "[720p]https://cdn.example/video.mp4"),
+            entry,
+            HdRezkaTranslator("7", "Русская озвучка"),
+            "https://hdrezka.example/film/demo.html",
+            null
+        )
+        assertEquals(1, results.size)
+        assertEquals("Русская озвучка", results.single().translationName)
+        assertEquals(
+            mapOf(
+                "Referer" to "https://hdrezka.example/film/demo.html",
+                "User-Agent" to "Jacket-Android/2.7 (Android media client)"
+            ),
+            results.single().requestHeaders
+        )
+        assertNull(results.single().magnetUri)
+    }
+}
+
+END FILE: app/src/test/java/app/jacket/mobile/data/HdRezkaCatalogClientTest.kt
