@@ -1094,7 +1094,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             try {
                 settings.saveHdRezkaSettings(config.copy(cookie = "", connected = false))
                 val result = withContext(Dispatchers.IO) {
-                    HdRezkaLoginClient.login(config.mirror, config.login, config.password)
+                    HdRezkaLoginClient.login(
+                        config.mirror, config.login, config.password, config.allowCustomMirror
+                    )
                 }
                 val saved = config.copy(
                     mirror = result.activeMirror,
@@ -1115,14 +1117,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun checkHdRezkaMirror(mirror: String) {
+    fun checkHdRezkaMirror(mirror: String, allowCustomMirror: Boolean = false) {
         hdRezkaLoginJob?.cancel()
         hdRezkaLoginJob = viewModelScope.launch {
             _isHdRezkaBusy.value = true
             _hdRezkaStatus.value = "Проверяем доступность зеркала HDRezka…"
             try {
                 val active = withContext(Dispatchers.IO) {
-                    HdRezkaLoginClient.probeMirror(mirror)
+                    HdRezkaLoginClient.probeMirror(mirror, allowCustomMirror)
                 }
                 val current = settings.hdRezkaSettings()
                 settings.saveHdRezkaSettings(current.copy(mirror = active))
