@@ -26,6 +26,20 @@ class ReleaseHeuristicsTest {
     }
 
     @Test
+    fun extractsDimensionsAudioChannelsLanguagesSubtitlesAndBitrate() {
+        val release = ReleaseHeuristics.classify(
+            "Resident.Evil.2026.1920x800.5.1.WEB-DL.RUS-MovieDalen.UKR-LeDoyen.ENG.SUB.10.55 Mbps"
+        )
+        assertEquals("FHD", release.quality)
+        assertEquals("1920x800", release.resolutionDimensions)
+        assertEquals("5.1", release.audioChannels)
+        assertTrue(release.audioLanguages.contains("RUS"))
+        assertTrue(release.audioLanguages.contains("UKR"))
+        assertTrue(release.subtitleLanguages.contains("ENG"))
+        assertEquals("10.55 Мбит/с", release.bitrate)
+    }
+
+    @Test
     fun doesNotInventMetadataForPlainTitle() {
         val release = ReleaseHeuristics.classify("A Simple Film Title")
         assertEquals(null, release.quality)

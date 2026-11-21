@@ -190,45 +190,60 @@ class LocalStreamServer(
                 val start = response.start
                 val end = response.endInclusive
                 val out = client.getOutputStream()
+                if (method == "HEAD") {
+                    writeHeaders(out, response.statusCode, response.reason, response.headers)
+                    return
+                }
+
+                // Prime the first bytes before committing a 200/206 response.
+                // If the swarm cannot provide the requested piece, the player
+                // receives a retryable HTTP error instead of a truncated success.
+                val firstCount = minOf(STREAM_CHUNK_BYTES, end - start + 1L).toInt()
+                val firstBytes = try {
+                    readChunk(id, fileIndex, start, firstCount)
+                } catch (_: Exception) {
+                    return sendError(
+                        out,
+                        503,
+                        "Service Unavailable",
+                        "Retry-After: 2\r\n"
+                    )
+                }
+
                 writeHeaders(out, response.statusCode, response.reason, response.headers)
-                if (method == "HEAD") return
+                out.write(firstBytes)
+                out.flush()
 
-                var offset = start
+                var offset = start + firstBytes.size
                 while (offset <= end) {
-                    // Keep the first cache miss anchored at the exact byte
-                    // requested by ExoPlayer. This lets the engine prioritize
-                    // the right torrent piece on a seek, not the start of a
-                    // preceding cache-alignment block.
-                    val count = minOf(
-                        STREAM_CHUNK_BYTES,
-                        end - offset + 1L
-                    ).toInt()
+                    val count = minOf(STREAM_CHUNK_BYTES, end - offset + 1L).toInt()
                     if (count <= 0) throw java.io.IOException("Пустой диапазон видеопотока")
-
-                    val key = StreamCacheKey(id, fileIndex, offset)
-                    val cached = runCatching {
-                        streamCache.get(key, count)
-                    }.getOrNull()
-
-                    val bytes = cached?.bytes ?: run {
-                        val file = awaitRange(id, fileIndex, offset, count.toLong())
-                        ByteArray(count).also { buffer ->
-                            java.io.RandomAccessFile(file, "r").use { input ->
-                                input.seek(offset)
-                                input.readFully(buffer)
-                            }
-                            // The verified torrent file remains authoritative.
-                            // A full/failed cache must never prevent playback.
-                            runCatching { streamCache.put(key, buffer) }
-                        }
-                    }
-
+                    val bytes = readChunk(id, fileIndex, offset, count)
                     out.write(bytes)
                     out.flush()
                     offset += bytes.size
                 }
             } catch (_: Exception) {
                 // The player will reconnect on a failed range; do not expose internal file paths.
+            }
+        }
+    }
+
+    /** Loads a bounded byte segment, treating cache failures as cache misses. */
+    private fun readChunk(id: String, fileIndex: Int, offset: Long, count: Int): ByteArray {
+        require(count > 0) { "Пустой диапазон видеопотока" }
+        val key = StreamCacheKey(id, fileIndex, offset)
+        val cached = runCatching { streamCache.get(key, count) }.getOrNull()
+        return cached?.bytes ?: run {
+            val file = awaitRange(id, fileIndex, offset, count.toLong())
+            ByteArray(count).also { buffer ->
+                java.io.RandomAccessFile(file, "r").use { input ->
+                    input.seek(offset)
+                    input.readFully(buffer)
+                }
+                // The verified torrent file remains authoritative. A full or
+                // failed cache must never prevent playback.
+                runCatching { streamCache.put(key, buffer) }
             }
         }
     }

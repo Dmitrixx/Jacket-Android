@@ -12,8 +12,8 @@ android {
         applicationId = "app.jacket.mobile"
         minSdk = 28
         targetSdk = 36
-        versionCode = 11
-        versionName = "2.7.0"
+        versionCode = 12
+        versionName = "2.8.0"
         vectorDrawables { useSupportLibrary = true }
     }
 
@@ -75,6 +75,7 @@ dependencies {
     implementation("org.libtorrent4j:libtorrent4j-android-x86_64:$libtorrentVersion")
 
     testImplementation("junit:junit:4.13.2")
+    testImplementation("org.json:json:20260814")
     testImplementation("net.sf.kxml:kxml2:2.3.0")
     debugImplementation("androidx.compose.ui:ui-tooling")
 }

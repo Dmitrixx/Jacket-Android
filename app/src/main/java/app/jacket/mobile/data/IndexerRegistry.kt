@@ -266,6 +266,7 @@ class IndexerRegistry(
         var leechers: Int? = null
         var peers: Int? = null
         var category: String? = null
+        var publishedDate: String? = null
 
         fun reset() {
             title = ""
@@ -280,6 +281,7 @@ class IndexerRegistry(
             leechers = null
             peers = null
             category = null
+            publishedDate = null
         }
 
         var event = parser.eventType
@@ -309,6 +311,9 @@ class IndexerRegistry(
                         }
                         "size" -> if (inEntry) {
                             size = parser.nextText().trim().toLongOrNull()?.takeIf { it >= 0L }
+                        }
+                        "pubdate", "published", "publishedat", "date" -> if (inEntry) {
+                            publishedDate = parser.nextText().trim().takeIf(String::isNotBlank)?.take(120)
                         }
                         "link" -> if (inEntry) {
                             val href = parser.getAttributeValue(null, "href")
@@ -364,6 +369,7 @@ class IndexerRegistry(
                                     if (parsed != null) size = parsed
                                 }
                                 "category", "categoryid" -> if (!value.isNullOrBlank()) category = value
+                                "pubdate", "publishdate", "published" -> if (!value.isNullOrBlank()) publishedDate = value.take(120)
                             }
                         }
                     }
@@ -392,7 +398,8 @@ class IndexerRegistry(
                                 pageUrl = safePage,
                                 category = category,
                                 indexerId = config.id,
-                                tracker = tracker
+                                tracker = tracker,
+                                publishedDate = publishedDate
                             )
                         }
                         inEntry = false

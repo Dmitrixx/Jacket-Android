@@ -26,11 +26,22 @@ Detail card → IndexerRegistry → magnet / .torrent → TorrentEngine → Loca
 
 No external Jackett or TorrServer process is started or packaged.
 
+## Direct video sources
+
+- Filmix uses the explicitly selected allowlisted HTTPS API host and encrypted device token. Search, post details, account profile and plan-limited quality variants are resolved through Filmix v2.
+- HDRezka uses only the mirror explicitly configured by the user. The client parses the DLE AJAX search response, `post_id`, `initCDN*Events`, translator flags, favorites token and series defaults; AJAX requests use movie flags or resolved season/episode IDs. It decodes the known HDRezka `#h` stream payload locally and resolves quality fallbacks; unknown/rotated encodings fail closed. DLE cookies are sent only to the configured mirror, never to media CDNs. CAPTCHA/Anubis, paywalls, Filmix `#2` manifests and cross-origin redirects are not bypassed.
+- Media3 receives only non-secret `Referer`/`User-Agent` headers and parsed subtitle configurations. Account cookies are never copied into player request headers.
+- The detail-card source picker merges torrents, Filmix, HDRezka and license-gated Internet Archive results, isolates individual provider failures and displays source type/quality/translation metadata.
+
+## Video source registry
+
+`MediaSourceCatalog` preserves the ten requested provider IDs, priorities, media types, auth requirements and 4K flags. Filmix and HDRezka now have direct adapters: Filmix uses its selected HTTPS API and device token; HDRezka uses only the mirror explicitly entered by the user. The other eight descriptors remain catalog metadata with no active adapter. Provider availability still depends on the user's network, account, source mirror and the site's supported stream format.
+
 ## Catalog flow
 
 - `MediaCatalogClient` reads Internet Archive catalog metadata directly.
 - Optional TMDB bearer token supplies movie/series metadata, artwork, season lists and episode lists. TMDB is a metadata provider, not a video source.
-- For an episode, the query builder combines the series title, the `SxxExx` code and episode title.
+- Torrent indexer searches include the `SxxExx` code and episode title. Filmix and HDRezka search the series title/year, then resolve the selected season/episode through the provider's own catalogue/player response.
 - Internet Archive media playback/download actions are offered only when item metadata carries a recognized Creative Commons / public-domain license URL. This is a conservative gate, not a full license audit.
 - `PosterDiskCache` keeps bounded public artwork in memory and app cache; cache files contain no credentials.
 
@@ -45,6 +56,10 @@ No external Jackett or TorrServer process is started or packaged.
 - Results are deduplicated by magnet, download URL, stream URL, then provider result ID; sorting is seeders descending, then release title.
 - Per-indexer test and probe search are separate operations. Test-all also runs with a four-worker cap.
 - Quality, codec, HDR/DV and audio/dubbing tags are title-only heuristics. Client filters do not repeat the network request.
+- `ReleaseHeuristics` also derives resolution dimensions, audio channel count, recognizable language/subtitle markers and bitrate from release titles. These labels are best-effort heuristics, not verified track metadata.
+- `IndexerRegistry` preserves Torznab/RSS publication dates for release cards when a feed provides `pubDate` / `published`.
+- `JackettIndexerClient` uses Jackett's native REST endpoints: `GET /api/v2.0/indexers` for the public/private/configured catalogue, `GET /api/v2.0/indexers/{id}/config` for dynamic setup fields and `POST` to the same config route to save them. The API key is retained for Torznab queries; a separate optional dashboard session Cookie is used for authenticated configuration calls. The Cookie is encrypted by `MediaSettingsStore` and sent only to the selected Jackett origin. Setup fields cover text/password, booleans, selects, checkboxes, tags and safe text-only information fields. Per-indexer searches use the existing Torznab parser; `.torrent` downloads are queued in Jacket.
+- `.torrent` download actions from the indexer cabinet enqueue the file in Jacket's foreground torrent service. Release results remain native `SourceCard` items and do not navigate to the browser to display the list.
 - JSON import/export includes non-secret configuration only. Credentials must be entered again after import.
 
 The registry intentionally does not include tracker-specific HTML parsers or solve CAPTCHA, anti-bot checks or interactive 2FA. A user may supply a session cookie if the indexer's rules allow it.
@@ -76,9 +91,9 @@ The registry intentionally does not include tracker-specific HTML parsers or sol
 
 ### Queue and recovery
 
-- Queue serialization uses `TorrentQueueCodec`, independent from the native library. Older JSON queue records are migrated.
-- Queue metadata includes ID, title, magnet or private `.torrent` path, and selected file index.
-- Native fast-resume data is written under `filesDir/torrent-resume` using `AtomicFile`.
+- Queue serialization uses `TorrentQueueCodec`, independent from the native library. V2 decoding skips malformed individual rows instead of losing the whole queue; legacy JSON migration is bounded, derives magnet IDs from their URI, validates metainfo paths, and deduplicates canonical IDs before writing V2. Encoded queue data is capped at 8 MiB.
+- Queue metadata includes ID, title, magnet or private `.torrent` path, and selected file index. Queue and pause-state mutations use synchronous SharedPreferences commits on the service IO dispatcher before native session mutations are acknowledged.
+- Native fast-resume data is written under `filesDir/torrent-resume` using `AtomicFile`. Restore uses `AtomicFile.openRead()` (not direct `File.readBytes()`) so an interrupted write rolls back to the last committed backup. Checkpoint reads, writes and deletes are serialized on the engine monitor; oversized or invalid snapshots are removed together with stale backups, then the durable queue falls back to the saved metainfo or magnet URI.
 - Resume data is requested periodically (about every 30 seconds) and after pause; queue entries provide a re-add fallback if resume data is not yet present.
 - The service restores queued items on startup and retries pending tasks. Playback positions are persisted locally at short intervals and keyed by torrent hash/file or URL hash.
 - “Remove from queue” does not delete downloaded files. File deletion is explicit and path-checked.
@@ -110,3 +125,13 @@ Resume data is asynchronous and periodic: abruptly killing the process can lose 
 ## Automated tests
 
 The JVM suite includes XML fixtures for RSS/Torznab, release-name heuristics, queue codec round-trips, Range parsing / response headers, byte-range-to-piece planning, forward-window limits, disk-cache LRU eviction, overlapping-range cache hits and route / Host policy checks. JNI torrent streaming, actual file-piece availability, Android foreground-service behavior and TV remote navigation require device-level acceptance tests.
+
+
+## Consolidated source, stream and navigation safeguards
+
+- Built-in HTML tracker fetches validate the initial HTTPS URL, each manual redirect and every resolved detail/download URL. Cookies are attached only to the original tracker host. This hostname policy does not resolve and pin DNS addresses, so DNS rebinding remains a limitation.
+- IPv4 and IPv6 loopback, private, link-local, multicast and documentation ranges are rejected for public tracker requests; user-managed local Jackett endpoints continue to use their separate local-network policy.
+- Tracker searches publish completed providers in completion order under one aggregate deadline. Detail-page resolution is separately bounded; a newer search generation invalidates stale result and loading-state callbacks.
+- The loopback media server primes the first requested byte segment before sending successful 200/206 headers. A temporarily unavailable first piece produces a sanitized retryable 503 with Retry-After.
+- Compose saveable-state providers retain the main shell, detail/settings/download/player screens and each home/movies/series/search/library tab. Physical Android TV remote acceptance remains required.
+- Filmix and HDRezka integrations use HTTPS and supported request/response formats. Unsupported or rotated player payloads fail closed. No CAPTCHA, Cloudflare/Anubis, DRM, paywall or regional restriction bypass is implemented.

@@ -100,7 +100,8 @@ fun JacketPlayerScreen(
     progressKey: String? = null,
     initialPositionMs: Long = 0L,
     subtitles: List<PlaybackSubtitle> = emptyList(),
-    onBack: () -> Unit
+    onBack: () -> Unit,
+    httpHeaders: Map<String, String> = emptyMap()
 ) {
     val context = LocalContext.current
     val activity = context as? Activity
@@ -125,8 +126,8 @@ fun JacketPlayerScreen(
     val playFocus = remember(streamUrl) { FocusRequester() }
     var playerView by remember(streamUrl) { mutableStateOf<PlayerView?>(null) }
 
-    val player = remember(streamUrl, subtitles) {
-        buildPlayer(context, streamUrl, subtitles, initialPositionMs)
+    val player = remember(streamUrl, subtitles, httpHeaders) {
+        buildPlayer(context, streamUrl, subtitles, initialPositionMs, httpHeaders)
     }
 
     fun reveal() {
@@ -505,7 +506,8 @@ private fun buildPlayer(
     context: Context,
     streamUrl: String,
     subtitles: List<PlaybackSubtitle>,
-    initialPositionMs: Long
+    initialPositionMs: Long,
+    httpHeaders: Map<String, String>
 ): ExoPlayer {
     val subtitleConfigurations = subtitles.map { subtitle ->
         MediaItem.SubtitleConfiguration.Builder(Uri.parse(subtitle.url))
@@ -517,9 +519,19 @@ private fun buildPlayer(
     }
     val streamUri = Uri.parse(streamUrl)
     val isLoopbackStream = streamUri.host == "127.0.0.1" || streamUri.host == "localhost"
+    // Only forward the two source headers used by supported providers. Reject CR/LF
+    // to prevent header injection, and never forward cookies or authorization cross-origin.
+    val safeHeaders = httpHeaders.filter { (name, value) ->
+        (name.equals("Referer", ignoreCase = true) ||
+            name.equals("User-Agent", ignoreCase = true)) &&
+            value.isNotBlank() && !value.contains('\r') && !value.contains('\n')
+    }
     val dataSourceFactory = DefaultHttpDataSource.Factory()
         .setConnectTimeoutMs(12_000)
         .setReadTimeoutMs(if (isLoopbackStream) 120_000 else 30_000)
+        .apply {
+            if (safeHeaders.isNotEmpty()) setDefaultRequestProperties(safeHeaders)
+        }
     val mediaSourceFactory = DefaultMediaSourceFactory(context).setDataSourceFactory(dataSourceFactory)
     return ExoPlayer.Builder(context)
         .setMediaSourceFactory(mediaSourceFactory)
