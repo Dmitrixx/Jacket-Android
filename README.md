@@ -1,4 +1,4 @@
-# Jacket — Android media center 2.6.0
+# Jacket — Android media center 2.7.0
 
 Jacket is a single Android application for phones, tablets and Android TV / Google TV. It combines a poster-based media catalog, a user-configurable indexer cabinet, an integrated BitTorrent engine and a loopback HTTP media server.
 
@@ -14,7 +14,7 @@ The project is under active development. CI verifies JVM unit tests and APK asse
 - **My library** — favorites and recently opened cards.
 - **Sources** — manual search, indexer management, connectivity tests, source errors and quality filters.
 - **Downloads** — magnet and `.torrent` tasks, file list, selected-file priorities, pause/resume, speed and progress.
-- **Player** — Media3 / ExoPlayer, seek controls, audio/subtitle track selection, downloaded sidecar subtitles, external-player handoff, progressive video, HLS and DASH playback.
+- **Player** — fullscreen Media3 / ExoPlayer for phone and Android TV: overlay controls, 10-second seek, speed, fit/fill/zoom, sleep timer, audio and subtitle selection, picture-in-picture, sidecar subtitles, external-player handoff, progressive video, HLS and DASH.
 - **Settings** — LAMPA-inspired control center for Filmix device-code pairing, HDRezka account/session, built-in tracker shortcuts, torrent indexers, catalog metadata and network limits.
 
 ## Filmix and HDRezka accounts
@@ -100,13 +100,13 @@ Downloaded files remain in the app-specific `Downloads` directory. “Remove fro
 - Direct Internet Archive video playback remains HTTPS and is offered only when the source metadata contains a recognized Creative Commons / public-domain license URL. Review the source item's actual terms.
 - Playback position is stored locally every few seconds; a torrent position is keyed by infohash and file index, and a direct stream position by a non-reversible URL hash. Positions at or beyond about 90% of a known duration are cleared.
 - Audio and text tracks can be selected from those available in the media. A matching `.srt` / `.vtt` file already fully downloaded in the same torrent can be offered as a sidecar subtitle.
-- The player includes 10-second seek controls, D-pad left/right and play/pause, keeps the display awake and can hand the loopback URL to an external player.
+- The player is fullscreen. Overlay controls hide during playback. D-pad left/right seeks 10 seconds while the overlay is hidden; Back dismisses the overlay before leaving the player. Speed (0.5×–2×) and fit / fill / zoom are remembered on the device. A sleep timer can stop playback after 15, 30, 45 or 60 minutes. Phones can enter picture-in-picture. The screen stays awake and can hand the loopback URL to an external player.
 
 While watching a torrent, the service uses foreground-service type `mediaPlayback`. Background downloading uses `dataSync`. Android 15+ applies a cumulative time limit to `dataSync`; when that limit is reached without active playback, Jacket saves resume data and stops the background session. **Uninterrupted all-day downloading or seeding is not promised.** Reopen Jacket to restore the queued work.
 
 ## Android TV
 
-The same APK declares Leanback support as optional and touchscreen as not required. Android TV / Google TV has a Leanback launcher entry and banner, a navigation rail, larger poster cards, visible focus states and D-pad navigation. The player handles Back, play/pause and left/right seeking.
+The same APK declares Leanback support as optional and touchscreen as not required. Android TV / Google TV has a Leanback launcher entry and banner, a navigation rail, larger poster cards, visible focus states and D-pad navigation. The fullscreen player handles Back, play/pause and left/right seeking without requiring a touchscreen.
 
 ## Requirements and build
 
@@ -131,6 +131,7 @@ The JVM test suite covers:
 - Queue serialization and restoration independent of JNI.
 - Range parsing and 200 / 206 response headers.
 - Local-stream route and Host validation.
+- Player chrome: speed cycle, sleep timer, picture fit and clock formatting.
 
 These tests do not replace manual streaming tests on physical Android 9+, Android 14/15 and Android TV devices. In particular, verify a real torrent's piece availability, container seek behavior and process recovery on hardware.
 

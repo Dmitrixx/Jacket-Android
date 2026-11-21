@@ -1,11 +1,14 @@
 # Changelog
 
-## Next
+## 2.7.0
 
-- Avoid buffering the full HDRezka landing page during mirror discovery and login; only a bounded preview is read when checking for browser challenges.
-- Align Filmix device authorization with the known-compatible Android API fingerprint and report per-host HTTPS failures without exposing request parameters.
-- Make torrent search explicit on the movie detail card, automatically search enabled in-app trackers, and offer an opt-in way to add tracker shortcuts when none are configured.
-
+- Fullscreen cinema player for phone and Android TV. Controls sit on top of the video and hide while playback continues.
+- D-pad left/right seeks by 10 seconds when the overlay is hidden. Back hides the overlay first, then leaves the player. Center and media keys play and pause.
+- Playback speed from 0.5× to 2×, picture fit / fill / zoom, and a sleep timer at 15, 30, 45 and 60 minutes. Speed and fit are remembered on the device.
+- Phone picture-in-picture so a title can stay on screen after leaving Jacket. The player keeps the activity across rotation and PiP.
+- Seek bar, elapsed time and remaining time in the overlay. Tap the left or right side of a hidden player to jump 10 seconds.
+- Continue watching now shows the remaining time from the saved position.
+- Includes the previously unreleased fixes already on main: bounded HDRezka page preview, Filmix device-authorization diagnostics, and explicit in-app torrent search on movie and episode cards.
 
 ## 2.6.0
 

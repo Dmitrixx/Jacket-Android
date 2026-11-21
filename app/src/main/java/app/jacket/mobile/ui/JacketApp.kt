@@ -647,9 +647,8 @@ private fun ContinueWatchingShelf(
                             LinearProgressIndicator(progress = progress, modifier = Modifier.fillMaxWidth().height(5.dp),
                                 color = MaterialTheme.colorScheme.primary, trackColor = Color(0xFF465163))
                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                val left = (session.durationMs - session.positionMs).coerceAtLeast(0L) / 60_000L
-                                Text(if (session.durationMs > 0L) "Осталось ~${left / 60} ч ${left % 60} мин"
-                                    else "Продолжить с сохранённой позиции",
+                                val leftLabel = PlaybackChrome.remainingPhrase(session.positionMs, session.durationMs)
+                                Text(leftLabel,
                                     Modifier.weight(1f), style = MaterialTheme.typography.labelSmall,
                                     color = Color(0xFFD0D7E2), maxLines = 1)
                                 IconButton(onClick = { onRemove(session) }) {

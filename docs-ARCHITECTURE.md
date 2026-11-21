@@ -1,4 +1,4 @@
-# Jacket 2.6.0 — architecture
+# Jacket 2.7.0 — architecture
 
 ## Runtime layout
 
@@ -97,7 +97,7 @@ Resume data is asynchronous and periodic: abruptly killing the process can lose 
 - One application module and one APK for phone, tablet and Android TV.
 - Leanback launcher category and banner are provided; touchscreen is optional.
 - Phone uses bottom navigation; television uses a navigation rail.
-- Cards have larger TV artwork and visible focus borders; the player maps D-pad left/right to 10-second seeking and center/play-pause to playback.
+- Cards have larger TV artwork and visible focus borders. The player is fullscreen on phone and television: overlay controls auto-hide, D-pad left/right seeks 10 seconds while the chrome is hidden, and Back dismisses the chrome before exiting. Speed and picture-fit choices are stored in app-private preferences. Phones can enter picture-in-picture; the activity handles the corresponding configuration changes so playback is not recreated.
 - Dialogs, list rows and text fields remain normal Compose focus targets and should be checked with physical remotes.
 
 ## Local storage and secrets
