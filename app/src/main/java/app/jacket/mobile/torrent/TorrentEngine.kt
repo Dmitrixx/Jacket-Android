@@ -75,6 +75,7 @@ data class TorrentStreamTarget(
 /** Owns the single libtorrent session. JNI calls are kept on the service IO dispatcher. */
 object TorrentEngine {
     @Volatile private var manager: SessionManager? = null
+    @Volatile private var stopping = false
     @Volatile private var appContext: Context? = null
     @Volatile private var alertListener: AlertListener? = null
 
@@ -92,9 +93,11 @@ object TorrentEngine {
     fun start(context: Context) {
         appContext = context.applicationContext
         if (manager?.isRunning == true) {
+            check(!stopping) { "Торрент-сессия завершает работу" }
             restorePending(context)
             return
         }
+        stopping = false
 
         val instance = SessionManager()
         val listener = object : AlertListener {
@@ -531,6 +534,7 @@ object TorrentEngine {
     /** Wait until every piece intersecting the requested file byte range is complete on disk. */
     fun awaitRange(id: String, fileIndex: Int, start: Long, length: Long, timeoutPerPieceMs: Long = 25_000L): File {
         require(start >= 0L && length > 0L)
+        check(!stopping) { "Торрент-сессия завершает работу" }
         val handle = findHandle(id) ?: throw IllegalStateException("Торрент не найден")
         require(handle.isValid) { "Торрент больше не активен" }
         val info = handle.torrentFile() ?: throw IllegalStateException("Ожидаются метаданные торрента")
@@ -562,6 +566,7 @@ object TorrentEngine {
             val beganNanos = System.nanoTime()
             val timeoutNanos = TimeUnit.MILLISECONDS.toNanos(timeoutPerPieceMs.coerceAtLeast(1L))
             while (true) {
+                check(!stopping) { "Торрент-сессия завершает работу" }
                 if (!handle.isValid) throw IllegalStateException("Торрент больше не активен")
                 if (handle.havePiece(piece)) break
                 if (queueStore.isPaused(id)) throw IllegalStateException("Загрузка приостановлена")
@@ -629,12 +634,17 @@ object TorrentEngine {
     /** Wait for native save-resume alerts before destroying libtorrent's session. */
     suspend fun stop(timeoutMs: Long = RESUME_SAVE_SHUTDOWN_TIMEOUT_MS): Boolean {
         val current = manager ?: return true
+        // Wake any HTTP Range workers before the native session disappears; they must not
+        // remain parked on a condition signal after the service has stopped its engine.
+        stopping = true
+        pieceCompletionSignal.signal()
         val saved = saveAllResumeDataAndAwait(timeoutMs)
         current.removeListener(alertListener)
         current.stop()
         manager = null
         alertListener = null
         localStreamPort = null
+        activeStreamWindows.clear()
         _snapshots.value = emptyList()
         return saved
     }
