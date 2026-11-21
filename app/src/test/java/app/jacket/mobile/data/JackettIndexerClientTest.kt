@@ -5,8 +5,92 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import com.sun.net.httpserver.HttpServer
+import java.io.IOException
+import java.net.InetSocketAddress
 
 class JackettIndexerClientTest {
+
+    @Test
+    fun buildsDashboardLoginUrlAndPreservesReverseProxyPrefix() {
+        assertEquals(
+            "https://seedbox.example/wp-content/Jackett/UI/Dashboard",
+            JackettIndexerClient.buildDashboardLoginUrl("https://seedbox.example/wp-content/Jackett")
+        )
+    }
+
+    @Test
+    fun extractsOnlyNonEmptyJackettSessionCookie() {
+        val headers = mapOf(
+            "Set-Cookie" to listOf(
+                "OtherCookie=ignored; Path=/",
+                "Jackett=session-123; Path=/; HttpOnly"
+            )
+        )
+        assertEquals("Jackett=session-123", JackettIndexerClient.extractDashboardCookie(headers))
+        assertEquals(
+            null,
+            JackettIndexerClient.extractDashboardCookie(
+                mapOf("Set-Cookie" to listOf("OtherCookie=value; Path=/", "Jackett=; Path=/"))
+            )
+        )
+    }
+
+    @Test
+    fun postsUrlEncodedPasswordAndReturnsOnlyJackettCookie() {
+        val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+        var requestMethod = ""
+        var requestBody = ""
+        server.createContext("/reverse/Jackett/UI/Dashboard") { exchange ->
+            requestMethod = exchange.requestMethod
+            requestBody = exchange.requestBody.use { it.readBytes().toString(Charsets.UTF_8) }
+            exchange.responseHeaders.add("Set-Cookie", "OtherCookie=ignored; Path=/")
+            exchange.responseHeaders.add("Set-Cookie", "Jackett=session-123; Path=/; HttpOnly")
+            exchange.responseHeaders.add("Location", "/reverse/Jackett/UI/Dashboard")
+            exchange.sendResponseHeaders(302, -1)
+            exchange.close()
+        }
+        server.start()
+        try {
+            val base = "http://127.0.0.1:${server.address.port}/reverse/Jackett"
+            val cookie = JackettIndexerClient.loginDashboardCookie(base, "admin pass&word")
+
+            assertEquals("Jackett=session-123", cookie)
+            assertEquals("POST", requestMethod)
+            assertEquals("password=admin+pass%26word", requestBody)
+        } finally {
+            server.stop(0)
+        }
+    }
+
+    @Test(expected = IOException::class)
+    fun rejectsRedirectWithoutJackettSessionCookie() {
+        val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+        server.createContext("/Jackett/UI/Dashboard") { exchange ->
+            exchange.responseHeaders.add("Set-Cookie", "OtherCookie=ignored; Path=/")
+            exchange.responseHeaders.add("Location", "/Jackett/UI/Dashboard")
+            exchange.sendResponseHeaders(302, -1)
+            exchange.close()
+        }
+        server.start()
+        try {
+            JackettIndexerClient.loginDashboardCookie(
+                "http://127.0.0.1:${server.address.port}/Jackett",
+                "wrong-password"
+            )
+        } finally {
+            server.stop(0)
+        }
+    }
+
+    @Test(expected = IllegalArgumentException::class)
+    fun rejectsAdminPasswordOverConfiguredLimit() {
+        JackettIndexerClient.loginDashboardCookie(
+            "http://127.0.0.1:9117",
+            "x".repeat(513)
+        )
+    }
+
     @Test
     fun buildsNativeCatalogueEndpointWithoutLosingReverseProxyPath() {
         assertEquals(
