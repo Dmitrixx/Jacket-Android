@@ -21,8 +21,16 @@ object ReleaseHeuristics {
         "WEB-DL" to Regex("""(?i)web[ ._-]?dl"""),
         "WEBRip" to Regex("""(?i)web[ ._-]?rip"""),
         "BluRay" to Regex("""(?i)blu[ ._-]?ray|bdrip|brrip"""),
-        "HDR" to Regex("""(?i)(?<![a-z0-9])hdr(?:10\+?)?(?![a-z0-9])"""),
-        "DV" to Regex("""(?i)(?<![a-z0-9])(?:dolby[ ._-]?vision|dv)(?![a-z0-9])""")
+        "CAMRip" to Regex("""(?i)(?<![a-z0-9])(?:cam(?:rip)?|cam[ ._-]?r)?(?![a-z0-9])"""),
+        "TeleSync" to Regex("""(?i)(?<![a-z0-9])(?:ts|telesync|tele[ ._-]?sync)(?![a-z0-9])"""),
+        "TeleCine" to Regex("""(?i)(?<![a-z0-9])(?:tc|telecine)(?![a-z0-9])"""),
+        "SCR" to Regex("""(?i)(?<![a-z0-9])(?:scr|screener)(?![a-z0-9])"""),
+        "Freeleech" to Regex("""(?i)(?<![a-z0-9])(?:freeleech|free[ ._-]?leech)(?![a-z0-9])"""),
+        "10-bit" to Regex("""(?i)(?<![a-z0-9])(?:10[ ._-]?bit|hi10p)(?![a-z0-9])"""),
+        "HLG" to Regex("""(?i)(?<![a-z0-9])hlg(?![a-z0-9])"""),
+        "HDR10+" to Regex("""(?i)(?<![a-z0-9])hdr10\+(?![a-z0-9])"""),
+        "HDR" to Regex("""(?i)(?<![a-z0-9])hdr(?:10)?(?![a-z0-9])"""),
+        "DV" to Regex("""(?i)(?<![a-z0-9])(?:dolby[ ._-]?vision|dv)(?![a-z0-9)""")
     )
 
     private val dimensionPattern = Regex(
