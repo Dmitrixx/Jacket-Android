@@ -139,29 +139,42 @@ object TorrentEngine {
     private fun restoreItem(context: Context, item: QueuedTorrent) {
         val current = manager ?: return
         val resumeFile = resumeFile(context, item.id)
-        if (resumeFile.isFile && resumeFile.length() > 0L) {
-            try {
-                val payload = ResumeDataEnvelope.decode(resumeFile.readBytes())
-                val parseError = error_code()
-                val raw = libtorrent.read_resume_data_ex(Vectors.bytes2byte_vector(payload), parseError)
-                require(parseError.value() == 0) {
-                    "Не удалось прочитать fast-resume: ${parseError.message()}"
+        val atomicResumeFile = AtomicFile(resumeFile)
+        try {
+            // openRead() is essential: it rolls back an interrupted AtomicFile write
+            // from the last committed backup. Reading File.readBytes() directly
+            // bypasses that recovery path and can discard a valid checkpoint.
+            val storedResumeData = atomicResumeFile.openRead().use { input ->
+                require(resumeFile.length() in 1..ResumeDataEnvelope.MAX_STORED_BYTES) {
+                    "Resume data отсутствует или слишком велик"
                 }
-                val restoredHash = raw.getInfo_hashes().get_best().to_hex().lowercase()
-                require(restoredHash == item.id.lowercase()) {
-                    "Fast-resume относится к другой раздаче"
-                }
-                raw.setSave_path(downloadDirectory(context).absolutePath)
-                if (TorrentQueueStore(context).isPaused(item.id)) {
-                    raw.setFlags(raw.getFlags().or_(TorrentFlags.PAUSED))
-                }
-                current.swig().async_add_torrent(raw)
-                errors.remove(item.id)
-                return
-            } catch (error: Exception) {
-                resumeFile.delete()
-                errors[item.id] = "Сохранённое состояние повреждено. Проверяем раздачу заново."
+                input.readBytes()
             }
+            val payload = ResumeDataEnvelope.decode(storedResumeData)
+            val parseError = error_code()
+            val raw = libtorrent.read_resume_data_ex(Vectors.bytes2byte_vector(payload), parseError)
+            require(parseError.value() == 0) {
+                "Не удалось прочитать fast-resume: ${parseError.message()}"
+            }
+            val restoredHash = raw.getInfo_hashes().get_best().to_hex().lowercase()
+            require(restoredHash == item.id.lowercase()) {
+                "Fast-resume относится к другой раздаче"
+            }
+            raw.setSave_path(downloadDirectory(context).absolutePath)
+            if (TorrentQueueStore(context).isPaused(item.id)) {
+                raw.setFlags(raw.getFlags().or_(TorrentFlags.PAUSED))
+            }
+            current.swig().async_add_torrent(raw)
+            errors.remove(item.id)
+            return
+        } catch (_: java.io.FileNotFoundException) {
+            // No checkpoint exists yet; the durable queue entry below is enough
+            // to rebuild the torrent from its private metainfo or magnet URI.
+        } catch (error: Exception) {
+            // Delete through AtomicFile so a stale .bak cannot resurrect a
+            // checkpoint already rejected by its checksum, parser or info-hash.
+            atomicResumeFile.delete()
+            errors[item.id] = "Сохранённое состояние повреждено. Проверяем раздачу заново."
         }
 
         val torrentInfo = item.torrentPath
@@ -338,7 +351,7 @@ object TorrentEngine {
         clearStreamPriorities(id)
         handle?.let { manager?.remove(it) }
         TorrentQueueStore(context).remove(id)
-        resumeFile(context, id).delete()
+        AtomicFile(resumeFile(context, id)).delete()
         refresh()
     }
 
@@ -653,6 +666,7 @@ object TorrentEngine {
         return ticket
     }
 
+    @Synchronized
     private fun saveResumeAlert(alert: SaveResumeDataAlert) {
         runCatching {
             val id = alert.handle().infoHash().toHex().lowercase()
@@ -742,6 +756,7 @@ internal object ResumeDataEnvelope {
     private val MAGIC = "JACKETR1".toByteArray(Charsets.US_ASCII)
     private const val HEADER_BYTES = 16
     private const val MAX_PAYLOAD_BYTES = 64 * 1024 * 1024
+    internal const val MAX_STORED_BYTES = MAX_PAYLOAD_BYTES + HEADER_BYTES
 
     fun encode(payload: ByteArray): ByteArray {
         require(payload.isNotEmpty() && payload.size <= MAX_PAYLOAD_BYTES) { "Недопустимый размер resume data" }

@@ -12,18 +12,22 @@ The project is under active development. CI verifies JVM unit tests and APK asse
 - **Search** — catalog search with a short debounce; configurable website-search shortcuts open the matching query in the external browser.
 - **Series details** — TMDB seasons and episode lists; an episode search adds its `SxxExx` code to the indexer query.
 - **My library** — favorites and recently opened cards.
-- **Sources** — manual search, indexer management, connectivity tests, source errors and quality filters.
+- **Sources** — native Jackett indexer catalogue, per-tracker search for configured indexers, direct RSS/Torznab connectors, rich release cards and in-app `.torrent` queue actions. Unsupported video services are shown as not connected until a verified adapter exists.
 - **Downloads** — magnet and `.torrent` tasks, file list, selected-file priorities, pause/resume, speed and progress.
 - **Player** — Media3 / ExoPlayer, seek controls, audio/subtitle track selection, downloaded sidecar subtitles, external-player handoff, progressive video, HLS and DASH playback.
 - **Settings** — LAMPA-inspired control center for Filmix device-code pairing, HDRezka account/session, built-in tracker shortcuts, torrent indexers, catalog metadata and network limits.
 
+## Video source catalogue
+
+The in-app source registry preserves the requested priority order for HDRezka, Filmix, ColdFilm, Baskino, Kinogo, VideoCDN, Collaps, Kinobase, CDNMovies and Lordfilm. Filmix and HDRezka have direct search/player adapters; the other eight descriptors remain unconnected until a compatible adapter is verified. Connector status is shown explicitly in the UI.
+
 ## Filmix and HDRezka accounts
 
-- **Filmix** uses a device-code flow: Jacket requests a short-lived code, the user confirms it on the Filmix device page, and the app polls for activation. The permanent device token is encrypted using Android Keystore. No Filmix password is requested.
-- **HDRezka** has HTTPS mirror, email/login, password and manual Cookie-session fields. The app attempts the normal site sign-in and saves returned cookies encrypted using Android Keystore. If a mirror presents CAPTCHA, Cloudflare or an interactive browser challenge, Jacket stops and does not attempt to bypass it; a session cookie can be entered manually after signing in through the user's regular browser.
+- **Filmix** uses a device-code flow against the documented HTTPS API host: Jacket requests a short-lived code, the user confirms it on the Filmix device page, and the app polls for activation. The permanent device token is encrypted using Android Keystore. No Filmix password is requested. Undocumented hosts and cleartext HTTP fallback are not used.
+- **HDRezka** has an explicit HTTPS source field, email/login, password and manual Cookie-session fields. Login responses are inspected through a bounded preview so large HTML pages do not cause a false oversized-response error. The app does not choose or rotate mirrors automatically, and it stops on CAPTCHA, Cloudflare or interactive challenges.
 - Credentials and cookies stay on the device and are not included in diagnostics or tracker exports.
 
-These account screens manage authentication state. They do not claim universal playback support for arbitrary protected HTML player pages; direct media playback continues to require a source-published direct URL or a supported feed.
+The Filmix and HDRezka adapters resolve only the providers' known search/player responses into HTTPS media URLs. This is not universal HTML player extraction: unknown or changed stream formats fail closed, and Jacket does not bypass DRM, paywalls, CAPTCHA/Anubis or regional restrictions.
 
 ## Built-in tracker shortcuts
 
@@ -35,7 +39,8 @@ Add user-owned endpoints:
 
 - RSS / Atom feeds and Torznab / Newznab-compatible endpoints over HTTPS.
 - HTTP endpoints only when they target a private / loopback / link-local IP or a local DNS suffix such as `.local` or `.lan`; this is intended for a Jackett server on your own network.
-- An optional Jackett setup card with server address, API key, tracker filter (`all` by default), connection test and disconnect. Jacket probes Jackett with `t=caps`, then searches its selected tracker set. Jackett remains external and is never installed or bundled.
+- A native Jackett REST catalogue using `GET /api/v2.0/indexers`, showing public/private type, language, categories, configured status and source links. Configured trackers can be tested and searched individually; their releases remain native Jacket cards and magnet/`.torrent` actions use Jacket's own queue.
+- Dynamic per-indexer setup forms use Jackett's `GET/POST /api/v2.0/indexers/{id}/config` endpoints. The API key is used for Torznab search; a separate optional dashboard session Cookie is used only for authenticated setup operations. The Cookie is encrypted at rest and sent only to the configured Jackett host. If the dashboard does not require login, the Cookie can be left blank.
 - API key, HTTP Basic username/password, or a manually supplied session cookie.
 - Categories, tags, Freeleech flag, sort field and sort order.
 - Enable/disable, edit, individual test, test all and a per-indexer probe search.
@@ -54,7 +59,7 @@ Search templates include `{query}`; `{apikey}` is optional. Public indexers must
 
 Release labels such as 720p / 1080p / 2160p, HDR / DV, HEVC / x264 and common audio/dubbing tags are extracted heuristically from the release title. They are not authoritative tracker metadata. Filters operate on the current results and do not issue another request.
 
-The app does not ship private tracker credentials or site-specific page scrapers. CAPTCHA, anti-bot challenges, proprietary sign-in flows and interactive 2FA are not automated. A manually entered cookie may work where the source permits it.
+The app does not ship private tracker credentials or site-specific page scrapers. Jackett's own authenticated setup UI/API stores the credentials for each private tracker; Jacket sends only the configuration values you explicitly enter into the Jackett-provided form. CAPTCHA, anti-bot challenges, proprietary sign-in flows and interactive 2FA remain under Jackett's supported configuration flow and are not bypassed by Jacket.
 
 ## User-configured website search
 
@@ -66,7 +71,7 @@ Example template shape:
 https://your-authorized-site.example/search?q={query}
 ```
 
-Website shortcuts remain link-based and open the site in the browser. Structured in-app playback is supported when a source explicitly publishes a direct HTTPS media URL in an RSS/Atom enclosure or Media RSS `media:content`. Jacket does not scrape arbitrary HTML pages, unpack obfuscated player scripts, automate private logins or CAPTCHA, extract hidden streams, bypass DRM, or circumvent regional access restrictions. Use only services and media you are authorized to access. For a licensed provider, prefer its documented API or feed.
+Website shortcuts remain link-based and open the site in the browser. In-app playback is provided by supported RSS/Atom media enclosures and the explicit Filmix/HDRezka adapters. HDRezka supports its known `#h` playlist payload format; unknown or rotated encodings are rejected. Jacket does not scrape arbitrary pages, unpack arbitrary obfuscated scripts, automate CAPTCHA, bypass DRM or paywalls, or circumvent regional access restrictions. Use only services and media you are authorized to access.
 
 ## Torrent engine and local stream server
 

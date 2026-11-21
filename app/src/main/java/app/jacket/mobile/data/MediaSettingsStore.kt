@@ -44,6 +44,20 @@ class MediaSettingsStore(context: Context) {
 
     fun filmixToken(): String = decrypt(preferences.getString(KEY_FILMIX_TOKEN, null))
 
+    fun filmixApiBase(): String = runCatching {
+        FilmixDeviceAuth.normalizeApiBase(
+            preferences.getString(KEY_FILMIX_API_BASE, FilmixDeviceAuth.DEFAULT_API_BASE)
+                ?: FilmixDeviceAuth.DEFAULT_API_BASE
+        )
+    }.getOrDefault(FilmixDeviceAuth.DEFAULT_API_BASE)
+
+    @Synchronized
+    fun saveFilmixApiBase(value: String): String {
+        val normalized = FilmixDeviceAuth.normalizeApiBase(value)
+        preferences.edit { putString(KEY_FILMIX_API_BASE, normalized) }
+        return normalized
+    }
+
     @Synchronized
     fun saveFilmixToken(token: String) {
         preferences.edit { putString(KEY_FILMIX_TOKEN, encrypt(token.trim())) }
@@ -66,13 +80,17 @@ class MediaSettingsStore(context: Context) {
         return id
     }
 
-    fun hdRezkaSettings(): HdRezkaSettings = HdRezkaSettings(
-        mirror = preferences.getString(KEY_HDREZKA_MIRROR, "") ?: "",
-        login = decrypt(preferences.getString(KEY_HDREZKA_LOGIN, null)),
-        password = decrypt(preferences.getString(KEY_HDREZKA_PASSWORD, null)),
-        cookie = decrypt(preferences.getString(KEY_HDREZKA_COOKIE, null)),
-        connected = preferences.getBoolean(KEY_HDREZKA_CONNECTED, false)
-    )
+    fun hdRezkaSettings(): HdRezkaSettings {
+        val cookie = decrypt(preferences.getString(KEY_HDREZKA_COOKIE, null))
+        return HdRezkaSettings(
+            mirror = preferences.getString(KEY_HDREZKA_MIRROR, "") ?: "",
+            login = decrypt(preferences.getString(KEY_HDREZKA_LOGIN, null)),
+            password = decrypt(preferences.getString(KEY_HDREZKA_PASSWORD, null)),
+            cookie = cookie,
+            connected = preferences.getBoolean(KEY_HDREZKA_CONNECTED, false) &&
+                HdRezkaLoginClient.hasAuthenticatedCookie(cookie)
+        )
+    }
 
     @Synchronized
     fun saveHdRezkaSettings(settings: HdRezkaSettings) {
@@ -87,7 +105,10 @@ class MediaSettingsStore(context: Context) {
             putString(KEY_HDREZKA_LOGIN, encrypt(login))
             putString(KEY_HDREZKA_PASSWORD, encrypt(password))
             putString(KEY_HDREZKA_COOKIE, encrypt(cookie))
-            putBoolean(KEY_HDREZKA_CONNECTED, settings.connected && cookie.isNotBlank())
+            putBoolean(
+                KEY_HDREZKA_CONNECTED,
+                settings.connected && HdRezkaLoginClient.hasAuthenticatedCookie(cookie)
+            )
         }
     }
 
@@ -431,6 +452,7 @@ class MediaSettingsStore(context: Context) {
         const val PREFERENCES = "jacket_media_settings"
         const val KEY_TMDB_TOKEN = "tmdb_token_enc"
         const val KEY_FILMIX_TOKEN = "filmix_device_token_enc"
+        const val KEY_FILMIX_API_BASE = "filmix_api_base"
         const val KEY_FILMIX_DEVICE_ID = "filmix_device_id"
         const val KEY_HDREZKA_MIRROR = "hdrezka_mirror"
         const val KEY_HDREZKA_LOGIN = "hdrezka_login_enc"

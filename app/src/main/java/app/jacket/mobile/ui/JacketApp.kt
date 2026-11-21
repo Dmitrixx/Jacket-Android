@@ -38,6 +38,8 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Favorite
@@ -108,6 +110,8 @@ import app.jacket.mobile.data.HdRezkaSettings
 import app.jacket.mobile.data.IndexerConfig
 import app.jacket.mobile.data.IndexerProtocol
 import app.jacket.mobile.data.ReleaseHeuristics
+import app.jacket.mobile.data.MediaSourceCatalog
+import app.jacket.mobile.data.MediaSourceIntegration
 import app.jacket.mobile.data.MediaKind
 import app.jacket.mobile.data.MediaSection
 import app.jacket.mobile.data.SourceResult
@@ -123,6 +127,10 @@ import app.jacket.mobile.torrent.PlaybackSession
 import app.jacket.mobile.torrent.PlaybackSessionStore
 import app.jacket.mobile.torrent.TorrentQueueStore
 import java.io.File
+import java.time.OffsetDateTime
+import java.time.ZonedDateTime
+import java.time.format.DateTimeFormatter
+import java.util.Locale
 
 private const val TAB_HOME = 0
 private const val TAB_MOVIES = 1
@@ -141,6 +149,7 @@ fun JacketApp(viewModel: MainViewModel) {
     var playerProgressKey by rememberSaveable { mutableStateOf<String?>(null) }
     var playerInitialPosition by rememberSaveable { mutableLongStateOf(0L) }
     var playerSubtitles by remember { mutableStateOf(emptyList<app.jacket.mobile.torrent.PlaybackSubtitle>()) }
+    var playerHeaders by remember { mutableStateOf(emptyMap<String, String>()) }
     var isTorrentPlayback by rememberSaveable { mutableStateOf(false) }
 
     val context = LocalContext.current
@@ -156,6 +165,7 @@ fun JacketApp(viewModel: MainViewModel) {
             playerProgressKey = request.progressKey
             playerInitialPosition = request.initialPositionMs
             playerSubtitles = request.subtitles
+            playerHeaders = emptyMap()
             isTorrentPlayback = true
         }
     }
@@ -167,6 +177,7 @@ fun JacketApp(viewModel: MainViewModel) {
         playerProgressKey = null
         playerInitialPosition = 0L
         playerSubtitles = emptyList()
+        playerHeaders = emptyMap()
         isTorrentPlayback = false
     }
 
@@ -192,6 +203,7 @@ fun JacketApp(viewModel: MainViewModel) {
             progressKey = playerProgressKey,
             initialPositionMs = playerInitialPosition,
             subtitles = playerSubtitles,
+            httpHeaders = playerHeaders,
             onBack = ::closePlayer
         )
         return
@@ -218,12 +230,15 @@ fun JacketApp(viewModel: MainViewModel) {
                 viewModel.closeDetails()
                 showSettings = true
             },
-            onPlay = { title, url ->
+            onPlay = { title, url, headers, subtitles ->
                 playerTitle = title
                 playerUrl = url
                 playerProgressKey = PlaybackProgressStore.urlKey(url)
                 playerInitialPosition = PlaybackProgressStore(context).position(playerProgressKey!!)
-                playerSubtitles = emptyList()
+                playerSubtitles = subtitles
+                playerHeaders = headers.filterKeys {
+                    it.equals("Referer", true) || it.equals("User-Agent", true)
+                }
                 isTorrentPlayback = false
             }
         )
@@ -993,7 +1008,7 @@ private fun DetailScreen(
     viewModel: MainViewModel,
     onBack: () -> Unit,
     onAddWebsite: () -> Unit,
-    onPlay: (String, String) -> Unit
+    onPlay: (String, String, Map<String, String>, List<app.jacket.mobile.torrent.PlaybackSubtitle>) -> Unit
 ) {
     val details by viewModel.selectedDetails.collectAsState()
     val tmdbToken by viewModel.tmdbToken.collectAsState()
@@ -1010,6 +1025,9 @@ private fun DetailScreen(
     val context = LocalContext.current
     val indexerErrors by viewModel.indexerErrors.collectAsState()
     val webSearchProviders by viewModel.webSearchProviders.collectAsState()
+    val filmixToken by viewModel.filmixToken.collectAsState()
+    val hdRezkaSettings by viewModel.hdRezkaSettings.collectAsState()
+    val customIndexers by viewModel.customIndexers.collectAsState()
     var showWebsiteSearch by rememberSaveable { mutableStateOf(false) }
     var showSourcesSheet by rememberSaveable { mutableStateOf(false) }
     var selectedEpisodeForSources by remember { mutableStateOf<app.jacket.mobile.data.MediaEpisode?>(null) }
@@ -1021,8 +1039,9 @@ private fun DetailScreen(
     val minSeedersValue = minSeeders.toIntOrNull()?.coerceAtLeast(0) ?: 0
     val filteredSources = sources.filter { source ->
         val release = ReleaseHeuristics.classify(source.title)
-        (source.seeders ?: 0) >= minSeedersValue &&
-            (qualityFilter == "Все" || release.quality == qualityFilter) &&
+        (source.sourceType != app.jacket.mobile.data.MediaSourceType.TORRENT ||
+            (source.seeders ?: 0) >= minSeedersValue) &&
+            (qualityFilter == "Все" || (source.qualityLabel ?: release.quality) == qualityFilter) &&
             (!hdrOnly || release.hdr || release.dolbyVision) &&
             (!magnetOnly || source.magnetUri != null) &&
             (!torrentOnly || source.downloadUrl != null)
@@ -1206,11 +1225,7 @@ private fun DetailScreen(
                                                         onClick = {
                                                             selectedEpisodeForSources = episode
                                                             showSourcesSheet = true
-                                                            if (activeInAppTrackers.isNotEmpty()) {
-                                                                viewModel.findSourcesOnAllTrackers(item, episode)
-                                                            } else {
-                                                                viewModel.findSources(item, episode)
-                                                            }
+                                                            viewModel.findSources(item, episode)
                                                         },
                                                         enabled = !searchingSources
                                                     ) {
@@ -1229,7 +1244,7 @@ private fun DetailScreen(
 
                     if (details!!.streamUrl != null) {
                         Button(
-                            onClick = { onPlay(item.title, details!!.streamUrl!!) },
+                            onClick = { onPlay(item.title, details!!.streamUrl!!, emptyMap(), emptyList()) },
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             Icon(Icons.Default.PlayArrow, contentDescription = null)
@@ -1264,11 +1279,7 @@ private fun DetailScreen(
                         onClick = {
                             selectedEpisodeForSources = null
                             showSourcesSheet = true
-                            if (activeInAppTrackers.isNotEmpty()) {
-                                viewModel.findSourcesOnAllTrackers(item)
-                            } else {
-                                viewModel.findSources(item)
-                            }
+                            viewModel.findSources(item)
                         },
                         enabled = !searchingSources,
                         modifier = Modifier.fillMaxWidth()
@@ -1280,7 +1291,7 @@ private fun DetailScreen(
                             Icon(Icons.Default.Search, contentDescription = null)
                             Spacer(Modifier.width(8.dp))
                         }
-                        Text(if (searchingSources) "Ищем раздачи…" else "Поиск торрентов")
+                        Text(if (searchingSources) "Ищем источники…" else "Поиск источников")
                     }
 
                     OutlinedButton(
@@ -1427,11 +1438,7 @@ private fun DetailScreen(
                     IconButton(
                         onClick = {
                             details?.item?.let {
-                                if (activeInAppTrackers.isNotEmpty()) {
-                                    viewModel.findSourcesOnAllTrackers(it, selectedEpisodeForSources)
-                                } else {
-                                    viewModel.findSources(it, selectedEpisodeForSources)
-                                }
+                                viewModel.findSources(it, selectedEpisodeForSources)
                             }
                         },
                         enabled = !searchingSources
@@ -1440,33 +1447,33 @@ private fun DetailScreen(
                     }
                 }
 
-                if (activeInAppTrackers.isNotEmpty()) {
-                    OutlinedButton(
-                        onClick = {
-                            details?.item?.let {
-                                viewModel.findSourcesOnAllTrackers(it, selectedEpisodeForSources)
-                            }
-                        },
-                        enabled = !searchingSources,
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Icon(Icons.Default.Search, contentDescription = null)
-                        Spacer(Modifier.width(8.dp))
-                        Text("Искать на всех встроенных трекерах • ${activeInAppTrackers.size}")
-                    }
-                } else {
+                val filmixConfigured = filmixToken.isNotBlank()
+                val hdRezkaConfigured = hdRezkaSettings.mirror.isNotBlank()
+                val configuredSources = customIndexers.count { it.enabled } +
+                    activeInAppTrackers.size +
+                    (if (filmixConfigured) 1 else 0) +
+                    (if (hdRezkaConfigured) 1 else 0)
+                Text(
+                    "Индексаторы: ${customIndexers.count { it.enabled }} • трекеры: ${activeInAppTrackers.size} • " +
+                        "Filmix: ${if (filmixConfigured) "устройство привязано" else "не настроен"} • " +
+                        "HDRezka: ${if (hdRezkaConfigured) "адрес задан" else "не настроена"}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Button(
+                    onClick = { details?.item?.let { viewModel.findSources(it, selectedEpisodeForSources) } },
+                    enabled = !searchingSources,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Icon(Icons.Default.Search, contentDescription = null)
+                    Spacer(Modifier.width(8.dp))
+                    Text("Искать на всех источниках")
+                }
+                if (configuredSources == 0) {
                     MessageCard(
-                        "Встроенные трекеры не добавлены или отключены. Добавьте и включите их, чтобы искать раздачи прямо в карточке фильма.",
+                        "Внешние источники ещё не настроены. Интернет-архив доступен автоматически; добавьте RSS/Torznab или подключите Filmix / HDRezka.",
                         false
                     )
-                    OutlinedButton(
-                        onClick = { viewModel.restoreDefaultTrackerShortcuts() },
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Icon(Icons.Default.Add, contentDescription = null)
-                        Spacer(Modifier.width(8.dp))
-                        Text("Добавить и включить трекеры")
-                    }
                 }
 
                 if (searchingSources) {
@@ -1494,9 +1501,9 @@ private fun DetailScreen(
                     }
                 }
 
-                if (sources.isEmpty() && !searchingSources && activeInAppTrackers.isNotEmpty()) {
+                if (sources.isEmpty() && !searchingSources && configuredSources > 0) {
                     MessageCard(
-                        "Пока нет результатов. Добавьте RSS/Atom или Torznab-источники либо повторите поиск на встроенных трекерах.",
+                        "Пока нет результатов. Интернет-архив уже проверен автоматически. Проверьте привязку Filmix, доступность зеркала HDRezka и настройки индексаторов; попробуйте оригинальное название.",
                         false
                     )
                 }
@@ -1504,7 +1511,7 @@ private fun DetailScreen(
                 if (sources.isNotEmpty()) {
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text(
-                            "Найдено раздач: ${filteredSources.size} из ${sources.size}",
+                            "Найдено источников: ${filteredSources.size} из ${sources.size}",
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.Bold
                         )
@@ -1558,7 +1565,19 @@ private fun DetailScreen(
                                 source = source,
                                 onPlay = { url ->
                                     showSourcesSheet = false
-                                    onPlay(source.title, url)
+                                    onPlay(
+                                        source.title,
+                                        url,
+                                        source.requestHeaders,
+                                        source.subtitles.map { subtitle ->
+                                            app.jacket.mobile.torrent.PlaybackSubtitle(
+                                                url = subtitle.url,
+                                                mimeType = subtitle.mimeType,
+                                                language = subtitle.language,
+                                                label = subtitle.label
+                                            )
+                                        }
+                                    )
                                 },
                                 onMagnet = { magnet ->
                                     TorrentDownloadService.add(context, magnet, source.title)
@@ -1606,28 +1625,50 @@ private fun SourceCard(
     onPage: (String) -> Unit
 ) {
     val release = ReleaseHeuristics.classify(source.title)
+    val sourceBadge = when (source.sourceType) {
+        app.jacket.mobile.data.MediaSourceType.TORRENT -> "ТОРРЕНТ"
+        app.jacket.mobile.data.MediaSourceType.FILMIX -> "FILMIX"
+        app.jacket.mobile.data.MediaSourceType.HDREZKA -> "HDREZKA"
+        app.jacket.mobile.data.MediaSourceType.LICENSED_DIRECT -> "DIRECT"
+    }
+    val resolvedQuality = source.qualityLabel ?: release.quality
+    val qualityLabel = when (resolvedQuality?.lowercase()) {
+        "2160p" -> "4K"
+        "1080p" -> "FHD"
+        "720p" -> "HD"
+        else -> resolvedQuality
+    }
     val badges = listOfNotNull(
-        release.quality,
+        qualityLabel,
+        source.translationName,
+        release.resolutionDimensions,
+        release.audioChannels,
         release.videoCodec,
         if (release.hdr) "HDR" else null,
-        if (release.dolbyVision) "Dolby Vision" else null
-    ).plus(release.audioTags).plus(release.sourceTags).distinct()
+        if (release.dolbyVision) "Dolby Vision" else null,
+        release.bitrate
+    ).plus(release.audioTags)
+        .plus(release.audioLanguages.map { "♪ $it" })
+        .plus(release.subtitleLanguages.map { "▣ $it SUB" })
+        .plus(release.sourceTags)
+        .distinct()
     val facts = listOfNotNull(
-        source.category,
+        source.publishedDate?.let(::formatReleaseDate),
+        source.seeders?.let { "Раздают: $it" },
+        source.leechers?.let { "Качают: $it" },
         source.sizeBytes?.let(::formatBytes),
-        source.seeders?.let { "↑ $it сидов" },
-        source.leechers?.let { "↓ $it пиров" }
+        source.category?.takeIf { it.isNotBlank() && !it.all(Char::isDigit) }
     )
     Card(
         modifier = Modifier.fillMaxWidth(),
-        shape = MaterialTheme.shapes.large,
+        shape = RoundedCornerShape(18.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
         elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
     ) {
-        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
+        Column(Modifier.padding(15.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(7.dp)) {
                 Surface(color = MaterialTheme.colorScheme.primary.copy(alpha = 0.14f), shape = RoundedCornerShape(8.dp)) {
-                    Text("РАЗДАЧА", modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
+                    Text(sourceBadge, modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
                         style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary,
                         fontWeight = FontWeight.Bold)
                 }
@@ -1637,23 +1678,32 @@ private fun SourceCard(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1
                 )
-                if (!source.tracker.isNullOrBlank()) {
+                if (!source.tracker.isNullOrBlank() && source.providerName.isNotBlank()) {
                     Text(
                         "через ${source.providerName}",
                         style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1
                     )
                 }
             }
-            Text(source.title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, maxLines = 3)
+            Text(
+                source.title,
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+                maxLines = 4
+            )
             if (badges.isNotEmpty()) {
                 LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     items(badges) { badge -> MetadataPill(badge, accent = true) }
                 }
             }
             if (facts.isNotEmpty()) {
-                Text(facts.joinToString("  •  "), style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(
+                    facts.joinToString("  •  "),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically) {
@@ -1673,6 +1723,11 @@ private fun SourceCard(
                         Spacer(Modifier.width(6.dp))
                         Text("Загрузить")
                     }
+                    source.requiresSubscription && source.pageUrl != null -> OutlinedButton(onClick = { onPage(source.pageUrl) }) {
+                        Icon(Icons.Default.OpenInNew, contentDescription = null)
+                        Spacer(Modifier.width(6.dp))
+                        Text("Нужна подписка")
+                    }
                     source.pageUrl != null -> OutlinedButton(onClick = { onPage(source.pageUrl) }) {
                         Icon(Icons.Default.OpenInNew, contentDescription = null)
                         Spacer(Modifier.width(6.dp))
@@ -1688,6 +1743,15 @@ private fun SourceCard(
             }
         }
     }
+}
+
+private fun formatReleaseDate(value: String): String {
+    val date = runCatching {
+        ZonedDateTime.parse(value, DateTimeFormatter.RFC_1123_DATE_TIME).toLocalDate()
+    }.recoverCatching {
+        OffsetDateTime.parse(value).toLocalDate()
+    }.getOrNull() ?: return value.take(32)
+    return DateTimeFormatter.ofPattern("d MMMM", Locale("ru")).format(date)
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -1885,13 +1949,25 @@ private fun SettingsScreen(
     onBack: () -> Unit
 ) {
     var selectedSettingsSection by rememberSaveable { mutableStateOf("home") }
+    var jackettQuery by rememberSaveable { mutableStateOf("") }
     val currentToken by viewModel.tmdbToken.collectAsState()
     val indexers by viewModel.customIndexers.collectAsState()
     val webSearchProviders by viewModel.webSearchProviders.collectAsState()
     val statuses by viewModel.indexerStatuses.collectAsState()
     val sourceResults by viewModel.sourceResults.collectAsState()
     val searchingSources by viewModel.isSearchingSources.collectAsState()
+    val jackettIndexers by viewModel.jackettIndexers.collectAsState()
+    val loadingJackettIndexers by viewModel.isLoadingJackettIndexers.collectAsState()
+    val jackettCatalogStatus by viewModel.jackettCatalogStatus.collectAsState()
+    val testingJackettIndexerId by viewModel.testingJackettIndexerId.collectAsState()
+    val savedJackett = indexers.firstOrNull { it.protocol == IndexerProtocol.JACKETT }
+    val jackettConfigIndexerId by viewModel.jackettConfigIndexerId.collectAsState()
+    val jackettConfigFields by viewModel.jackettConfigFields.collectAsState()
+    val loadingJackettConfig by viewModel.isLoadingJackettConfig.collectAsState()
+    val savingJackettConfig by viewModel.isSavingJackettConfig.collectAsState()
+    val jackettConfigStatus by viewModel.jackettConfigStatus.collectAsState()
     val filmixToken by viewModel.filmixToken.collectAsState()
+    val filmixApiBase by viewModel.filmixApiBase.collectAsState()
     val filmixCode by viewModel.filmixCode.collectAsState()
     val filmixStatus by viewModel.filmixStatus.collectAsState()
     val isFilmixPairing by viewModel.isFilmixPairing.collectAsState()
@@ -1899,6 +1975,17 @@ private fun SettingsScreen(
     val hdRezkaStatus by viewModel.hdRezkaStatus.collectAsState()
     val isHdRezkaBusy by viewModel.isHdRezkaBusy.collectAsState()
     val context = LocalContext.current
+    LaunchedEffect(
+        selectedSettingsSection,
+        savedJackett?.id,
+        savedJackett?.searchUrlTemplate,
+        savedJackett?.apiKey,
+        savedJackett?.cookie
+    ) {
+        if (selectedSettingsSection == "indexers" && savedJackett != null) {
+            viewModel.refreshJackettIndexers()
+        }
+    }
     var token by remember(currentToken) { mutableStateOf(currentToken) }
     val savedRates = remember(context) { TorrentEngine.rateLimits(context) }
     var downloadLimit by rememberSaveable { mutableStateOf(savedRates.first.toString()) }
@@ -1940,7 +2027,7 @@ private fun SettingsScreen(
     var webCookie by rememberSaveable { mutableStateOf("") }
 
     var hdMirror by remember(hdRezkaSettings.mirror) {
-        mutableStateOf(hdRezkaSettings.mirror.ifBlank { "https://standby-rezka.tv" })
+        mutableStateOf(hdRezkaSettings.mirror)
     }
     var hdLogin by remember(hdRezkaSettings.login) { mutableStateOf(hdRezkaSettings.login) }
     var hdPassword by remember(hdRezkaSettings.password) { mutableStateOf(hdRezkaSettings.password) }
@@ -2109,7 +2196,7 @@ private fun SettingsScreen(
                     SettingsMenuRow(
                         title = "HDRezka",
                         subtitle = "Зеркало, вход по логину и паролю, сессия",
-                        badge = if (hdRezkaSettings.connected) "В сети" else "Настроить",
+                        badge = if (hdRezkaSettings.connected) "Cookie сохранена" else "Настроить",
                         onClick = { selectedSettingsSection = "hdrezka" },
                         icon = { Icon(Icons.Default.Movie, contentDescription = null) }
                     )
@@ -2283,6 +2370,36 @@ private fun SettingsScreen(
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
+                            Text("API-сервер", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                if (filmixApiBase == FilmixDeviceAuth.DEFAULT_API_BASE) {
+                                    Button(onClick = {}, enabled = false, modifier = Modifier.weight(1f)) {
+                                        Text("Основной")
+                                    }
+                                } else {
+                                    OutlinedButton(
+                                        onClick = { viewModel.selectFilmixApiBase(FilmixDeviceAuth.DEFAULT_API_BASE) },
+                                        enabled = !isFilmixPairing,
+                                        modifier = Modifier.weight(1f)
+                                    ) { Text("Основной") }
+                                }
+                                if (filmixApiBase == FilmixDeviceAuth.ALTERNATE_API_BASE) {
+                                    Button(onClick = {}, enabled = false, modifier = Modifier.weight(1f)) {
+                                        Text("Альтернативный")
+                                    }
+                                } else {
+                                    OutlinedButton(
+                                        onClick = { viewModel.selectFilmixApiBase(FilmixDeviceAuth.ALTERNATE_API_BASE) },
+                                        enabled = !isFilmixPairing,
+                                        modifier = Modifier.weight(1f)
+                                    ) { Text("Альтернативный") }
+                                }
+                            }
+                            Text(
+                                "Выбран: ${filmixApiBase.substringAfter("://").substringBefore('/')}. Автопереключения нет; TLS-проверка остаётся включённой.",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
                             Surface(
                                 modifier = Modifier.fillMaxWidth(),
                                 shape = RoundedCornerShape(18.dp),
@@ -2350,7 +2467,7 @@ private fun SettingsScreen(
                                 }
                             }
                             Text(
-                                "Токен устройства хранится в зашифрованном виде через Android Keystore. Пароль Filmix приложению не нужен.",
+                                "Токен устройства хранится в зашифрованном виде через Android Keystore. Пароль Filmix приложению не нужен. Поиск Filmix, выбор озвучки и доступного качества подключены к общей карточке источников. Фактическое воспроизведение зависит от доступности CDN и формата ссылки.",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -2380,7 +2497,7 @@ private fun SettingsScreen(
                             Text("HDRezka", style = MaterialTheme.typography.headlineSmall,
                                 fontWeight = FontWeight.Bold)
                             Text(
-                                "Укажи рабочее HTTPS-зеркало и данные своего аккаунта. После успешного входа Jacket сохранит Cookie-сессию локально в зашифрованном виде.",
+                                "HDRezka ищется по указанному HTTPS-зеркалу; результаты, озвучки, доступные качества и поддерживаемые ссылки воспроизведения появляются в общей карточке источников. Cookie хранится зашифрованно и отправляется только на выбранный домен. CAPTCHA/Anubis, зашифрованные #2-манифесты и ограничения региона не обходятся.",
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -2389,7 +2506,7 @@ private fun SettingsScreen(
                                 onValueChange = { hdMirror = it },
                                 modifier = Modifier.fillMaxWidth(),
                                 label = { Text("Зеркало HDRezka") },
-                                placeholder = { Text("https://standby-rezka.tv") },
+                                placeholder = { Text("https://домен-источника") },
                                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
                                 singleLine = true
                             )
@@ -2449,6 +2566,13 @@ private fun SettingsScreen(
                                 visualTransformation = PasswordVisualTransformation(),
                                 minLines = 2
                             )
+                            if (hdCookie.isNotBlank() && !HdRezkaLoginClient.hasAuthenticatedCookie(hdCookie)) {
+                                Text(
+                                    "Cookie не распознана: для DLE-сессии нужны dle_user_id (не 0) и dle_password. Это проверка формата, не срока действия.",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.error
+                                )
+                            }
                             Text(
                                 "Ручной вариант — вставь Cookie после обычного входа в браузере. Не отправляй её никому: она даёт доступ к аккаунту.",
                                 style = MaterialTheme.typography.labelSmall,
@@ -2607,6 +2731,63 @@ private fun SettingsScreen(
                         )
                     }
                 }
+                item {
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text("Видеосервисы", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                        Text(
+                            "Список приоритетов из ТЗ. Подключённым считается только источник с реальным коннектором; неподтверждённые плагины не имитируются.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+                items(MediaSourceCatalog.sources, key = { "media-${it.id}" }) { source ->
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+                    ) {
+                        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                    Text("${source.priority}. ${source.displayName}", fontWeight = FontWeight.Bold)
+                                    Text(source.id, style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                                MetadataPill(
+                                    when (source.integration) {
+                                        MediaSourceIntegration.DIRECT_ADAPTER -> "КОННЕКТОР"
+                                        MediaSourceIntegration.AUTH_SETTINGS_ONLY -> "ЕСТЬ НАСТРОЙКИ"
+                                        MediaSourceIntegration.MEDIA_ADAPTER_MISSING -> "НЕ ПОДКЛЮЧЁН"
+                                    },
+                                    accent = source.integration != MediaSourceIntegration.MEDIA_ADAPTER_MISSING
+                                )
+                            }
+                            LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                items(source.types) { kind -> MetadataPill(kind.uppercase()) }
+                                if (source.supports4k) item { MetadataPill("4K") }
+                                if (source.authRequired) item { MetadataPill("НУЖНА АВТОРИЗАЦИЯ") }
+                            }
+                            Text(source.notes, style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            when (source.integration) {
+                                MediaSourceIntegration.DIRECT_ADAPTER,
+                                MediaSourceIntegration.AUTH_SETTINGS_ONLY -> OutlinedButton(
+                                    onClick = { selectedSettingsSection = source.id },
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Text(if (source.id == "filmix") "Настройки Filmix" else "Настройки HDRezka")
+                                }
+                                MediaSourceIntegration.MEDIA_ADAPTER_MISSING -> Text(
+                                    "Нет проверенного API или совместимого адаптера в текущем проекте.",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                    }
+                }
+
                 items(webSearchProviders, key = { "web-${it.id}" }) { provider ->
                     Card(
                         modifier = Modifier.fillMaxWidth(),
@@ -2674,7 +2855,6 @@ private fun SettingsScreen(
             }
 
             item {
-                val savedJackett = indexers.firstOrNull { it.protocol == IndexerProtocol.JACKETT }
                 JackettSetupCard(
                     saved = savedJackett,
                     status = savedJackett?.let { statuses[it.id] },
@@ -2682,6 +2862,216 @@ private fun SettingsScreen(
                     onTest = { savedJackett?.let { viewModel.testIndexer(it.id) } },
                     onRemove = { savedJackett?.let { viewModel.removeIndexer(it.id) } }
                 )
+            }
+
+            item {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                            Text("Каталог индексаторов Jackett", style = MaterialTheme.typography.titleLarge,
+                                fontWeight = FontWeight.Bold)
+                            Text(
+                                "Публичные и приватные источники из вашего сервера. Настроенные трекеры можно искать здесь; раздачи добавляются во встроенную очередь Jacket.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        IconButton(
+                            onClick = { viewModel.refreshJackettIndexers() },
+                            enabled = savedJackett != null && !loadingJackettIndexers
+                        ) {
+                            Icon(Icons.Default.Refresh, contentDescription = "Обновить каталог Jackett")
+                        }
+                    }
+                    OutlinedTextField(
+                        value = jackettQuery,
+                        onValueChange = { jackettQuery = it },
+                        modifier = Modifier.fillMaxWidth(),
+                        label = { Text("Название фильма, сериала или раздачи") },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                        keyboardActions = KeyboardActions(
+                            onSearch = {
+                                jackettIndexers.firstOrNull { it.configured }?.let {
+                                    viewModel.searchJackettIndexer(it.id, jackettQuery)
+                                }
+                            }
+                        )
+                    )
+                    if (loadingJackettIndexers) {
+                        LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                    }
+                    jackettCatalogStatus?.let {
+                        MessageCard(
+                            it,
+                            isError = it.startsWith("Ошибка") || it.contains("не пройдена") ||
+                                it.startsWith("Не удалось")
+                        )
+                    }
+                    if (savedJackett == null) {
+                        MessageCard("Подключите Jackett выше, чтобы загрузить каталог трекеров.", false)
+                    }
+                }
+            }
+
+            if (jackettConfigIndexerId != null) {
+                val editingEntry = jackettIndexers.firstOrNull { it.id == jackettConfigIndexerId }
+                item(key = "jackett-config-editor") {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+                    ) {
+                        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                                    Text(
+                                        editingEntry?.name ?: jackettConfigIndexerId.orEmpty(),
+                                        style = MaterialTheme.typography.titleLarge,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                    Text(
+                                        "Настройка индексатора на вашем сервере Jackett",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                                IconButton(onClick = viewModel::closeJackettIndexerConfig) {
+                                    Icon(Icons.Default.Close, contentDescription = "Закрыть настройки")
+                                }
+                            }
+                            if (loadingJackettConfig) {
+                                LinearProgressIndicator(Modifier.fillMaxWidth())
+                            }
+                            jackettConfigFields.forEach { field ->
+                                JackettConfigFieldEditor(
+                                    field = field,
+                                    onValueChange = { value ->
+                                        viewModel.updateJackettConfigField(field.id, value)
+                                    },
+                                    onValuesChange = { values ->
+                                        viewModel.updateJackettConfigValues(field.id, values)
+                                    }
+                                )
+                            }
+                            jackettConfigStatus?.let { status ->
+                                MessageCard(
+                                    status,
+                                    isError = status.startsWith("Не удалось") ||
+                                        status.startsWith("Jackett отклонил")
+                                )
+                            }
+                            Button(
+                                modifier = Modifier.fillMaxWidth(),
+                                onClick = viewModel::saveJackettIndexerConfig,
+                                enabled = !loadingJackettConfig && !savingJackettConfig &&
+                                    jackettConfigFields.isNotEmpty()
+                            ) {
+                                if (savingJackettConfig) {
+                                    CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                                    Spacer(Modifier.width(8.dp))
+                                } else {
+                                    Icon(Icons.Default.Check, contentDescription = null)
+                                    Spacer(Modifier.width(8.dp))
+                                }
+                                Text(if (savingJackettConfig) "Сохраняем…" else "Сохранить настройки трекера")
+                            }
+                        }
+                    }
+                }
+            }
+
+            items(jackettIndexers, key = { "jackett-${it.id}" }) { entry ->
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+                ) {
+                    Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                                Text(entry.name, fontWeight = FontWeight.Bold)
+                                Text(entry.id, style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                            MetadataPill(
+                                if (entry.isPrivate) "PRIVATE" else entry.type?.uppercase() ?: "PUBLIC",
+                                accent = entry.configured
+                            )
+                        }
+                        Text(
+                            if (entry.configured) "Настроен на сервере" else "Не настроен на сервере",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = if (entry.configured) MaterialTheme.colorScheme.primary
+                                else MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        if (entry.description.isNotBlank()) {
+                            Text(entry.description, style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 3)
+                        }
+                        if (!entry.lastError.isNullOrBlank()) {
+                            Text(
+                                "Последняя ошибка: ${entry.lastError}",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.error,
+                                maxLines = 3
+                            )
+                        }
+                        val details = listOfNotNull(
+                            entry.language?.takeIf(String::isNotBlank),
+                            entry.categoryNames.takeIf { it.isNotEmpty() }?.take(4)?.joinToString(", ")
+                        )
+                        if (details.isNotEmpty()) {
+                            Text(details.joinToString(" • "), style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically) {
+                            if (entry.configured) {
+                                Button(
+                                    onClick = { viewModel.searchJackettIndexer(entry.id, jackettQuery) },
+                                    enabled = jackettQuery.isNotBlank() && !searchingSources
+                                ) {
+                                    Icon(Icons.Default.Search, contentDescription = null)
+                                    Spacer(Modifier.width(6.dp))
+                                    Text("Искать")
+                                }
+                                OutlinedButton(
+                                    onClick = { viewModel.testJackettIndexer(entry.id) },
+                                    enabled = testingJackettIndexerId == null
+                                ) {
+                                    if (testingJackettIndexerId == entry.id) {
+                                        CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+                                    } else {
+                                        Text("Проверить")
+                                    }
+                                }
+                            }
+                            OutlinedButton(
+                                onClick = { viewModel.loadJackettIndexerConfig(entry.id) },
+                                enabled = !loadingJackettConfig
+                            ) {
+                                Icon(Icons.Default.Settings, contentDescription = null)
+                                Spacer(Modifier.width(5.dp))
+                                Text(if (entry.configured) "Изменить" else "Настроить")
+                            }
+                            entry.siteLink?.let { link ->
+                                OutlinedButton(onClick = { openExternal(context, link) }) {
+                                    Icon(Icons.Default.OpenInNew, contentDescription = null)
+                                    Spacer(Modifier.width(5.dp))
+                                    Text("Сайт")
+                                }
+                            }
+                        }
+                    }
+                }
             }
 
             item {
@@ -2918,8 +3308,14 @@ private fun SettingsScreen(
                     SourceCard(
                         source = source,
                         onPlay = { },
-                        onMagnet = { magnet -> TorrentDownloadService.add(context, magnet, source.title) },
-                        onTorrent = { url -> openExternal(context, url) },
+                        onMagnet = { magnet ->
+                            TorrentDownloadService.add(context, magnet, source.title)
+                            Toast.makeText(context, "Добавлено в загрузки", Toast.LENGTH_SHORT).show()
+                        },
+                        onTorrent = { url ->
+                            TorrentDownloadService.addTorrentUrl(context, url, source.title, source.indexerId)
+                            Toast.makeText(context, "Торрент добавлен во встроенную очередь", Toast.LENGTH_SHORT).show()
+                        },
                         onPage = { url -> openExternal(context, url) }
                     )
                 }
@@ -2943,7 +3339,7 @@ private fun SettingsScreen(
                             Text("JACKET 2.6", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Black)
                             Text("Единое приложение для Android, планшетов и Android TV.",
                                 color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            Text("Есть Filmix-привязка по коду и настройки HDRezka. RSS / Atom и Torznab обрабатываются внутри приложения; трекер-пресеты открываются в браузере.")
+                            Text("Встроены поиск и поддерживаемое воспроизведение Filmix/HDRezka, а также RSS / Atom и Torznab. Результаты всех подключённых источников объединяются в карточке фильма; трекер-пресеты открываются в браузере.")
                             Text("Jacket не извлекает медиапотоки с произвольных страниц и не обходит ограничения сайта.",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -2956,6 +3352,120 @@ private fun SettingsScreen(
     }
 }
 
+
+@Composable
+private fun JackettConfigFieldEditor(
+    field: app.jacket.mobile.data.JackettConfigField,
+    onValueChange: (String) -> Unit,
+    onValuesChange: (List<String>) -> Unit
+) {
+    // Hidden data fields carry server-side defaults/session state and must be
+    // submitted unchanged, but should never appear as editable controls.
+    if (field.type == "hiddendata") return
+
+    val secret = field.type == "password" || field.name.contains("password", ignoreCase = true)
+    val shownValue = if (field.isPreviousPassword) "" else field.value
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        when (field.type) {
+            "inputstring", "password", "inputtags" -> {
+                OutlinedTextField(
+                    value = shownValue,
+                    onValueChange = onValueChange,
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text(field.name) },
+                    placeholder = {
+                        Text(
+                            when {
+                                field.isPreviousPassword -> "Сохранённый пароль останется без изменений"
+                                field.type == "inputtags" -> "Введите теги через запятую"
+                                else -> ""
+                            }
+                        )
+                    },
+                    singleLine = field.type != "inputtags",
+                    visualTransformation = if (secret) PasswordVisualTransformation()
+                        else androidx.compose.ui.text.input.VisualTransformation.None
+                )
+                if (field.isPreviousPassword) {
+                    Text(
+                        "Пароль уже сохранён на сервере. Оставьте поле пустым, чтобы не менять его.",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+            "inputbool" -> {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(field.name, modifier = Modifier.weight(1f), fontWeight = FontWeight.Medium)
+                    Switch(
+                        checked = field.value.equals("true", ignoreCase = true),
+                        onCheckedChange = { onValueChange(it.toString()) }
+                    )
+                }
+            }
+            "inputselect" -> {
+                Text(field.name, fontWeight = FontWeight.Medium)
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    items(field.options.toList(), key = { it.first }) { option ->
+                        OutlinedButton(onClick = { onValueChange(option.first) }) {
+                            Text(
+                                if (field.value == option.first) "✓ ${option.second}" else option.second,
+                                maxLines = 1
+                            )
+                        }
+                    }
+                }
+            }
+            "inputcheckbox" -> {
+                Text(field.name, fontWeight = FontWeight.Medium)
+                field.options.forEach { (optionId, optionName) ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Checkbox(
+                            checked = optionId in field.values,
+                            onCheckedChange = { checked ->
+                                val updated = if (checked) field.values + optionId
+                                    else field.values.filterNot { it == optionId }
+                                onValuesChange(updated)
+                            }
+                        )
+                        Text(optionName, style = MaterialTheme.typography.bodyMedium)
+                    }
+                }
+            }
+            "displayinfo" -> {
+                val plainText = field.value
+                    .replace(Regex("<[^>]*>"), " ")
+                    .replace("&nbsp;", " ", ignoreCase = true)
+                    .replace(Regex("\\s+"), " ")
+                    .trim()
+                    .take(1600)
+                if (plainText.isNotBlank()) {
+                    Text(field.name, fontWeight = FontWeight.Medium)
+                    Text(plainText, style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+            "displayimage" -> {
+                Text(field.name, fontWeight = FontWeight.Medium)
+                Text("Изображение указано в панели Jackett; в настройках приложения оно не загружается.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            else -> {
+                Text("${field.name}: неподдерживаемый тип поля «${field.type}».",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.error)
+            }
+        }
+    }
+}
 
 @Composable
 private fun SettingsMenuRow(

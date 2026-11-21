@@ -4,6 +4,7 @@ import org.json.JSONObject
 import java.io.ByteArrayOutputStream
 import java.io.IOException
 import java.net.HttpURLConnection
+import java.net.URI
 import java.net.URL
 import java.net.URLEncoder
 
@@ -24,7 +25,15 @@ data class FilmixPendingDevice(
  */
 object FilmixDeviceAuth {
     const val ACTIVATION_URL = "https://filmix.my/consoles"
+    const val SITE_BASE = "https://filmix.my"
     const val DEFAULT_API_BASE = "https://filmixapp.cyou/api/v2"
+    const val ALTERNATE_API_BASE = "https://fxapp.biz/api/v2"
+
+    // Filmix support publishes fxapp.biz as an alternate API address for
+    // users whose network cannot reach the default endpoint. Keep the choice
+    // explicit: never send a device identifier or token to another host by
+    // automatic fallback.
+    private val API_BASE_CANDIDATES = listOf(DEFAULT_API_BASE, ALTERNATE_API_BASE)
 
     // The upstream reference client documents this Android API-compatible
     // fingerprint. The installation's unique device ID remains separate.
@@ -33,45 +42,44 @@ object FilmixDeviceAuth {
     private const val API_DEVICE_OS = "11"
     private const val API_DEVICE_APK = "2.0.9"
 
-    private val API_BASE_CANDIDATES = listOf(
-        DEFAULT_API_BASE,
-        "https://api.filmix.tv/api/v2"
-    )
     private const val CHECK_UPDATE_DEVICE_ID = "abcdef0123456789"
     private const val MAX_RESPONSE_BYTES = 256 * 1024
     private const val MAX_PROBE_BYTES = 16 * 1024
 
-    fun requestCode(deviceId: String): FilmixPendingDevice {
+    fun requestCode(
+        deviceId: String,
+        apiBase: String = DEFAULT_API_BASE
+    ): FilmixPendingDevice {
         require(deviceId.matches(Regex("[a-fA-F0-9]{16}"))) { "Некорректный ID устройства" }
-        val failures = ArrayList<String>(API_BASE_CANDIDATES.size)
-        for (apiBase in API_BASE_CANDIDATES) {
-            val host = runCatching { URL(apiBase).host }.getOrDefault("Filmix API")
-            try {
-                probeApiBase(apiBase)
-                val response = tokenRequest(apiBase, deviceId)
-                val code = response.optString("user_code").trim()
-                if (code.length !in 4..8) {
-                    throw IOException("token_request не вернул корректный код активации")
-                }
-                return FilmixPendingDevice(
-                    code = code,
-                    temporaryToken = response.optString("user_dev_token").trim(),
-                    deviceId = deviceId,
-                    apiBase = apiBase
-                )
-            } catch (error: Exception) {
-                failures += "$host: ${describeFailure(error)}"
+        val selectedBase = normalizeApiBase(apiBase)
+        val host = URI(selectedBase).host
+        try {
+            // Probe TLS and API compatibility before sending the installation ID.
+            probeApiBase(selectedBase)
+            val response = tokenRequest(selectedBase, deviceId)
+            val code = response.optString("user_code").trim()
+            if (code.length !in 4..8) {
+                throw IOException("token_request не вернул корректный код активации")
             }
+            return FilmixPendingDevice(
+                code = code,
+                temporaryToken = response.optString("user_dev_token").trim(),
+                deviceId = deviceId,
+                apiBase = selectedBase
+            )
+        } catch (error: Exception) {
+            throw IOException(
+                "Filmix API недоступен по HTTPS ($host: ${describeFailure(error)}). " +
+                    "Проверка сертификата не отключается. Проверьте системную дату, " +
+                    "обновления безопасности Android и доступность выбранного сервера.",
+                error
+            )
         }
-        throw IOException(
-            "Filmix API недоступен по HTTPS (${failures.joinToString("; ")}). " +
-                "Проверка TLS не отключалась. Проверьте доступность сервиса из вашей сети."
-        )
     }
 
     /** Returns the permanent token once Filmix confirms the code, otherwise null. */
     fun pollActivation(pending: FilmixPendingDevice): String? {
-        val response = tokenRequest(pending.apiBase, pending.deviceId)
+        val response = tokenRequest(normalizeApiBase(pending.apiBase), pending.deviceId)
         val token = response.optString("user_dev_token").trim()
         return token.takeIf { it.isNotBlank() && it != pending.temporaryToken }
     }
@@ -103,6 +111,26 @@ object FilmixDeviceAuth {
 
     internal fun apiBaseCandidates(): List<String> = API_BASE_CANDIDATES
 
+    /** Accept only the two HTTPS API hosts published by Filmix support. */
+    fun normalizeApiBase(value: String): String {
+        val uri = runCatching { URI(value.trim()) }
+            .getOrElse { throw IllegalArgumentException("Некорректный адрес API Filmix", it) }
+        val host = uri.host?.lowercase()
+            ?: throw IllegalArgumentException("В адресе API Filmix отсутствует домен")
+        require(uri.scheme.equals("https", true)) { "API Filmix должен использовать HTTPS" }
+        require(uri.port == -1 || uri.port == 443) { "Для API Filmix разрешён только стандартный HTTPS-порт" }
+        require(uri.rawUserInfo == null && uri.rawQuery.isNullOrBlank() && uri.rawFragment.isNullOrBlank()) {
+            "Адрес API Filmix не должен содержать логин, пароль, query или fragment"
+        }
+        require(host in setOf("filmixapp.cyou", "fxapp.biz")) {
+            "Разрешены только известные HTTPS API-адреса Filmix"
+        }
+        require(uri.rawPath.isNullOrBlank() || uri.rawPath == "/" || uri.rawPath.trimEnd('/') == "/api/v2") {
+            "Путь API Filmix должен быть /api/v2"
+        }
+        return "https://$host/api/v2"
+    }
+
     internal fun buildCheckUpdateUrl(apiBase: String): String = buildApiUrl(
         apiBase,
         "check_update",
@@ -115,8 +143,38 @@ object FilmixDeviceAuth {
     internal fun buildTokenRequestUrl(apiBase: String, deviceId: String): String =
         buildApiUrl(apiBase, "token_request", deviceId)
 
+    /** Builds a token-authenticated Filmix v2 API URL without logging its secret query value. */
+    internal fun buildAuthenticatedApiUrl(
+        apiBase: String,
+        endpoint: String,
+        deviceId: String,
+        token: String,
+        extraQuery: Map<String, String> = emptyMap()
+    ): String {
+        require(token.isNotBlank() && token.length <= 4096) { "Токен Filmix отсутствует или имеет неверный размер" }
+        val safeBase = normalizeApiBase(apiBase)
+        require(endpoint.matches(Regex("[a-zA-Z0-9_/-]{1,80}")) && !endpoint.contains("..")) {
+            "Некорректный endpoint Filmix"
+        }
+        val params = linkedMapOf(
+            "user_dev_id" to deviceId,
+            "user_dev_name" to API_DEVICE_NAME,
+            "user_dev_vendor" to API_DEVICE_VENDOR,
+            "user_dev_os" to API_DEVICE_OS,
+            "user_dev_apk" to API_DEVICE_APK,
+            "user_dev_token" to token
+        )
+        extraQuery.forEach { (key, value) ->
+            require(key.matches(Regex("[a-zA-Z0-9_]{1,40}"))) { "Некорректный параметр Filmix" }
+            require(key !in params) { "Переопределение параметров авторизации запрещено" }
+            params[key] = value.take(300)
+        }
+        return safeBase + "/" + endpoint.trimStart('/') + "?" +
+            params.entries.joinToString("&") { "${encode(it.key)}=${encode(it.value)}" }
+    }
+
     private fun buildApiUrl(apiBase: String, endpoint: String, deviceId: String): String {
-        require(apiBase.startsWith("https://", true)) { "Filmix API должен использовать HTTPS" }
+        val safeBase = normalizeApiBase(apiBase)
         require(deviceId.matches(Regex("[a-fA-F0-9]{16}"))) { "Некорректный ID устройства" }
         val params = linkedMapOf(
             "user_dev_id" to deviceId,
@@ -125,7 +183,7 @@ object FilmixDeviceAuth {
             "user_dev_os" to API_DEVICE_OS,
             "user_dev_apk" to API_DEVICE_APK
         )
-        return apiBase.trimEnd('/') + "/" + endpoint.trimStart('/') + "?" +
+        return safeBase + "/" + endpoint.trimStart('/') + "?" +
             params.entries.joinToString("&") { "${encode(it.key)}=${encode(it.value)}" }
     }
 
@@ -154,11 +212,16 @@ object FilmixDeviceAuth {
     private fun describeFailure(error: Throwable): String {
         val chain = generateSequence(error) { it.cause }.take(8).toList()
         return when {
+            chain.any { it is javax.net.ssl.SSLPeerUnverifiedException } ->
+                "TLS: сертификат не соответствует имени домена"
+            chain.any { it is java.security.cert.CertificateExpiredException } ->
+                "TLS: срок действия сертификата истёк"
             chain.any {
-                it is javax.net.ssl.SSLHandshakeException ||
-                    it is javax.net.ssl.SSLPeerUnverifiedException ||
-                    it is javax.net.ssl.SSLException
-            } -> "ошибка TLS-сертификата"
+                it is java.security.cert.CertificateException ||
+                    it is java.security.cert.CertPathValidatorException
+            } -> "TLS: цепочка сертификатов не доверена или неполная"
+            chain.any { it is javax.net.ssl.SSLException } ->
+                "TLS: ошибка рукопожатия или сертификата"
             chain.any { it is java.net.UnknownHostException } -> "ошибка DNS"
             chain.any { it is java.net.SocketTimeoutException } -> "тайм-аут"
             else -> error.message
@@ -185,6 +248,11 @@ object FilmixDeviceAuth {
 
     /** Hide raw certificate diagnostics while preserving safe per-host API status details. */
     fun userFriendlyError(error: Throwable): String {
+        val message = error.message.orEmpty()
+        // Preserve safe per-host information even when the cause is an SSLException.
+        if (message.startsWith("Filmix API недоступен по HTTPS")) {
+            return message.replace(Regex("[\\r\\n\\t]+"), " ").take(320)
+        }
         val chain = generateSequence(error) { it.cause }.take(8).toList()
         if (chain.any {
                 it is javax.net.ssl.SSLHandshakeException ||
@@ -196,10 +264,6 @@ object FilmixDeviceAuth {
             }
         ) {
             return "Filmix API: ошибка проверки HTTPS-сертификата. Проверьте адрес API или попробуйте позже."
-        }
-        val message = error.message.orEmpty()
-        if (message.startsWith("Filmix API недоступен по HTTPS")) {
-            return message.replace(Regex("[\\r\\n\\t]+"), " ").take(300)
         }
         return message.replace(Regex("[\\r\\n\\t]+"), " ").take(240)
             .ifBlank { "Не удалось подключить Filmix" }

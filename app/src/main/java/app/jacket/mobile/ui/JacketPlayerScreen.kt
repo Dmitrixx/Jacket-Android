@@ -81,6 +81,7 @@ fun JacketPlayerScreen(
     progressKey: String? = null,
     initialPositionMs: Long = 0L,
     subtitles: List<PlaybackSubtitle> = emptyList(),
+    httpHeaders: Map<String, String> = emptyMap(),
     onBack: () -> Unit
 ) {
     val context = LocalContext.current
@@ -90,7 +91,10 @@ fun JacketPlayerScreen(
     var playWhenReady by remember(streamUrl) { mutableStateOf(true) }
     var playerHasFocus by remember(streamUrl) { mutableStateOf(false) }
     var playbackError by remember(streamUrl) { mutableStateOf<String?>(null) }
-    val player = remember(streamUrl, subtitles) {
+    val safeHeaders = httpHeaders.filterKeys {
+        it.equals("Referer", true) || it.equals("User-Agent", true)
+    }.filterValues { it.isNotBlank() && it.length <= 512 }
+    val player = remember(streamUrl, subtitles, safeHeaders) {
         val subtitleConfigurations = subtitles.map { subtitle ->
             MediaItem.SubtitleConfiguration.Builder(Uri.parse(subtitle.url))
                 .setMimeType(subtitle.mimeType)
@@ -104,6 +108,7 @@ fun JacketPlayerScreen(
         val dataSourceFactory = DefaultHttpDataSource.Factory()
             .setConnectTimeoutMs(12_000)
             .setReadTimeoutMs(if (isLoopbackStream) 120_000 else 30_000)
+            .setDefaultRequestProperties(safeHeaders)
         val mediaSourceFactory = DefaultMediaSourceFactory(context)
             .setDataSourceFactory(dataSourceFactory)
         ExoPlayer.Builder(context)
