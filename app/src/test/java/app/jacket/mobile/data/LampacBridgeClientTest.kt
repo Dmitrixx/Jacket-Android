@@ -104,6 +104,21 @@ class LampacBridgeClientTest {
     }
 
     @Test
+    fun stripsAccountCredentialsFromProviderPageMetadata() {
+        val safe = LampacBridgeClient.stripSensitiveQueryParams(
+            "/lite/rezka/movie?title=Demo&account_email=user%40example.com&uid=device&token=secret&rjson=true",
+            "https://lampac.example"
+        )
+        assertTrue(safe.startsWith("https://lampac.example/lite/rezka/movie?"))
+        assertTrue(safe.contains("title=Demo"))
+        assertTrue(safe.contains("rjson=true"))
+        assertFalse(safe.contains("account_email"))
+        assertFalse(safe.contains("uid="))
+        assertFalse(safe.contains("token="))
+        assertFalse(safe.contains("secret"))
+    }
+
+    @Test
     fun parsesMovieStreamsAndCopiesOnlySafePlaybackHeaders() {
         val data = JSONArray().put(
             JSONObject()
