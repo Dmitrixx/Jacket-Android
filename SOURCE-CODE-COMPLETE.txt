@@ -3033,3 +3033,1191 @@ class IndexerRegistry(
 }
 
 END FILE: app/src/main/java/app/jacket/mobile/data/IndexerRegistry.kt
+
+
+========================================================================================
+FILE: app/src/main/java/app/jacket/mobile/data/JackettIndexerClient.kt
+========================================================================================
+
+package app.jacket.mobile.data
+
+import org.json.JSONArray
+import org.json.JSONObject
+import java.io.ByteArrayOutputStream
+import java.io.IOException
+import java.net.HttpURLConnection
+import java.net.URL
+import java.net.URLEncoder
+import java.util.Locale
+
+/** A single indexer entry returned by Jackett's native REST catalogue. */
+data class JackettIndexerEntry(
+    val id: String,
+    val name: String,
+    val description: String = "",
+    val siteLink: String? = null,
+    val alternateSiteLinks: List<String> = emptyList(),
+    val language: String? = null,
+    val type: String? = null,
+    val configured: Boolean = false,
+    val categoryIds: List<String> = emptyList(),
+    val categoryNames: List<String> = emptyList(),
+    val lastError: String? = null
+) {
+    val isPrivate: Boolean
+        get() = type.equals("private", ignoreCase = true)
+}
+
+/**
+ * One dynamic setup field from Jackett's authenticated indexer configuration endpoint.
+ * Password replacement markers are preserved if the user does not enter a new value.
+ */
+data class JackettConfigField(
+    val id: String,
+    val type: String,
+    val name: String,
+    val value: String = "",
+    val values: List<String> = emptyList(),
+    val options: Map<String, String> = emptyMap(),
+    val separator: String? = null,
+    val delimiters: String? = null,
+    val pattern: String? = null,
+    val whitelist: List<String> = emptyList(),
+    val blacklist: List<String> = emptyList(),
+    /** Original server value, retained so an unchanged masked password stays untouched. */
+    val originalValue: String = value
+) {
+    val isPreviousPassword: Boolean
+        get() = originalValue == PASSWORD_REPLACEMENT && value.isBlank()
+
+    companion object {
+        const val PASSWORD_REPLACEMENT = "|||%%PREVJACKPASSWD%%|||"
+    }
+}
+
+/**
+ * Jackett's native REST administration API.
+ *
+ * The public catalogue and per-indexer setup endpoints are different from Torznab search:
+ * - GET /api/v2.0/indexers returns the public/private/configured/capabilities catalogue.
+ * - GET /api/v2.0/indexers/{id}/config returns dynamic setup controls.
+ * - POST /api/v2.0/indexers/{id}/config saves those controls.
+ *
+ * Management endpoints use the user's authenticated Jackett dashboard session cookie,
+ * stored in IndexerConfig.cookie (encrypted locally). The API key remains for Torznab search.
+ */
+object JackettIndexerClient {
+    private const val MAX_RESPONSE_BYTES = 2 * 1024 * 1024
+    private const val MAX_CONFIG_FIELDS = 120
+    private const val MAX_CONFIG_BODY_BYTES = 128 * 1024
+    private const val CONNECT_TIMEOUT_MS = 8_000
+    private const val READ_TIMEOUT_MS = 12_000
+    private const val USER_AGENT = "JacketAndroid/2.6 (Jackett native indexer manager)"
+    private val INDEXER_ID_PATTERN = Regex("[a-zA-Z0-9][a-zA-Z0-9._:-]{0,99}")
+
+    fun fetch(config: IndexerConfig): List<JackettIndexerEntry> {
+        validateJackettConfig(config)
+        val url = buildIndexersUrl(baseUrl(config))
+        val body = execute(config, url, "GET").toString(Charsets.UTF_8)
+        val entries = parseIndexersJson(body, listOf(config.apiKey, config.cookie, config.username, config.password))
+        if (entries.isEmpty()) throw IOException("Jackett вернул пустой каталог индексаторов")
+        return entries
+    }
+
+    /** Reads the editable controls for one indexer; dashboard Cookie is required when auth is enabled. */
+    fun fetchIndexerConfig(config: IndexerConfig, indexerId: String): List<JackettConfigField> {
+        validateJackettConfig(config)
+        val url = buildIndexerConfigUrl(baseUrl(config), indexerId)
+        val body = execute(config, url, "GET").toString(Charsets.UTF_8)
+        return parseIndexerConfig(body)
+    }
+
+    /** Runs Jackett's own tracker test endpoint and lets it update last_error. */
+    fun testIndexer(config: IndexerConfig, indexerId: String) {
+        validateJackettConfig(config)
+        execute(config, buildIndexerTestUrl(baseUrl(config), indexerId), "POST")
+    }
+
+    /** Saves the dynamic controls and lets Jackett test the indexer when its config requires it. */
+    fun updateIndexerConfig(
+        config: IndexerConfig,
+        indexerId: String,
+        fields: List<JackettConfigField>
+    ) {
+        validateJackettConfig(config)
+        require(fields.size <= MAX_CONFIG_FIELDS) { "Слишком много настроек индексатора" }
+        val url = buildIndexerConfigUrl(baseUrl(config), indexerId)
+        val body = buildConfigPayload(fields).toString()
+        require(body.toByteArray(Charsets.UTF_8).size <= MAX_CONFIG_BODY_BYTES) {
+            "Данные настройки индексатора слишком большие"
+        }
+        execute(config, url, "POST", body.toByteArray(Charsets.UTF_8))
+    }
+
+    /** Creates the REST catalogue endpoint used by Jackett's own dashboard. */
+    internal fun buildIndexersUrl(baseUrl: String): String {
+        val base = JackettUrl.normalizeBase(baseUrl)
+            ?: throw IllegalArgumentException("Некорректный адрес сервера Jackett")
+        return "$base/api/v2.0/indexers"
+    }
+
+    internal fun buildIndexerConfigUrl(baseUrl: String, indexerId: String): String {
+        require(INDEXER_ID_PATTERN.matches(indexerId)) {
+            "Jackett вернул некорректный идентификатор индексатора"
+        }
+        return buildIndexersUrl(baseUrl) + "/" +
+            URLEncoder.encode(indexerId, Charsets.UTF_8.name()) + "/config"
+    }
+
+    internal fun buildIndexerTestUrl(baseUrl: String, indexerId: String): String {
+        require(INDEXER_ID_PATTERN.matches(indexerId)) {
+            "Jackett вернул некорректный идентификатор индексатора"
+        }
+        return buildIndexersUrl(baseUrl) + "/" +
+            URLEncoder.encode(indexerId, Charsets.UTF_8.name()) + "/test"
+    }
+
+    /** Converts one catalogue row into the existing in-app Torznab search configuration. */
+    fun searchConfig(base: IndexerConfig, indexerId: String): IndexerConfig {
+        require(INDEXER_ID_PATTERN.matches(indexerId)) {
+            "Jackett вернул некорректный идентификатор индексатора"
+        }
+        val parsed = JackettUrl.parseTemplate(base.searchUrlTemplate)
+            ?: throw IllegalArgumentException("Некорректный URL Jackett")
+        return base.copy(
+            id = base.id,
+            name = "Jackett · $indexerId",
+            searchUrlTemplate = JackettUrl.searchTemplate(parsed.baseUrl, indexerId),
+            protocol = IndexerProtocol.JACKETT,
+            enabled = base.enabled
+        )
+    }
+
+    internal fun parseIndexersJson(
+        json: String,
+        configuredSecrets: Collection<String> = emptyList()
+    ): List<JackettIndexerEntry> {
+        require(json.length <= MAX_RESPONSE_BYTES) { "Ответ каталога Jackett слишком большой" }
+        val array = runCatching { JSONArray(json) }
+            .getOrElse { throw IOException("Jackett вернул некорректный JSON каталога", it) }
+        val entries = LinkedHashMap<String, JackettIndexerEntry>()
+        for (index in 0 until minOf(array.length(), 1_000)) {
+            val item = array.optJSONObject(index) ?: continue
+            val id = item.optString("id").trim()
+            if (!INDEXER_ID_PATTERN.matches(id)) continue
+            val capabilities = item.optJSONArray("caps")
+            val categoryIds = ArrayList<String>()
+            val categoryNames = ArrayList<String>()
+            if (capabilities != null) {
+                for (capIndex in 0 until minOf(capabilities.length(), 500)) {
+                    val capability = capabilities.optJSONObject(capIndex) ?: continue
+                    val categoryId = capability.optString("ID").takeIf(String::isNotBlank)
+                    val categoryName = capability.optString("Name").trim().takeIf(String::isNotBlank)
+                    if (categoryId != null) categoryIds += categoryId
+                    if (categoryName != null) categoryNames += categoryName
+                }
+            }
+            val alternateLinks = item.optJSONArray("alternativesitelinks")?.toStringList().orEmpty()
+                .filter(LocalNetwork::isAllowedUrl).take(20)
+            val siteLink = item.optString("site_link").takeIf(String::isNotBlank)
+                ?.takeIf(LocalNetwork::isAllowedUrl)
+            entries[id] = JackettIndexerEntry(
+                id = id,
+                name = item.optString("name").ifBlank { id }.take(160),
+                description = item.optString("description").take(1200),
+                siteLink = siteLink,
+                alternateSiteLinks = alternateLinks,
+                language = item.optString("language").takeIf(String::isNotBlank),
+                type = item.optString("type").takeIf(String::isNotBlank),
+                configured = item.optBoolean("configured", false),
+                categoryIds = categoryIds.distinct().take(100),
+                categoryNames = categoryNames.distinct().take(100),
+                lastError = item.optString("last_error").takeIf(String::isNotBlank)
+                    ?.let { IndexerErrorSanitizer.sanitize(it, configuredSecrets) }
+            )
+        }
+        return entries.values.sortedWith(
+            compareBy<JackettIndexerEntry> { !it.configured }
+                .thenBy { it.name.lowercase(Locale.ROOT) }
+        )
+    }
+
+    internal fun parseIndexerConfig(json: String): List<JackettConfigField> {
+        require(json.length <= MAX_RESPONSE_BYTES) { "Ответ настроек Jackett слишком большой" }
+        val array = runCatching { JSONArray(json) }
+            .getOrElse { throw IOException("Jackett вернул некорректные настройки индексатора", it) }
+        return buildList {
+            for (index in 0 until minOf(array.length(), MAX_CONFIG_FIELDS)) {
+                val item = array.optJSONObject(index) ?: continue
+                val id = item.optString("id").trim()
+                val type = item.optString("type").lowercase(Locale.ROOT)
+                if (id.isBlank() || id.length > 120 || type.isBlank()) continue
+                val values = item.optJSONArray("values")?.toStringList().orEmpty()
+                val optionsObject = item.optJSONObject("options")
+                val options = LinkedHashMap<String, String>()
+                if (optionsObject != null) {
+                    val keys = optionsObject.keys()
+                    while (keys.hasNext() && options.size < 300) {
+                        val key = keys.next()
+                        options[key] = optionsObject.optString(key).take(300)
+                    }
+                }
+                val fieldValue = item.opt("value")?.let { value ->
+                    if (value == JSONObject.NULL) "" else value.toString()
+                }.orEmpty().take(8_192)
+                // Jackett deliberately masks an existing password with this marker.
+                // Present an empty editor, but retain the original marker for POST.
+                val editableValue = if (
+                    type == "password" && fieldValue == JackettConfigField.PASSWORD_REPLACEMENT
+                ) "" else fieldValue
+                add(
+                    JackettConfigField(
+                        id = id,
+                        type = type,
+                        name = item.optString("name").ifBlank { id }.take(160),
+                        value = editableValue,
+                        originalValue = fieldValue,
+                        values = values.take(300),
+                        options = options,
+                        separator = item.optString("separator").takeIf(String::isNotBlank)?.take(4),
+                        delimiters = item.optString("delimiters").takeIf(String::isNotBlank)?.take(200),
+                        pattern = item.optString("pattern").takeIf(String::isNotBlank)?.take(300),
+                        whitelist = item.optString("whitelist").split(',').map(String::trim)
+                            .filter(String::isNotBlank).take(200),
+                        blacklist = item.optString("blacklist").split(',').map(String::trim)
+                            .filter(String::isNotBlank).take(200)
+                    )
+                )
+            }
+        }
+    }
+
+    /** Builds the exact id/value(s) array consumed by Jackett's UpdateConfig controller. */
+    internal fun buildConfigPayload(fields: List<JackettConfigField>): JSONArray {
+        val payload = JSONArray()
+        fields.forEach { field ->
+            require(field.id.isNotBlank() && field.id.length <= 120) { "Некорректное поле настройки" }
+            val item = JSONObject().put("id", field.id)
+            when (field.type) {
+                "inputcheckbox" -> {
+                    val allowed = field.options.keys
+                    val safeValues = field.values.distinct().filter { it in allowed }.take(300)
+                    item.put("values", JSONArray(safeValues))
+                }
+                "inputbool" -> item.put("value", field.value.equals("true", ignoreCase = true))
+                "password" -> {
+                    // Jackett's password marker means "leave the stored secret unchanged".
+                    // The UI keeps that intent even after a user types and then clears the field.
+                    val passwordValue = if (
+                        field.value.isBlank() && field.originalValue == JackettConfigField.PASSWORD_REPLACEMENT
+                    ) {
+                        JackettConfigField.PASSWORD_REPLACEMENT
+                    } else {
+                        field.value
+                    }
+                    item.put("value", passwordValue.take(8_192))
+                }
+                "inputstring", "inputselect", "inputtags", "hiddendata" ->
+                    item.put("value", field.value.take(8_192))
+                // Jackett's own dashboard includes an id-only entry for display-only controls.
+                "displayinfo", "displayimage" -> Unit
+                else -> Unit
+            }
+            payload.put(item)
+        }
+        return payload
+    }
+
+    private fun execute(
+        config: IndexerConfig,
+        url: String,
+        method: String,
+        body: ByteArray? = null
+    ): ByteArray {
+        if (!LocalNetwork.isAllowedUrl(url)) {
+            throw IOException("Jackett должен быть доступен по HTTPS или по локальному HTTP")
+        }
+        val connection = (URL(url).openConnection() as HttpURLConnection).apply {
+            requestMethod = method
+            connectTimeout = CONNECT_TIMEOUT_MS
+            readTimeout = READ_TIMEOUT_MS
+            instanceFollowRedirects = false
+            setRequestProperty("Accept", "application/json")
+            setRequestProperty("User-Agent", USER_AGENT)
+            if (config.cookie.isNotBlank()) setRequestProperty("Cookie", config.cookie.take(8_192))
+            if (config.username.isNotBlank() || config.password.isNotBlank()) {
+                val credentials = "${config.username}:${config.password}"
+                val encoded = java.util.Base64.getEncoder()
+                    .encodeToString(credentials.toByteArray(Charsets.UTF_8))
+                setRequestProperty("Authorization", "Basic $encoded")
+            }
+            if (body != null) {
+                doOutput = true
+                setRequestProperty("Content-Type", "application/json; charset=utf-8")
+                setFixedLengthStreamingMode(body.size)
+            }
+        }
+        try {
+            if (body != null) connection.outputStream.use { it.write(body) }
+            val status = connection.responseCode
+            if (status !in 200..299) {
+                val message = when (status) {
+                    401, 403 -> "Jackett отклонил доступ. Проверьте Cookie авторизованной панели в настройках."
+                    404 -> "Jackett не нашёл REST endpoint /api/v2.0/indexers."
+                    429 -> "Jackett временно ограничил количество запросов."
+                    else -> "Jackett вернул HTTP $status."
+                }
+                throw IOException(message)
+            }
+            if (status == HttpURLConnection.HTTP_NO_CONTENT) return ByteArray(0)
+            val stream = connection.inputStream
+            return stream.use { readLimited(it, MAX_RESPONSE_BYTES) }
+        } finally {
+            connection.disconnect()
+        }
+    }
+
+    private fun validateJackettConfig(config: IndexerConfig) {
+        require(config.protocol == IndexerProtocol.JACKETT) {
+            "Для каталога индексаторов нужен подключённый Jackett"
+        }
+        require(config.apiKey.isNotBlank()) { "Укажите API-ключ Jackett для поиска Torznab" }
+    }
+
+    private fun baseUrl(config: IndexerConfig): String =
+        JackettUrl.parseTemplate(config.searchUrlTemplate)?.baseUrl
+            ?: throw IOException("Не удалось определить адрес сервера Jackett")
+
+    private fun JSONArray.toStringList(): List<String> = buildList {
+        for (i in 0 until minOf(length(), 500)) {
+            val value = optString(i).takeIf(String::isNotBlank) ?: continue
+            add(value.take(300))
+        }
+    }
+
+    private fun readLimited(input: java.io.InputStream, maxBytes: Int): ByteArray {
+        val output = ByteArrayOutputStream()
+        val buffer = ByteArray(8_192)
+        var total = 0
+        while (true) {
+            val count = input.read(buffer)
+            if (count < 0) break
+            total += count
+            if (total > maxBytes) throw IOException("Ответ Jackett слишком большой")
+            output.write(buffer, 0, count)
+        }
+        return output.toByteArray()
+    }
+}
+
+END FILE: app/src/main/java/app/jacket/mobile/data/JackettIndexerClient.kt
+
+
+========================================================================================
+FILE: app/src/main/java/app/jacket/mobile/data/LocalNetwork.kt
+========================================================================================
+
+package app.jacket.mobile.data
+
+import java.net.Inet6Address
+import java.net.InetAddress
+import java.net.URI
+
+/**
+ * URL policy shared by direct indexers and an optional self-hosted Jackett server.
+ *
+ * HTTPS may target public providers. Cleartext HTTP is restricted to literal private/loopback/
+ * link-local addresses and explicitly local DNS suffixes; generic single-label hosts are rejected
+ * because they can resolve outside the local network on some devices.
+ */
+object LocalNetwork {
+    private val localSuffixes = listOf(".local", ".lan", ".home.arpa", ".localhost")
+
+    fun isAllowedUrl(value: String): Boolean = runCatching {
+        val uri = URI(value.trim())
+        if (uri.rawUserInfo != null || uri.host.isNullOrBlank() || uri.rawFragment != null) return false
+        when (uri.scheme?.lowercase()) {
+            "https" -> true
+            "http" -> isLocalHost(uri.host)
+            else -> false
+        }
+    }.getOrDefault(false)
+
+    fun isLocalHost(rawHost: String): Boolean {
+        val host = rawHost.trim().removePrefix("[").removeSuffix("]").trimEnd('.').lowercase()
+        if (host.isBlank()) return false
+        if (host == "localhost" || host.endsWith(".localhost")) return true
+        parseIpv4(host)?.let { return isPrivateIpv4(it) }
+        if (host.contains(':')) return isPrivateIpv6(host)
+        return localSuffixes.any(host::endsWith)
+    }
+
+    private fun parseIpv4(host: String): IntArray? {
+        val parts = host.split('.')
+        if (parts.size != 4) return null
+        val values = IntArray(4)
+        for (index in 0..3) {
+            val part = parts[index]
+            if (part.isEmpty() || part.length > 3 || !part.all(Char::isDigit)) return null
+            val value = part.toIntOrNull()?.takeIf { it in 0..255 } ?: return null
+            values[index] = value
+        }
+        return values
+    }
+
+    private fun isPrivateIpv4(o: IntArray): Boolean =
+        o[0] == 10 ||
+            o[0] == 127 ||
+            (o[0] == 172 && o[1] in 16..31) ||
+            (o[0] == 192 && o[1] == 168) ||
+            (o[0] == 169 && o[1] == 254) ||
+            (o[0] == 100 && o[1] in 64..127)
+
+    private fun isPrivateIpv6(rawHost: String): Boolean = runCatching {
+        // The host contains ':' so it is an IPv6 literal, not a DNS name.
+        val literal = rawHost.substringBefore('%')
+        val address = InetAddress.getByName(literal)
+        if (address !is Inet6Address) return false
+        val bytes = address.address
+        val loopback = bytes.dropLast(1).all { it == 0.toByte() } && bytes.last() == 1.toByte()
+        val uniqueLocal = (bytes[0].toInt() and 0xfe) == 0xfc // fc00::/7
+        val linkLocal = (bytes[0].toInt() and 0xff) == 0xfe &&
+            (bytes[1].toInt() and 0xc0) == 0x80 // fe80::/10
+        loopback || uniqueLocal || linkLocal
+    }.getOrDefault(false)
+}
+
+/** Normalizes a Jackett dashboard or Torznab URL into its server origin and indexer filter. */
+object JackettUrl {
+    const val DEFAULT_INDEXER = "all"
+    private const val API_PATH = "/api/v2.0/indexers/"
+    private const val API_TAIL = "/results/torznab/api"
+
+    data class Parsed(val baseUrl: String, val indexer: String)
+
+    /**
+     * Accepts a bare host, a dashboard URL, or a copied Torznab API URL.
+     * Local hosts default to HTTP; public hosts default to HTTPS.
+     */
+    fun normalizeBase(input: String): String? = runCatching {
+        var text = input.trim().substringBefore('#').substringBefore('?')
+        if (text.isBlank()) return null
+        if (!text.contains("://")) {
+            val authority = text.substringBefore('/')
+            val host = if (authority.startsWith("[")) {
+                authority.substringAfter('[').substringBefore(']')
+            } else {
+                authority.substringBefore(':')
+            }
+            val scheme = if (LocalNetwork.isLocalHost(host)) "http" else "https"
+            text = "$scheme://$text"
+        }
+        val uri = URI(text)
+        if (uri.rawUserInfo != null || uri.host.isNullOrBlank()) return null
+        val scheme = uri.scheme?.lowercase() ?: return null
+        if (scheme !in setOf("http", "https")) return null
+
+        val rawPath = uri.rawPath.orEmpty().trimEnd('/')
+        val lowerPath = rawPath.lowercase()
+        val apiAt = lowerPath.indexOf(API_PATH)
+        val dashboardAt = listOf("/ui/dashboard", "/ui/").map { lowerPath.indexOf(it) }
+            .filter { it >= 0 }.minOrNull()
+        val cutAt = listOfNotNull(apiAt.takeIf { it >= 0 }, dashboardAt).minOrNull()
+        val basePath = if (cutAt != null) rawPath.substring(0, cutAt) else rawPath
+
+        val normalized = buildString {
+            append(scheme).append("://").append(uri.rawAuthority)
+            if (basePath.isNotBlank()) append(basePath.trimEnd('/'))
+        }
+        normalized.takeIf(LocalNetwork::isAllowedUrl)
+    }.getOrNull()
+
+    fun searchTemplate(baseUrl: String, indexer: String = DEFAULT_INDEXER): String {
+        val id = sanitizeIndexer(indexer)
+        return baseUrl.trimEnd('/') + API_PATH + id + API_TAIL + "?t=search&q={query}"
+    }
+
+    /** A cheap connection test; the registry preserves this t=caps when adding common parameters. */
+    fun capabilitiesTemplate(baseUrl: String, indexer: String = DEFAULT_INDEXER): String {
+        val id = sanitizeIndexer(indexer)
+        return baseUrl.trimEnd('/') + API_PATH + id + API_TAIL + "?t=caps&q={query}"
+    }
+
+    fun parseTemplate(template: String): Parsed? {
+        val at = template.indexOf(API_PATH)
+        if (at <= 0) return null
+        val suffix = template.substring(at + API_PATH.length)
+        val indexer = suffix.substringBefore('/')
+        val base = template.substring(0, at).trimEnd('/')
+        return Parsed(base, indexer.ifBlank { DEFAULT_INDEXER })
+    }
+
+    private fun sanitizeIndexer(value: String): String {
+        val clean = value.trim().filter { it.isLetterOrDigit() || it in "-_.:" }.take(100)
+        return clean.takeUnless { it.isBlank() || it.all { ch -> ch == '.' } } ?: DEFAULT_INDEXER
+    }
+}
+
+END FILE: app/src/main/java/app/jacket/mobile/data/LocalNetwork.kt
+
+
+========================================================================================
+FILE: app/src/main/java/app/jacket/mobile/data/MediaCatalogClient.kt
+========================================================================================
+
+package app.jacket.mobile.data
+
+import android.net.Uri
+import org.json.JSONArray
+import org.json.JSONObject
+import org.xmlpull.v1.XmlPullParser
+import android.util.Xml
+import java.io.ByteArrayOutputStream
+import java.io.IOException
+import java.net.HttpURLConnection
+import java.net.URL
+
+/**
+ * In-app catalog and indexer clients.
+ *
+ * The application talks directly to public catalog/indexer endpoints. It does not require a
+ * separately-installed Jackett server or a Jackett Torznab API key.
+ */
+class MediaCatalogClient {
+    fun loadHome(tmdbToken: String): List<MediaSection> {
+        if (tmdbToken.isNotBlank()) {
+            return listOf(
+                MediaSection("Популярные фильмы", tmdbList("/3/movie/popular", tmdbToken, MediaKind.MOVIE)),
+                MediaSection("Сейчас в тренде", tmdbList("/3/trending/all/week", tmdbToken, MediaKind.MOVIE)),
+                MediaSection("Популярные сериалы", tmdbList("/3/tv/popular", tmdbToken, MediaKind.SERIES))
+            ).filter { it.items.isNotEmpty() }
+        }
+
+        return listOf(
+            MediaSection("Открытая коллекция фильмов", archiveSearch("", "mediatype:movies")),
+            MediaSection("Документальное кино", archiveSearch("documentary", "mediatype:movies AND subject:documentary")),
+            MediaSection("Классика кино", archiveSearch("", "mediatype:movies AND year:[1900 TO 1970]"))
+        ).filter { it.items.isNotEmpty() }
+    }
+
+    fun movies(tmdbToken: String): List<CatalogItem> =
+        if (tmdbToken.isNotBlank()) tmdbList("/3/movie/popular", tmdbToken, MediaKind.MOVIE)
+        else archiveSearch("", "mediatype:movies")
+
+    fun series(tmdbToken: String): List<CatalogItem> =
+        if (tmdbToken.isNotBlank()) tmdbList("/3/tv/popular", tmdbToken, MediaKind.SERIES)
+        else archiveSearch("television", "mediatype:movies AND subject:television")
+
+    fun search(query: String, tmdbToken: String): List<CatalogItem> {
+        val clean = query.trim()
+        if (clean.isBlank()) return emptyList()
+        val archive = archiveSearch(clean, "mediatype:movies AND (${escapeLucene(clean)})")
+        if (tmdbToken.isBlank()) return archive
+
+        val metadata = tmdbSearch(clean, tmdbToken)
+        return (metadata + archive).distinctBy { it.id }.take(MAX_RESULTS)
+    }
+
+    fun seasons(item: CatalogItem, tmdbToken: String): List<MediaSeason> {
+        if (item.kind != MediaKind.SERIES || item.providerId != TMDB_PROVIDER || tmdbToken.isBlank()) return emptyList()
+        val json = requestJson("https://api.themoviedb.org/3/tv/${item.providerItemId}?language=ru-RU", bearer = tmdbToken)
+        val array = json.optJSONArray("seasons") ?: return emptyList()
+        return buildList {
+            for (i in 0 until minOf(array.length(), MAX_SEASONS)) {
+                val season = array.optJSONObject(i) ?: continue
+                val number = season.optInt("season_number", -1)
+                if (number <= 0) continue // season 0 is Specials, not a numbered season
+                val poster = season.optString("poster_path").takeIf(String::isNotBlank)
+                    ?.let { "https://image.tmdb.org/t/p/w500$it" }
+                add(
+                    MediaSeason(
+                        seasonNumber = number,
+                        name = season.optString("name").ifBlank { "Сезон $number" },
+                        episodeCount = season.optInt("episode_count").coerceAtLeast(0),
+                        posterUrl = poster,
+                        overview = season.optString("overview")
+                    )
+                )
+            }
+        }.sortedBy { it.seasonNumber }
+    }
+
+    fun episodes(item: CatalogItem, seasonNumber: Int, tmdbToken: String): List<MediaEpisode> {
+        if (item.kind != MediaKind.SERIES || item.providerId != TMDB_PROVIDER || tmdbToken.isBlank() || seasonNumber <= 0) {
+            return emptyList()
+        }
+        val json = requestJson(
+            "https://api.themoviedb.org/3/tv/${item.providerItemId}/season/$seasonNumber?language=ru-RU",
+            bearer = tmdbToken
+        )
+        val array = json.optJSONArray("episodes") ?: return emptyList()
+        return buildList {
+            for (i in 0 until minOf(array.length(), MAX_EPISODES_PER_SEASON)) {
+                val episode = array.optJSONObject(i) ?: continue
+                val number = episode.optInt("episode_number", -1)
+                if (number <= 0) continue
+                val still = episode.optString("still_path").takeIf(String::isNotBlank)
+                    ?.let { "https://image.tmdb.org/t/p/w500$it" }
+                add(
+                    MediaEpisode(
+                        seasonNumber = seasonNumber,
+                        episodeNumber = number,
+                        name = episode.optString("name").ifBlank { "Серия $number" },
+                        overview = episode.optString("overview"),
+                        airDate = episode.optString("air_date").takeIf(String::isNotBlank),
+                        stillUrl = still
+                    )
+                )
+            }
+        }.sortedBy { it.episodeNumber }
+    }
+
+    fun archiveSources(query: String): List<SourceResult> {
+        val items = archiveSearch(query, "mediatype:movies AND (${escapeLucene(query)})")
+        return items.take(MAX_SOURCE_DETAILS).mapNotNull { item ->
+            runCatching { archiveDetails(item).toSourceResult() }.getOrNull()
+        }
+    }
+
+    fun details(item: CatalogItem): MediaDetails {
+        if (item.providerId == ARCHIVE_PROVIDER) return archiveDetails(item)
+        val token = ""
+        return MediaDetails(
+            item = item,
+            description = item.overview,
+            pageUrl = item.catalogUrl
+        )
+    }
+
+    fun tmdbDetails(item: CatalogItem, tmdbToken: String): MediaDetails {
+        if (item.providerId == ARCHIVE_PROVIDER) return archiveDetails(item)
+        if (tmdbToken.isBlank()) return details(item)
+        val mediaPath = if (item.kind == MediaKind.SERIES) "tv" else "movie"
+        val json = requestJson("https://api.themoviedb.org/3/$mediaPath/${item.providerItemId}?language=ru-RU", bearer = tmdbToken)
+        val overview = json.optString("overview").ifBlank { item.overview }
+        val runtime = when (item.kind) {
+            MediaKind.MOVIE -> json.optInt("runtime").takeIf { it > 0 }?.let { "${it} мин." }
+            MediaKind.SERIES -> json.optJSONObject("episode_run_time")?.optInt("0")?.takeIf { it > 0 }?.let { "${it} мин. серия" }
+                ?: json.optJSONArray("episode_run_time")?.optInt(0)?.takeIf { it > 0 }?.let { "${it} мин. серия" }
+            else -> null
+        }
+        val genres = json.optJSONArray("genres")?.joinStrings("name")
+        val summary = listOfNotNull(overview, genres?.takeIf { it.isNotBlank() }?.let { "Жанры: $it" }).joinToString("\n\n")
+        return MediaDetails(item, summary, runtime = runtime, pageUrl = item.catalogUrl)
+    }
+
+    fun archiveDetails(item: CatalogItem): MediaDetails {
+        val json = requestJson("https://archive.org/metadata/${Uri.encode(item.providerItemId)}")
+        val metadata = json.optJSONObject("metadata") ?: JSONObject()
+        val files = json.optJSONArray("files") ?: JSONArray()
+        val license = metadata.optString("licenseurl").takeIf(String::isNotBlank) ?: item.licenseUrl
+        val creator = metadata.firstText("creator", "artist", "director")
+        val description = metadata.firstText("description", "abstract").ifBlank { item.overview }
+        val runtime = metadata.firstText("runtime", "length").takeIf(String::isNotBlank)
+        val mediaFile = findVideoFile(files)
+        val torrentFile = findTorrentFile(files)
+        val streamUrl = if (isKnownOpenLicense(license) && mediaFile != null) {
+            downloadUrl(item.providerItemId, mediaFile.first)
+        } else null
+        val torrentUrl = if (isKnownOpenLicense(license) && torrentFile != null) {
+            downloadUrl(item.providerItemId, torrentFile.first)
+        } else null
+
+        return MediaDetails(
+            item = item.copy(licenseUrl = license),
+            description = description,
+            creator = creator,
+            runtime = runtime,
+            licenseUrl = license,
+            streamUrl = streamUrl,
+            torrentUrl = torrentUrl,
+            pageUrl = "https://archive.org/details/${Uri.encode(item.providerItemId)}",
+            fileSizeBytes = mediaFile?.second
+        )
+    }
+
+    private fun tmdbList(path: String, token: String, defaultKind: MediaKind): List<CatalogItem> {
+        val json = requestJson("https://api.themoviedb.org$path?language=ru-RU&page=1", bearer = token)
+        val array = json.optJSONArray("results") ?: return emptyList()
+        return buildList {
+            for (i in 0 until minOf(array.length(), MAX_RESULTS)) {
+                val item = array.optJSONObject(i) ?: continue
+                val actualKind = when (item.optString("media_type")) {
+                    "tv" -> MediaKind.SERIES
+                    "movie" -> MediaKind.MOVIE
+                    else -> defaultKind
+                }
+                tmdbItem(item, actualKind)?.let(::add)
+            }
+        }
+    }
+
+    private fun tmdbSearch(query: String, token: String): List<CatalogItem> {
+        val uri = Uri.parse("https://api.themoviedb.org/3/search/multi")
+            .buildUpon()
+            .appendQueryParameter("query", query)
+            .appendQueryParameter("language", "ru-RU")
+            .appendQueryParameter("include_adult", "false")
+            .build()
+        val json = requestJson(uri.toString(), bearer = token)
+        val array = json.optJSONArray("results") ?: return emptyList()
+        return buildList {
+            for (i in 0 until minOf(array.length(), MAX_RESULTS)) {
+                val obj = array.optJSONObject(i) ?: continue
+                val kind = when (obj.optString("media_type")) {
+                    "tv" -> MediaKind.SERIES
+                    "movie" -> MediaKind.MOVIE
+                    else -> continue
+                }
+                tmdbItem(obj, kind)?.let(::add)
+            }
+        }
+    }
+
+    private fun tmdbItem(obj: JSONObject, kind: MediaKind): CatalogItem? {
+        val id = obj.optLong("id")
+        if (id <= 0L) return null
+        val title = obj.optString(if (kind == MediaKind.SERIES) "name" else "title")
+            .ifBlank { obj.optString("original_title").ifBlank { obj.optString("original_name") } }
+            .takeIf(String::isNotBlank) ?: return null
+        val poster = obj.optString("poster_path").takeIf(String::isNotBlank)
+            ?.let { "https://image.tmdb.org/t/p/w500$it" }
+        val backdrop = obj.optString("backdrop_path").takeIf(String::isNotBlank)
+            ?.let { "https://image.tmdb.org/t/p/w1280$it" }
+        val date = obj.optString(if (kind == MediaKind.SERIES) "first_air_date" else "release_date")
+            .takeIf(String::isNotBlank)
+        return CatalogItem(
+            id = "tmdb:${kind.name.lowercase()}:$id",
+            providerId = TMDB_PROVIDER,
+            providerItemId = id.toString(),
+            kind = kind,
+            title = title,
+            overview = obj.optString("overview"),
+            posterUrl = poster,
+            backdropUrl = backdrop,
+            releaseDate = date,
+            rating = if (obj.isNull("vote_average")) null else obj.optDouble("vote_average"),
+            popularity = obj.optDouble("popularity"),
+            catalogUrl = "https://www.themoviedb.org/${if (kind == MediaKind.SERIES) "tv" else "movie"}/$id"
+        )
+    }
+
+    private fun archiveSearch(searchText: String, query: String): List<CatalogItem> {
+        val uriBuilder = Uri.parse("https://archive.org/advancedsearch.php").buildUpon()
+            .appendQueryParameter("q", query)
+            .appendQueryParameter("rows", MAX_RESULTS.toString())
+            .appendQueryParameter("page", "1")
+            .appendQueryParameter("output", "json")
+            .appendQueryParameter("sort[]", "downloads desc")
+        ARCHIVE_FIELDS.forEach { uriBuilder.appendQueryParameter("fl[]", it) }
+        val json = requestJson(uriBuilder.build().toString())
+        val docs = json.optJSONObject("response")?.optJSONArray("docs") ?: return emptyList()
+        return buildList {
+            for (i in 0 until minOf(docs.length(), MAX_RESULTS)) {
+                val doc = docs.optJSONObject(i) ?: continue
+                val id = doc.optString("identifier").takeIf(String::isNotBlank) ?: continue
+                val title = doc.optString("title").ifBlank { id }
+                val license = doc.firstText("licenseurl").takeIf(String::isNotBlank)
+                val description = doc.firstText("description")
+                val creator = doc.firstText("creator")
+                val year = doc.firstText("year", "date").take(4)
+                val subjects = doc.joinStrings("subject")
+                val overview = listOfNotNull(
+                    description.takeIf(String::isNotBlank),
+                    creator.takeIf(String::isNotBlank)?.let { "Автор: $it" },
+                    subjects.takeIf(String::isNotBlank)
+                ).joinToString("\n")
+                add(
+                    CatalogItem(
+                        id = "archive:$id",
+                        providerId = ARCHIVE_PROVIDER,
+                        providerItemId = id,
+                        kind = MediaKind.MOVIE,
+                        title = title,
+                        overview = overview,
+                        posterUrl = "https://archive.org/services/img/${Uri.encode(id)}",
+                        releaseDate = year.takeIf { it.length == 4 },
+                        popularity = doc.optDouble("downloads"),
+                        licenseUrl = license,
+                        catalogUrl = "https://archive.org/details/${Uri.encode(id)}"
+                    )
+                )
+            }
+        }.distinctBy { it.id }
+    }
+
+    private fun isKnownOpenLicense(value: String?): Boolean {
+        if (value.isNullOrBlank()) return false
+        val uri = runCatching { Uri.parse(value) }.getOrNull() ?: return false
+        val host = uri.host?.lowercase() ?: return false
+        val path = uri.path.orEmpty().lowercase()
+        return host == "creativecommons.org" &&
+            (path.startsWith("/licenses/") || path.startsWith("/publicdomain/"))
+    }
+
+    private fun findVideoFile(files: JSONArray): Pair<String, Long?>? {
+        val preferred = listOf(".mp4", ".m4v", ".webm", ".ogv", ".mov", ".mkv")
+        val candidates = buildList {
+            for (i in 0 until files.length()) {
+                val file = files.optJSONObject(i) ?: continue
+                val name = file.optString("name")
+                val format = file.optString("format")
+                if (name.substringAfterLast('.', "").lowercase().let { ext -> ".$ext" in preferred } ||
+                    format.contains("mpeg4", true) || format.contains("h.264", true) || format.contains("ogg video", true)
+                ) {
+                    val size = file.optString("size").toLongOrNull()?.takeIf { it > 0L }
+                    add(name to size)
+                }
+            }
+        }
+        return candidates.minByOrNull { candidate ->
+            val ext = candidate.first.substringAfterLast('.', "").lowercase()
+            preferred.indexOf(".$ext").let { if (it < 0) Int.MAX_VALUE else it }
+        }
+    }
+
+    private fun findTorrentFile(files: JSONArray): Pair<String, Long?>? {
+        for (i in 0 until files.length()) {
+            val file = files.optJSONObject(i) ?: continue
+            val name = file.optString("name")
+            if (name.endsWith(".torrent", ignoreCase = true)) {
+                return name to file.optString("size").toLongOrNull()
+            }
+        }
+        return null
+    }
+
+    private fun downloadUrl(identifier: String, filename: String): String =
+        "https://archive.org/download/${Uri.encode(identifier)}/${Uri.encode(filename)}"
+
+    private fun requestJson(url: String, bearer: String? = null): JSONObject {
+        val connection = (URL(url).openConnection() as HttpURLConnection).apply {
+            requestMethod = "GET"
+            connectTimeout = CONNECT_TIMEOUT_MS
+            readTimeout = READ_TIMEOUT_MS
+            instanceFollowRedirects = false
+            setRequestProperty("Accept", "application/json, application/rss+xml;q=0.8")
+            setRequestProperty("User-Agent", USER_AGENT)
+            if (!bearer.isNullOrBlank()) setRequestProperty("Authorization", "Bearer $bearer")
+        }
+        try {
+            val status = connection.responseCode
+            if (status !in 200..299) throw IOException("Источник вернул HTTP $status")
+            val body = readBounded(connection.inputStream, MAX_RESPONSE_BYTES)
+            return JSONObject(body.toString(Charsets.UTF_8))
+        } finally {
+            connection.disconnect()
+        }
+    }
+
+    private fun readBounded(stream: java.io.InputStream, maxBytes: Int): ByteArray =
+        stream.use { input ->
+            val output = ByteArrayOutputStream()
+            val buffer = ByteArray(8192)
+            var total = 0
+            while (true) {
+                val count = input.read(buffer)
+                if (count < 0) break
+                total += count
+                if (total > maxBytes) throw IOException("Ответ источника слишком большой")
+                output.write(buffer, 0, count)
+            }
+            output.toByteArray()
+        }
+
+    private fun JSONArray.joinStrings(key: String): String = buildList {
+        for (i in 0 until length()) {
+            val value = opt(i)
+            when (value) {
+                is JSONObject -> value.optString(key).takeIf(String::isNotBlank)?.let(::add)
+                is String -> value.takeIf(String::isNotBlank)?.let(::add)
+            }
+        }
+    }.joinToString(", ")
+
+    private fun JSONObject.joinStrings(key: String): String {
+        val value = opt(key)
+        return when (value) {
+            is JSONArray -> (0 until value.length()).mapNotNull { value.optString(it).takeIf(String::isNotBlank) }.joinToString(", ")
+            is String -> value
+            else -> ""
+        }
+    }
+
+    private fun JSONObject.firstText(vararg keys: String): String {
+        keys.forEach { key ->
+            val value = opt(key)
+            val text = when (value) {
+                is JSONArray -> (0 until value.length()).mapNotNull { value.optString(it).takeIf(String::isNotBlank) }.joinToString(", ")
+                is String -> value
+                else -> ""
+            }
+            if (text.isNotBlank()) return text
+        }
+        return ""
+    }
+
+    private fun MediaDetails.toSourceResult(): SourceResult? {
+        val detail = this
+        if (detail.streamUrl == null && detail.torrentUrl == null) return null
+        return SourceResult(
+            id = detail.item.id,
+            title = detail.item.title,
+            providerName = "Internet Archive",
+            downloadUrl = detail.torrentUrl,
+            streamUrl = detail.streamUrl,
+            sizeBytes = detail.fileSizeBytes,
+            licenseUrl = detail.licenseUrl,
+            pageUrl = detail.pageUrl,
+            sourceType = if (detail.streamUrl != null) {
+                MediaSourceType.LICENSED_DIRECT
+            } else {
+                MediaSourceType.TORRENT
+            }
+        )
+    }
+
+    private fun escapeLucene(value: String): String =
+        value.replace(Regex("([+\\-!(){}\\[\\]^\"~*?:\\\\/])"), "\\\\$1").take(120)
+
+    private fun JSONObject.firstText(key: String): String = opt(key).let { value ->
+        when (value) {
+            is JSONArray -> (0 until value.length()).joinToString(", ") { value.optString(it) }
+            is String -> value
+            else -> ""
+        }
+    }
+
+    private companion object {
+        const val TMDB_PROVIDER = "tmdb"
+        const val ARCHIVE_PROVIDER = "archive"
+        const val MAX_RESULTS = 24
+        const val MAX_SEASONS = 40
+        const val MAX_EPISODES_PER_SEASON = 100
+        const val MAX_SOURCE_DETAILS = 8
+        const val CONNECT_TIMEOUT_MS = 12_000
+        const val READ_TIMEOUT_MS = 25_000
+        const val MAX_RESPONSE_BYTES = 6 * 1024 * 1024
+        const val USER_AGENT = "JacketAndroid/2.0 (Android media client)"
+        val ARCHIVE_FIELDS = listOf(
+            "identifier", "title", "description", "year", "date", "creator",
+            "licenseurl", "downloads", "subject", "runtime", "collection"
+        )
+    }
+}
+
+END FILE: app/src/main/java/app/jacket/mobile/data/MediaCatalogClient.kt
+
+
+========================================================================================
+FILE: app/src/main/java/app/jacket/mobile/data/MediaModels.kt
+========================================================================================
+
+package app.jacket.mobile.data
+
+import org.json.JSONObject
+
+enum class MediaKind(val label: String) {
+    MOVIE("Фильм"),
+    SERIES("Сериал"),
+    VIDEO("Видео")
+}
+
+enum class IndexerProtocol(val label: String) {
+    RSS("RSS / Atom"),
+    TORZNAB("Torznab / Newznab"),
+    JACKETT("Jackett")
+}
+
+data class CatalogItem(
+    val id: String,
+    val providerId: String,
+    val providerItemId: String,
+    val kind: MediaKind,
+    val title: String,
+    val overview: String = "",
+    val posterUrl: String? = null,
+    val backdropUrl: String? = null,
+    val releaseDate: String? = null,
+    val rating: Double? = null,
+    val popularity: Double = 0.0,
+    val licenseUrl: String? = null,
+    val catalogUrl: String? = null
+) {
+    val year: String
+        get() = releaseDate?.take(4)?.takeIf { it.length == 4 && it.all(Char::isDigit) } ?: "Год неизвестен"
+}
+
+data class MediaSection(
+    val title: String,
+    val items: List<CatalogItem>
+)
+
+data class MediaDetails(
+    val item: CatalogItem,
+    val description: String,
+    val creator: String? = null,
+    val runtime: String? = null,
+    val licenseUrl: String? = item.licenseUrl,
+    val streamUrl: String? = null,
+    val torrentUrl: String? = null,
+    val pageUrl: String? = item.catalogUrl,
+    val fileSizeBytes: Long? = null
+)
+
+/** User-owned indexer. Secrets are encrypted before writing them to preferences. */
+data class IndexerConfig(
+    val id: String,
+    val name: String,
+    val searchUrlTemplate: String,
+    val protocol: IndexerProtocol = IndexerProtocol.RSS,
+    val apiKey: String = "",
+    val username: String = "",
+    val password: String = "",
+    val cookie: String = "",
+    val categories: String = "",
+    val tags: String = "",
+    val freeleechOnly: Boolean = false,
+    val sortBy: String = "created",
+    val sortOrder: String = "desc",
+    val enabled: Boolean = true
+)
+
+/** A user-configured website search link. Results open in the external browser. */
+data class WebSearchProvider(
+    val id: String,
+    val name: String,
+    val searchUrlTemplate: String,
+    val enabled: Boolean = true,
+    val cookie: String = ""
+)
+
+enum class MediaSourceType {
+    TORRENT,
+    FILMIX,
+    HDREZKA,
+    LICENSED_DIRECT
+}
+
+data class MediaSubtitle(
+    val url: String,
+    val mimeType: String,
+    val language: String? = null,
+    val label: String
+)
+
+/** Private HDRezka account data. Password and session cookies are encrypted in local storage. */
+data class HdRezkaSettings(
+    val mirror: String = "",
+    val login: String = "",
+    val password: String = "",
+    val cookie: String = "",
+    val connected: Boolean = false
+)
+
+data class SourceResult(
+    val id: String,
+    val title: String,
+    val providerName: String,
+    val magnetUri: String? = null,
+    val downloadUrl: String? = null,
+    val streamUrl: String? = null,
+    val sizeBytes: Long? = null,
+    val seeders: Int? = null,
+    val leechers: Int? = null,
+    val licenseUrl: String? = null,
+    val pageUrl: String? = null,
+    val category: String? = null,
+    val indexerId: String? = null,
+    val tracker: String? = null,
+    val publishedDate: String? = null,
+    val sourceType: MediaSourceType = MediaSourceType.TORRENT,
+    val qualityLabel: String? = null,
+    val translationName: String? = null,
+    val requiresSubscription: Boolean = false,
+    val subtitles: List<MediaSubtitle> = emptyList(),
+    /** Only non-secret, media-origin headers such as Referer. Never store account cookies here. */
+    val requestHeaders: Map<String, String> = emptyMap()
+)
+
+fun CatalogItem.toJson(): JSONObject = JSONObject()
+    .put("id", id)
+    .put("providerId", providerId)
+    .put("providerItemId", providerItemId)
+    .put("kind", kind.name)
+    .put("title", title)
+    .put("overview", overview)
+    .put("posterUrl", posterUrl)
+    .put("backdropUrl", backdropUrl)
+    .put("releaseDate", releaseDate)
+    .put("rating", rating)
+    .put("popularity", popularity)
+    .put("licenseUrl", licenseUrl)
+    .put("catalogUrl", catalogUrl)
+
+fun catalogItemFromJson(json: JSONObject): CatalogItem? = runCatching {
+    CatalogItem(
+        id = json.getString("id"),
+        providerId = json.optString("providerId", "archive"),
+        providerItemId = json.optString("providerItemId"),
+        kind = runCatching { MediaKind.valueOf(json.optString("kind", "MOVIE")) }.getOrDefault(MediaKind.MOVIE),
+        title = json.getString("title"),
+        overview = json.optString("overview"),
+        posterUrl = json.optString("posterUrl").takeIf(String::isNotBlank),
+        backdropUrl = json.optString("backdropUrl").takeIf(String::isNotBlank),
+        releaseDate = json.optString("releaseDate").takeIf(String::isNotBlank),
+        rating = if (json.isNull("rating")) null else json.optDouble("rating"),
+        popularity = json.optDouble("popularity", 0.0),
+        licenseUrl = json.optString("licenseUrl").takeIf(String::isNotBlank),
+        catalogUrl = json.optString("catalogUrl").takeIf(String::isNotBlank)
+    )
+}.getOrNull()
+
+
+data class IndexerFailure(
+    val indexerId: String,
+    val indexerName: String,
+    val message: String
+)
+
+data class IndexerSearchOutcome(
+    val results: List<SourceResult>,
+    val failures: List<IndexerFailure>
+)
+
+data class ReleaseMetadata(
+    val quality: String?,
+    val hdr: Boolean,
+    val dolbyVision: Boolean,
+    val videoCodec: String?,
+    val audioTags: List<String>,
+    val sourceTags: List<String>,
+    val resolutionDimensions: String? = null,
+    val audioChannels: String? = null,
+    val audioLanguages: List<String> = emptyList(),
+    val subtitleLanguages: List<String> = emptyList(),
+    val bitrate: String? = null
+)
+
+
+data class MediaSeason(
+    val seasonNumber: Int,
+    val name: String,
+    val episodeCount: Int,
+    val posterUrl: String? = null,
+    val overview: String = ""
+)
+
+data class MediaEpisode(
+    val seasonNumber: Int,
+    val episodeNumber: Int,
+    val name: String,
+    val overview: String = "",
+    val airDate: String? = null,
+    val stillUrl: String? = null
+) {
+    val releaseCode: String
+        get() = "S${seasonNumber.toString().padStart(2, '0')}E${episodeNumber.toString().padStart(2, '0')}"
+}
+
+END FILE: app/src/main/java/app/jacket/mobile/data/MediaModels.kt
