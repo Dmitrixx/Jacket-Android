@@ -11,6 +11,7 @@ import app.jacket.mobile.data.HdRezkaCatalogClient
 import app.jacket.mobile.data.HdRezkaLoginClient
 import app.jacket.mobile.data.HdRezkaSettings
 import app.jacket.mobile.data.IndexerConfig
+import app.jacket.mobile.data.IndexerErrorSanitizer
 import app.jacket.mobile.data.IndexerFailure
 import app.jacket.mobile.data.IndexerRegistry
 import app.jacket.mobile.data.JackettUrl
@@ -37,6 +38,7 @@ import kotlinx.coroutines.runInterruptible
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withContext
+import java.io.IOException
 
 /** UI state and orchestration for the self-contained catalog/indexer app. */
 class MainViewModel(application: Application) : AndroidViewModel(application) {
