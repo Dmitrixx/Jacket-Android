@@ -10,6 +10,7 @@
 - Made initial torrent byte-range failures retryable with a sanitized HTTP 503 and Retry-After header before a successful response is committed.
 - Hardened torrent persistence with bounded validation, per-record queue recovery, legacy migration, serialized resume checkpoints and AtomicFile backup recovery.
 - Preserved saveable state across main, details, settings, downloads, player and individual navigation tabs.
+- Clear stale saved resume offsets when playback is explicitly reset to 0 ms; keep the 90% watched cleanup threshold overflow-safe.
 
 ## 2.7.0
 

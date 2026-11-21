@@ -1,4 +1,4 @@
-# Jacket 2.7.0 — architecture
+# Jacket 2.8.0 — architecture
 
 ## Runtime layout
 
@@ -120,6 +120,7 @@ Resume data is asynchronous and periodic: abruptly killing the process can lose 
 - TMDB token, indexer API key, Basic credentials and cookies use AES/GCM with an Android Keystore-held key.
 - Exported indexer JSON deliberately excludes secrets.
 - Queue/resume files, poster cache, playback positions, favorites and history remain in app-private storage.
+- Playback positions are cleared when the player saves 0 ms (explicit restart from the beginning); the 90% watched threshold remains overflow-safe.
 - The loopback HTTP endpoint allows cleartext only for `127.0.0.1`; the endpoint is not offered as a network file server.
 
 ## Automated tests
