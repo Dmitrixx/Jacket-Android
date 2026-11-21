@@ -422,3 +422,217 @@ These tests do not replace manual streaming tests on physical Android 9+, Androi
 - Use only sources and media you are authorized to access and use. See [SECURITY.md](SECURITY.md).
 
 END FILE: README.md
+
+
+========================================================================================
+FILE: SECURITY.md
+========================================================================================
+
+# Security Policy
+
+## Supported versions
+
+Security fixes target the latest commit on `main`. There is no stable release yet.
+
+## Reporting a vulnerability
+
+Do not publish access tokens, private indexer credentials, personal data, or a working exploit in a public issue.
+
+Use GitHub's **Report a vulnerability** flow in the repository Security tab when available. Otherwise contact the maintainer privately through a verified GitHub contact channel. Include the affected commit, Android version/device ABI, reproduction steps and impact. Remove secrets from logs.
+
+## Security design
+
+- The optional TMDB Read Access Token is encrypted with AES/GCM using a key held in Android Keystore.
+- Public RSS/Atom and Torznab indexers must use HTTPS. Cleartext HTTP is allowed only for private/loopback/link-local IPs and explicit local DNS suffixes; ambiguous single-label hosts and URL user-info are rejected.
+- Network requests have bounded response sizes and timeouts.
+- XML document type declarations are disabled in feed parsing.
+- Remote poster and media URLs are restricted to HTTPS.
+- Android backup is disabled to avoid copying private app settings to cloud backup.
+- Jackett credentials are encrypted at rest. For a local Jackett source, the API key is sent only to that configured local origin; redirects must remain on the same local HTTP origin or upgrade to HTTPS, and authorization headers are never forwarded to a different origin.
+- Direct torrent links are treated as untrusted source data. Verify the publisher and license before opening or downloading content.
+
+## User guidance
+
+Do not share private indexer credentials or add feeds from sources you do not trust. Jackett is optional and is never bundled. When used, connect only to a server you control or are authorized to access. Use only catalogs and media streams you have permission to access.
+
+END FILE: SECURITY.md
+
+
+========================================================================================
+FILE: app/build.gradle.kts
+========================================================================================
+
+plugins {
+    id("com.android.application")
+    id("org.jetbrains.kotlin.android")
+    id("org.jetbrains.kotlin.plugin.compose")
+}
+
+android {
+    namespace = "app.jacket.mobile"
+    compileSdk = 36
+
+    defaultConfig {
+        applicationId = "app.jacket.mobile"
+        minSdk = 28
+        targetSdk = 36
+        versionCode = 12
+        versionName = "2.8.0"
+        vectorDrawables { useSupportLibrary = true }
+    }
+
+    buildFeatures {
+        compose = true
+        buildConfig = true
+    }
+
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    }
+
+    buildTypes {
+        release {
+            isMinifyEnabled = true
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+        }
+    }
+
+    testOptions { unitTests.isIncludeAndroidResources = true }
+
+    packaging {
+        resources { excludes += "/META-INF/{AL2.0,LGPL2.1}" }
+    }
+}
+
+dependencies {
+    // Compose 1.11.x line remains compatible with compileSdk 36.
+    // Compose 1.12.x requires API 37, which is not yet present in the stable SDK repo.
+    val composeBom = platform("androidx.compose:compose-bom:2026.06.00")
+    implementation(composeBom)
+
+    // 1.19.x requires compileSdk 37; this release is pinned to compileSdk 36, so retain 1.17.0.
+    implementation("androidx.core:core-ktx:1.17.0")
+    implementation("androidx.activity:activity-compose:1.13.0")
+    implementation("androidx.lifecycle:lifecycle-runtime-compose:2.10.0")
+    implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.10.0")
+    implementation("androidx.lifecycle:lifecycle-viewmodel-ktx:2.10.0")
+    implementation("org.jsoup:jsoup:1.24.1")
+
+    implementation("androidx.compose.ui:ui")
+    implementation("androidx.compose.ui:ui-tooling-preview")
+    implementation("androidx.compose.material3:material3")
+    implementation("androidx.compose.material:material-icons-extended")
+
+    // In-app playback for direct, licensed media streams.
+    val media3Version = "1.11.1"
+    implementation("androidx.media3:media3-exoplayer:$media3Version")
+    implementation("androidx.media3:media3-exoplayer-hls:$media3Version")
+    implementation("androidx.media3:media3-exoplayer-dash:$media3Version")
+    implementation("androidx.media3:media3-ui:$media3Version")
+
+    val libtorrentVersion = "2.1.0-39"
+    implementation("org.libtorrent4j:libtorrent4j:$libtorrentVersion")
+    implementation("org.libtorrent4j:libtorrent4j-android-arm:$libtorrentVersion")
+    implementation("org.libtorrent4j:libtorrent4j-android-arm64:$libtorrentVersion")
+    implementation("org.libtorrent4j:libtorrent4j-android-x86:$libtorrentVersion")
+    implementation("org.libtorrent4j:libtorrent4j-android-x86_64:$libtorrentVersion")
+
+    testImplementation("junit:junit:4.13.2")
+    testImplementation("org.json:json:20260814")
+    testImplementation("net.sf.kxml:kxml2:2.3.0")
+    debugImplementation("androidx.compose.ui:ui-tooling")
+}
+
+END FILE: app/build.gradle.kts
+
+
+========================================================================================
+FILE: app/proguard-rules.pro
+========================================================================================
+
+# libtorrent4j uses JNI-generated SWIG classes and native method bindings.
+-keep class org.libtorrent4j.swig.libtorrent_jni { *; }
+-keepclasseswithmembernames class * { native <methods>; }
+
+# Preserve Kotlin metadata used by reflection in AndroidX/Compose.
+-keep class kotlin.Metadata { *; }
+
+END FILE: app/proguard-rules.pro
+
+
+========================================================================================
+FILE: app/src/main/AndroidManifest.xml
+========================================================================================
+
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-feature android:name="android.software.leanback" android:required="false" />
+    <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <application
+        android:allowBackup="false"
+        android:banner="@drawable/tv_banner"
+        android:label="Jacket"
+        android:icon="@drawable/ic_jacket"
+        android:networkSecurityConfig="@xml/network_security_config"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.Jacket">
+        <service
+            android:name=".torrent.TorrentDownloadService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync|mediaPlayback" />
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:launchMode="singleTop"
+            android:resizeableActivity="true"
+            android:supportsPictureInPicture="true"
+            android:configChanges="keyboard|keyboardHidden|orientation|screenLayout|screenSize|smallestScreenSize"
+            android:screenOrientation="unspecified">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="magnet" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:mimeType="application/x-bittorrent" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="application/x-bittorrent" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="application/octet-stream" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/plain" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>
+
+END FILE: app/src/main/AndroidManifest.xml
