@@ -32,6 +32,8 @@ No external Jackett or TorrServer process is started or packaged.
 - Filmix uses the explicitly selected allowlisted HTTPS API host and encrypted device token. Search, post details, account profile and plan-limited quality variants are resolved through Filmix v2.
 - HDRezka uses only the mirror explicitly configured by the user. The client parses the DLE AJAX search response, `post_id`, `initCDN*Events`, translator flags, favorites token and series defaults; AJAX requests use movie flags or resolved season/episode IDs. It decodes the known HDRezka `#h` stream payload locally and resolves quality fallbacks; unknown/rotated encodings fail closed. DLE cookies are sent only to the configured mirror, never to media CDNs. CAPTCHA/Anubis, paywalls, Filmix `#2` manifests and cross-origin redirects are not bypassed.
 - Media3 receives only non-secret `Referer`/`User-Agent` headers and parsed subtitle configurations. Account cookies are never copied into player request headers.
+- `io.put:media3-ffmpeg-decoder:1.11.1+1` is version-matched to Media3 1.11.1 and loaded through `DefaultRenderersFactory` with extension renderers preferred. Its LGPL-only FFmpeg build enables AC-3, E-AC-3, DTS, MLP and TrueHD (as well as the additional decoders listed by the upstream artifact); it does not enable GPL or nonfree components. The AAR provides four ABIs and 16 KB alignment for 64-bit libraries. FFmpeg is statically linked into `libffmpegJNI.so`, so the matching `ffmpeg-source` archive and rebuild/relink instructions are distributed alongside the dependency.
+- The app embeds the upstream Apache, LGPL and FFmpeg third-party notices in `app/src/main/assets/licenses/ffmpeg/` and exposes them from Settings → About. Gradle packaging deliberately keeps `META-INF/media3-ffmpeg-decoder/**` resources. Codec patent rights are separate from the software licences.
 - The detail-card source picker merges torrents, Filmix, HDRezka and license-gated Internet Archive results, isolates individual provider failures and displays source type/quality/translation metadata.
 
 ## Video source registry
@@ -107,7 +109,8 @@ Resume data is asynchronous and periodic: abruptly killing the process can lose 
 - Idle/background transfer uses `dataSync`.
 - Active in-app torrent playback switches the foreground service to `mediaPlayback`.
 - Android 15+ can time-limit `dataSync`. If the time limit arrives with no active playback, the service saves resume data and stops rather than claiming infinite background seeding.
-- On Android 12+, the player requests the source video's frame rate on its `SurfaceView` only while playback is actively rendering, using fixed-source compatibility and the long-form `CHANGE_FRAME_RATE_ALWAYS` strategy. Media3's own frame-rate calls are disabled to avoid competing requests; the request is reset on pause/stop and when the view is detached. Devices before API 31 keep the system-selected rate.
+- On Android 12+, the player requests the source video's frame rate on its `SurfaceView` only while playback is actively rendering, using fixed-source compatibility and the long-form `CHANGE_FRAME_RATE_ALWAYS` strategy. Media3's own frame-rate calls are disabled to avoid competing requests; the request is reset on pause/stop and when the view is detached.
+- Audio extension renderers are preferred so the matching LGPL FFmpeg AAR can decode supported tracks when Android's platform `MediaCodec` cannot. Devices before API 31 keep the system-selected rate.
 - The player releases ExoPlayer and stores position when its screen is left; the download service and torrent session remain alive unless Android stops them or the user removes/stops the task.
 
 ## UI and device profiles
