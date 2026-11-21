@@ -10,6 +10,7 @@
 - Made initial torrent byte-range failures retryable with a sanitized HTTP 503 and Retry-After header before a successful response is committed.
 - Hardened torrent persistence with bounded validation, per-record queue recovery, legacy migration, serialized resume checkpoints and AtomicFile backup recovery.
 - Preserved saveable state across main, details, settings, downloads, player and individual navigation tabs.
+- Extended title-only release labels with CAMRip/TeleSync/TeleCine/SCR, 10-bit/Hi10P, HLG, HDR10+ and recognized Russian dubbing studios; added an opt-in filter to hide screen-copy releases.
 
 ## 2.7.0
 
