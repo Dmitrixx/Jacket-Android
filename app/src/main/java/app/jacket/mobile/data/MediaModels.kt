@@ -183,7 +183,9 @@ data class ReleaseMetadata(
     val audioChannels: String? = null,
     val audioLanguages: List<String> = emptyList(),
     val subtitleLanguages: List<String> = emptyList(),
-    val bitrate: String? = null
+    val bitrate: String? = null,
+    /** True when the title carries a recognized CAM/TS/TC/SCR marker. */
+    val screenCopy: Boolean = false
 )
 
 
