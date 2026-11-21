@@ -14431,3 +14431,81 @@ fun JacketTheme(content: @Composable () -> Unit) {
 }
 
 END FILE: app/src/main/java/app/jacket/mobile/ui/theme/Theme.kt
+
+
+========================================================================================
+FILE: app/src/main/res/drawable/ic_jacket.xml
+========================================================================================
+
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="48dp"
+    android:height="48dp"
+    android:viewportWidth="48"
+    android:viewportHeight="48">
+    <path
+        android:fillColor="#0B1220"
+        android:pathData="M8,0L40,0A8,8 0,0 1,48 8L48,40A8,8 0,0 1,40 48L8,48A8,8 0,0 1,0 40L0,8A8,8 0,0 1,8 0Z" />
+    <path
+        android:fillColor="#7DD3FC"
+        android:pathData="M13,12L35,12L35,17L19,17L19,25L32,25L32,30L19,30L19,36L13,36Z" />
+    <path
+        android:fillColor="#A5B4FC"
+        android:pathData="M31,22L36,22L36,36L31,36Z" />
+</vector>
+
+END FILE: app/src/main/res/drawable/ic_jacket.xml
+
+
+========================================================================================
+FILE: app/src/main/res/drawable/tv_banner.xml
+========================================================================================
+
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="320dp"
+    android:height="180dp"
+    android:viewportWidth="320"
+    android:viewportHeight="180">
+    <path android:fillColor="#071321" android:pathData="M0,0h320v180h-320z" />
+    <path android:fillColor="#102B43" android:pathData="M0,0h320v14h-320z" />
+    <path android:fillColor="#00B8A9" android:pathData="M0,166h320v14h-320z" />
+    <path android:fillColor="#F4F7FB" android:pathData="M54,35h64v67c0,27 -16,43 -43,43h-18v-25h16c12,0 18,-6 18,-19v-42h-37z" />
+    <path android:fillColor="#00B8A9" android:pathData="M132,47h12v92h-12z" />
+    <path android:fillColor="#F4F7FB" android:pathData="M164,48h102v18h-102zM164,81h78v14h-78zM164,110h92v14h-92z" />
+    <path android:fillColor="#FFB547" android:pathData="M280,48h12v76h-12z" />
+</vector>
+
+END FILE: app/src/main/res/drawable/tv_banner.xml
+
+
+========================================================================================
+FILE: app/src/main/res/values/styles.xml
+========================================================================================
+
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.Jacket" parent="android:style/Theme.Material.NoActionBar">
+        <item name="android:fontFamily">sans</item>
+        <item name="android:colorAccent">#7DD3FC</item>
+        <item name="android:navigationBarColor">#0B1220</item>
+        <item name="android:statusBarColor">#0B1220</item>
+        <item name="android:windowLightStatusBar">false</item>
+    </style>
+</resources>
+
+END FILE: app/src/main/res/values/styles.xml
+
+
+========================================================================================
+FILE: app/src/main/res/xml/network_security_config.xml
+========================================================================================
+
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false" />
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">127.0.0.1</domain>
+    </domain-config>
+</network-security-config>
+
+END FILE: app/src/main/res/xml/network_security_config.xml
