@@ -14091,3 +14091,343 @@ object PlaybackChrome {
 }
 
 END FILE: app/src/main/java/app/jacket/mobile/ui/PlaybackChrome.kt
+
+
+========================================================================================
+FILE: app/src/main/java/app/jacket/mobile/ui/PosterDiskCache.kt
+========================================================================================
+
+package app.jacket.mobile.ui
+
+import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.util.LruCache
+import java.io.File
+import java.io.IOException
+import java.net.HttpURLConnection
+import java.net.URI
+import java.net.URL
+import java.security.MessageDigest
+
+/** Bounded memory/disk cache for public artwork. No credentials or private media are stored here. */
+object PosterDiskCache {
+    private const val MAX_IMAGE_BYTES = 8 * 1024 * 1024
+    private const val MAX_DISK_BYTES = 96L * 1024L * 1024L
+    private const val MAX_BITMAP_WIDTH = 1920
+    private const val MAX_BITMAP_HEIGHT = 1440
+    private const val MAX_REDIRECTS = 3
+
+    private data class LockEntry(val monitor: Any = Any(), var users: Int = 0)
+
+    private val memory = object : LruCache<String, Bitmap>(32 * 1024 * 1024) {
+        override fun sizeOf(key: String, value: Bitmap): Int = value.byteCount.coerceAtLeast(1)
+    }
+
+    // Reference-counted entries avoid removing a monitor while another coroutine is waiting on it.
+    private val locks = HashMap<String, LockEntry>()
+
+    fun load(context: Context, url: String): Bitmap? {
+        if (!isSafeHttpsUrl(url)) return null
+        val key = sha256(url)
+        memory.get(key)?.let { return it }
+        val entry = synchronized(locks) {
+            locks.getOrPut(key) { LockEntry() }.also { it.users++ }
+        }
+        return try {
+            synchronized(entry.monitor) {
+                memory.get(key)?.let { return@synchronized it }
+                val directory = File(context.cacheDir, "poster-artwork").apply { mkdirs() }
+                val target = File(directory, "$key.img")
+                if (!target.isFile || target.length() <= 0L) download(url, target)
+                val bitmap = if (target.isFile) decodeSampled(target) else null
+                if (bitmap != null) {
+                    target.setLastModified(System.currentTimeMillis())
+                    memory.put(key, bitmap)
+                    trimDisk(directory)
+                } else {
+                    target.delete()
+                }
+                bitmap
+            }
+        } finally {
+            synchronized(locks) {
+                entry.users--
+                if (entry.users == 0 && locks[key] === entry) locks.remove(key)
+            }
+        }
+    }
+
+    private fun decodeSampled(file: File): Bitmap? {
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeFile(file.absolutePath, bounds)
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
+
+        var sample = 1
+        while (
+            sample < 128 &&
+            (bounds.outWidth / sample > MAX_BITMAP_WIDTH ||
+                bounds.outHeight / sample > MAX_BITMAP_HEIGHT)
+        ) {
+            sample *= 2
+        }
+        return BitmapFactory.decodeFile(
+            file.absolutePath,
+            BitmapFactory.Options().apply {
+                inSampleSize = sample
+                inPreferredConfig = Bitmap.Config.ARGB_8888
+            }
+        )
+    }
+
+    private fun download(initialUrl: String, target: File) {
+        val temporary = File(target.parentFile, target.name + ".tmp")
+        var currentUrl = initialUrl
+        var redirects = 0
+        try {
+            while (true) {
+                if (!isSafeHttpsUrl(currentUrl)) throw IOException("Artwork redirect must use HTTPS")
+                val connection = (URL(currentUrl).openConnection() as HttpURLConnection).apply {
+                    connectTimeout = 8_000
+                    readTimeout = 12_000
+                    instanceFollowRedirects = false
+                    setRequestProperty("User-Agent", "JacketAndroid/2.2 (artwork cache)")
+                    setRequestProperty("Accept", "image/*")
+                }
+                try {
+                    val status = connection.responseCode
+                    if (status in REDIRECT_CODES) {
+                        if (redirects++ >= MAX_REDIRECTS) throw IOException("Too many artwork redirects")
+                        val location = connection.getHeaderField("Location")
+                            ?: throw IOException("Artwork redirect has no Location")
+                        currentUrl = URI(currentUrl).resolve(URI(location)).toString()
+                        continue
+                    }
+                    if (status !in 200..299) throw IOException("Artwork HTTP $status")
+                    if (connection.getHeaderFieldLong("Content-Length", -1L) > MAX_IMAGE_BYTES) {
+                        throw IOException("Artwork exceeds cache item limit")
+                    }
+                    connection.inputStream.use { input ->
+                        temporary.outputStream().use { output ->
+                            val buffer = ByteArray(8192)
+                            var total = 0
+                            while (true) {
+                                val count = input.read(buffer)
+                                if (count < 0) break
+                                total += count
+                                if (total > MAX_IMAGE_BYTES) throw IOException("Artwork exceeds cache item limit")
+                                output.write(buffer, 0, count)
+                            }
+                        }
+                    }
+                    if (!temporary.renameTo(target)) {
+                        temporary.copyTo(target, overwrite = true)
+                        temporary.delete()
+                    }
+                    return
+                } finally {
+                    connection.disconnect()
+                }
+            }
+        } finally {
+            temporary.delete()
+        }
+    }
+
+    private fun isSafeHttpsUrl(value: String): Boolean = runCatching {
+        val uri = URI(value)
+        uri.scheme.equals("https", true) &&
+            !uri.host.isNullOrBlank() &&
+            uri.rawUserInfo == null
+    }.getOrDefault(false)
+
+    private fun trimDisk(directory: File) {
+        val files = directory.listFiles()?.filter { it.isFile && it.extension == "img" } ?: return
+        var total = files.sumOf { it.length() }
+        if (total <= MAX_DISK_BYTES) return
+        files.sortedBy { it.lastModified() }.forEach { file ->
+            if (total <= MAX_DISK_BYTES) return
+            val size = file.length()
+            if (file.delete()) total -= size
+        }
+    }
+
+    private fun sha256(value: String): String =
+        MessageDigest.getInstance("SHA-256")
+            .digest(value.toByteArray(Charsets.UTF_8))
+            .joinToString("") { "%02x".format(it) }
+
+    private val REDIRECT_CODES = setOf(301, 302, 303, 307, 308)
+}
+
+END FILE: app/src/main/java/app/jacket/mobile/ui/PosterDiskCache.kt
+
+
+========================================================================================
+FILE: app/src/main/java/app/jacket/mobile/ui/RemotePoster.kt
+========================================================================================
+
+package app.jacket.mobile.ui
+
+import android.graphics.Bitmap
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.produceState
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+
+@Composable
+fun RemotePoster(
+    url: String?,
+    modifier: Modifier = Modifier,
+    contentDescription: String? = null,
+    crop: ContentScale = ContentScale.Crop
+) {
+    val context = LocalContext.current
+    val bitmap by produceState<Bitmap?>(initialValue = null, key1 = url) {
+        value = withContext(Dispatchers.IO) {
+            if (url.isNullOrBlank()) null
+            else runCatching { PosterDiskCache.load(context, url) }.getOrNull()
+        }
+    }
+
+    if (bitmap != null) {
+        Image(
+            bitmap = bitmap!!.asImageBitmap(),
+            contentDescription = contentDescription,
+            modifier = modifier,
+            contentScale = crop
+        )
+    } else {
+        Box(
+            modifier = modifier.background(
+                Brush.linearGradient(
+                    listOf(
+                        MaterialTheme.colorScheme.surfaceVariant,
+                        MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.55f),
+                        MaterialTheme.colorScheme.surface
+                    )
+                )
+            ),
+            contentAlignment = Alignment.Center
+        ) {
+            androidx.compose.foundation.layout.Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(2.dp)
+            ) {
+                Text("J", style = MaterialTheme.typography.displaySmall,
+                    fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.primary)
+                Text("JACKET", style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant, letterSpacing = 2.sp)
+            }
+        }
+    }
+}
+
+END FILE: app/src/main/java/app/jacket/mobile/ui/RemotePoster.kt
+
+
+========================================================================================
+FILE: app/src/main/java/app/jacket/mobile/ui/SourceSearchEpoch.kt
+========================================================================================
+
+package app.jacket.mobile.ui
+
+/**
+ * Prevents a cancelled search from clearing the loading state of its successor.
+ * Access is synchronized because coroutine completion may run on a different dispatcher.
+ */
+internal class SourceSearchEpoch {
+    private var current = 0L
+
+    @Synchronized
+    fun next(): Long {
+        current += 1L
+        return current
+    }
+
+    @Synchronized
+    fun isCurrent(epoch: Long): Boolean = epoch == current
+}
+
+END FILE: app/src/main/java/app/jacket/mobile/ui/SourceSearchEpoch.kt
+
+
+========================================================================================
+FILE: app/src/main/java/app/jacket/mobile/ui/theme/Theme.kt
+========================================================================================
+
+package app.jacket.mobile.ui.theme
+
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Shapes
+import androidx.compose.material3.Typography
+import androidx.compose.material3.darkColorScheme
+import androidx.compose.runtime.Composable
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+
+private val JacketColors = darkColorScheme(
+    primary = Color(0xFFFFC45C),
+    onPrimary = Color(0xFF2A1A00),
+    primaryContainer = Color(0xFF563B13),
+    onPrimaryContainer = Color(0xFFFFE4B0),
+    secondary = Color(0xFF62D7C4),
+    onSecondary = Color(0xFF062D29),
+    secondaryContainer = Color(0xFF164640),
+    onSecondaryContainer = Color(0xFFB8FFF3),
+    tertiary = Color(0xFFA99BFF),
+    onTertiary = Color(0xFF21165B),
+    background = Color(0xFF080B11),
+    onBackground = Color(0xFFE9EDF5),
+    surface = Color(0xFF111722),
+    onSurface = Color(0xFFE9EDF5),
+    surfaceVariant = Color(0xFF1D2634),
+    onSurfaceVariant = Color(0xFFADB8C8),
+    outline = Color(0xFF3A4658),
+    surfaceTint = Color(0xFFFFC45C),
+    error = Color(0xFFFF8E8E),
+    onError = Color(0xFF3E0808)
+)
+
+private val JacketShapes = Shapes(
+    extraSmall = RoundedCornerShape(8.dp),
+    small = RoundedCornerShape(12.dp),
+    medium = RoundedCornerShape(18.dp),
+    large = RoundedCornerShape(24.dp),
+    extraLarge = RoundedCornerShape(30.dp)
+)
+
+private val BaseTypography = Typography()
+private val JacketTypography = BaseTypography.copy(
+    displayLarge = BaseTypography.displayLarge.copy(fontWeight = FontWeight.Black, letterSpacing = (-1.4).sp),
+    displayMedium = BaseTypography.displayMedium.copy(fontWeight = FontWeight.ExtraBold, letterSpacing = (-0.9).sp),
+    displaySmall = BaseTypography.displaySmall.copy(fontWeight = FontWeight.ExtraBold, letterSpacing = (-0.6).sp),
+    headlineLarge = BaseTypography.headlineLarge.copy(fontWeight = FontWeight.Bold, letterSpacing = (-0.4).sp),
+    titleLarge = BaseTypography.titleLarge.copy(fontWeight = FontWeight.Bold, letterSpacing = (-0.2).sp)
+)
+
+@Composable
+fun JacketTheme(content: @Composable () -> Unit) {
+    MaterialTheme(colorScheme = JacketColors, typography = JacketTypography, shapes = JacketShapes, content = content)
+}
+
+END FILE: app/src/main/java/app/jacket/mobile/ui/theme/Theme.kt
