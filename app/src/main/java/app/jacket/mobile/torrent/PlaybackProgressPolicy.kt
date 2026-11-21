@@ -21,7 +21,8 @@ internal object PlaybackProgressPolicy {
     /** Computes floor(duration * 90 / 100) without overflowing Long. */
     private fun watchedThreshold(durationMs: Long): Long {
         val duration = durationMs.coerceAtLeast(0L)
-        return duration / 10L * WATCHED_PERCENT / 10L +
-            (duration % 10L) * WATCHED_PERCENT / 10L
+        val whole = duration / 10L * (WATCHED_PERCENT / 10L)
+        val remainder = duration % 10L * WATCHED_PERCENT / 100L
+        return whole + remainder
     }
 }
