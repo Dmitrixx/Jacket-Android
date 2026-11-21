@@ -334,11 +334,14 @@ object HdRezkaCatalogClient {
             val match = qualityPattern.matchEntire(segment.trim()) ?: return@mapNotNull null
             val label = match.groupValues[1].trim().take(64)
             val urls = match.groupValues[2].split(Regex("""\s+or\s+"""))
-            // HDRezka serves several alternative files for one quality; follow
-            // the player convention and prefer the last (usually direct MP4) URL.
-            val url = urls.asReversed().firstOrNull { candidate ->
-                isHttpsUrl(candidate.trim())
-            }?.trim() ?: return@mapNotNull null
+                .map(String::trim)
+                .filter(::isHttpsUrl)
+            // Media3 handles both MP4 and HLS. Prefer a direct MP4 for seeking
+            // compatibility, then HLS, then the first supported HTTPS fallback.
+            val url = urls.firstOrNull { it.substringBefore('?').endsWith(".mp4", true) }
+                ?: urls.firstOrNull { it.substringBefore('?').endsWith(".m3u8", true) }
+                ?: urls.firstOrNull()
+                ?: return@mapNotNull null
             val numericQuality = Regex("""(?i)([0-9]{3,4})""")
                 .find(label)?.groupValues?.getOrNull(1)
             val normalizedLabel = numericQuality?.let { "${it}p" } ?: label

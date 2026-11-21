@@ -196,9 +196,9 @@ class HdRezkaCatalogClientTest {
     }
 
     @Test
-    fun prefersLastHttpsFallbackForAQuality() {
+    fun prefersMp4OverHlsRegardlessOfAlternativeOrder() {
         val variants = HdRezkaCatalogClient.parseQualityVariants(
-            "[1080p Ultra]https://cdn.example/master.m3u8 or https://cdn.example/file.mp4"
+            "[1080p Ultra]https://cdn.example/file.mp4 or https://cdn.example/master.m3u8"
         )
         assertEquals(1, variants.size)
         assertEquals("1080p", variants.single().qualityLabel)
