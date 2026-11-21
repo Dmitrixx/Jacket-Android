@@ -1,3 +1,5 @@
+@file:OptIn(androidx.media3.common.util.UnstableApi::class)
+
 package app.jacket.mobile.ui
 
 import android.app.Activity
@@ -23,12 +25,12 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material.icons.filled.AspectRatio
 import androidx.compose.material.icons.filled.Audiotrack
 import androidx.compose.material.icons.filled.Bedtime
 import androidx.compose.material.icons.filled.FastForward
 import androidx.compose.material.icons.filled.FastRewind
-import androidx.compose.material.icons.filled.OpenInNew
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PictureInPicture
 import androidx.compose.material.icons.filled.PlayArrow
@@ -458,7 +460,7 @@ fun JacketPlayerScreen(
                                 .show()
                             reveal()
                         }
-                        PlayerChip(Icons.Default.OpenInNew, "Внешний", Modifier.weight(1f)) {
+                        PlayerChip(Icons.AutoMirrored.Filled.OpenInNew, "Внешний", Modifier.weight(1f)) {
                             openExternalPlayer(context, streamUrl)
                             reveal()
                         }
@@ -544,6 +546,7 @@ private fun buildPlayer(
         }
 }
 
+@androidx.annotation.OptIn(markerClass = [androidx.media3.common.util.UnstableApi::class])
 private fun PlaybackChrome.Fit.toResizeMode(): Int = when (this) {
     PlaybackChrome.Fit.Fit -> AspectRatioFrameLayout.RESIZE_MODE_FIT
     PlaybackChrome.Fit.Fill -> AspectRatioFrameLayout.RESIZE_MODE_FILL
