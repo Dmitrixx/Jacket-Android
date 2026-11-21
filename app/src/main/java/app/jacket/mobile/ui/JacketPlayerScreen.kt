@@ -1,5 +1,3 @@
-@file:OptIn(androidx.media3.common.util.UnstableApi::class)
-
 package app.jacket.mobile.ui
 
 import android.app.Activity
