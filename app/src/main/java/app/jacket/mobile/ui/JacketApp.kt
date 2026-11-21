@@ -110,6 +110,7 @@ import app.jacket.mobile.data.CatalogItem
 import app.jacket.mobile.data.FilmixDeviceAuth
 import app.jacket.mobile.data.HdRezkaLoginClient
 import app.jacket.mobile.data.HdRezkaSettings
+import app.jacket.mobile.data.LampacSettings
 import app.jacket.mobile.data.IndexerConfig
 import app.jacket.mobile.data.IndexerProtocol
 import app.jacket.mobile.data.ReleaseHeuristics
@@ -1694,6 +1695,7 @@ private fun SourceCard(
         app.jacket.mobile.data.MediaSourceType.TORRENT -> "ТОРРЕНТ"
         app.jacket.mobile.data.MediaSourceType.FILMIX -> "FILMIX"
         app.jacket.mobile.data.MediaSourceType.HDREZKA -> "HDREZKA"
+        app.jacket.mobile.data.MediaSourceType.LAMPAC -> "LAMPAC"
         app.jacket.mobile.data.MediaSourceType.LICENSED_DIRECT -> "DIRECT"
     }
     val resolvedQuality = source.qualityLabel ?: release.quality
@@ -2126,6 +2128,9 @@ private fun SettingsScreen(
     val hdRezkaSettings by viewModel.hdRezkaSettings.collectAsState()
     val hdRezkaStatus by viewModel.hdRezkaStatus.collectAsState()
     val isHdRezkaBusy by viewModel.isHdRezkaBusy.collectAsState()
+    val lampacSettings by viewModel.lampacSettings.collectAsState()
+    val lampacStatus by viewModel.lampacStatus.collectAsState()
+    val isLampacBusy by viewModel.isLampacBusy.collectAsState()
     val context = LocalContext.current
     val filteredJackettIndexers = remember(jackettIndexers, jackettCatalogQuery, jackettCatalogFilter) {
         val query = jackettCatalogQuery.trim().lowercase(Locale.ROOT)
@@ -2210,6 +2215,12 @@ private fun SettingsScreen(
     var hdPassword by remember(hdRezkaSettings.password) { mutableStateOf(hdRezkaSettings.password) }
     var hdCookie by remember(hdRezkaSettings.cookie) { mutableStateOf(hdRezkaSettings.cookie) }
 
+    var lampacBaseUrl by remember(lampacSettings.baseUrl) { mutableStateOf(lampacSettings.baseUrl) }
+    var lampacAccountEmail by remember(lampacSettings.accountEmail) { mutableStateOf(lampacSettings.accountEmail) }
+    var lampacUid by remember(lampacSettings.uid) { mutableStateOf(lampacSettings.uid) }
+    var lampacToken by remember(lampacSettings.token) { mutableStateOf(lampacSettings.token) }
+    var lampacEnabled by remember(lampacSettings.enabled) { mutableStateOf(lampacSettings.enabled) }
+
     var editingId by remember { mutableStateOf("") }
     var sourceName by remember { mutableStateOf("") }
     var sourceUrl by remember { mutableStateOf("") }
@@ -2270,6 +2281,7 @@ private fun SettingsScreen(
         "indexers" -> "Торрент-источники"
         "filmix" -> "Filmix"
         "hdrezka" -> "HDRezka"
+        "lampac" -> "Lampac"
         "network" -> "Загрузки и сеть"
         "about" -> "О приложении"
         else -> "Настройки"
@@ -2376,6 +2388,15 @@ private fun SettingsScreen(
                         badge = if (hdRezkaSettings.connected) "Cookie сохранена" else "Настроить",
                         onClick = { selectedSettingsSection = "hdrezka" },
                         icon = { Icon(Icons.Default.Movie, contentDescription = null) }
+                    )
+                }
+                item {
+                    SettingsMenuRow(
+                        title = "Lampac",
+                        subtitle = "Подключение собственного медиасервера и его онлайн-источников",
+                        badge = if (lampacSettings.enabled) "Подключён" else "Не подключён",
+                        onClick = { selectedSettingsSection = "lampac" },
+                        icon = { Icon(Icons.Default.Tv, contentDescription = null) }
                     )
                 }
                 item {
@@ -2842,6 +2863,138 @@ private fun SettingsScreen(
                                 "Если сайт требует CAPTCHA или Cloudflare, автоматический вход остановится. Jacket не обходит защиту; в таком случае используй Cookie из своего браузера.",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                }
+            }
+
+            if (selectedSettingsSection == "lampac") {
+                item {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(24.dp),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+                    ) {
+                        Column(
+                            modifier = Modifier.fillMaxWidth().padding(18.dp),
+                            verticalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            Text(
+                                "СОБСТВЕННЫЙ МЕДИАСЕРВЕР",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.primary,
+                                fontWeight = FontWeight.Black,
+                                letterSpacing = 1.2.sp
+                            )
+                            Text("Lampac bridge", style = MaterialTheme.typography.headlineSmall,
+                                fontWeight = FontWeight.Bold)
+                            Text(
+                                "Jacket обращается к вашему Lampac по официальным /lite/events и /lifeevents API, получает список доступных источников и запрашивает JSON-потоки. Поддерживаются фильмы и выбранные эпизоды сериалов из каталога TMDB.",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            OutlinedTextField(
+                                value = lampacBaseUrl,
+                                onValueChange = { lampacBaseUrl = it },
+                                modifier = Modifier.fillMaxWidth(),
+                                label = { Text("Адрес Lampac") },
+                                placeholder = { Text("http://192.168.1.20:9118") },
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
+                                singleLine = true
+                            )
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Column(Modifier.weight(1f)) {
+                                    Text("Использовать в общем поиске", fontWeight = FontWeight.SemiBold)
+                                    Text(
+                                        "Lampac будет добавлять найденные потоки в карточку фильма или серии.",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                                Switch(checked = lampacEnabled, onCheckedChange = { lampacEnabled = it })
+                            }
+                            Text("Данные доступа Lampac (необязательно)", style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.SemiBold)
+                            OutlinedTextField(
+                                value = lampacAccountEmail,
+                                onValueChange = { lampacAccountEmail = it },
+                                modifier = Modifier.fillMaxWidth(),
+                                label = { Text("Email аккаунта") },
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
+                                singleLine = true
+                            )
+                            OutlinedTextField(
+                                value = lampacUid,
+                                onValueChange = { lampacUid = it },
+                                modifier = Modifier.fillMaxWidth(),
+                                label = { Text("UID") },
+                                singleLine = true
+                            )
+                            OutlinedTextField(
+                                value = lampacToken,
+                                onValueChange = { lampacToken = it.take(1024) },
+                                modifier = Modifier.fillMaxWidth(),
+                                label = { Text("Token") },
+                                visualTransformation = PasswordVisualTransformation(),
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                                singleLine = true
+                            )
+                            Text(
+                                "Email, UID и Token шифруются Android Keystore и передаются только указанному серверу. Для локального HTTP используйте адрес LAN; удалённый сервер должен быть на HTTPS. Jacket не обходит CAPTCHA, Cloudflare, DRM, платный доступ или региональные ограничения.",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Button(
+                                    onClick = {
+                                        viewModel.testLampacConnection(
+                                            LampacSettings(
+                                                baseUrl = lampacBaseUrl,
+                                                accountEmail = lampacAccountEmail,
+                                                uid = lampacUid,
+                                                token = lampacToken,
+                                                enabled = lampacEnabled
+                                            )
+                                        )
+                                    },
+                                    modifier = Modifier.weight(1f),
+                                    enabled = !isLampacBusy && lampacBaseUrl.isNotBlank()
+                                ) {
+                                    if (isLampacBusy) {
+                                        CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+                                        Spacer(Modifier.width(6.dp))
+                                    } else {
+                                        Icon(Icons.Default.Refresh, contentDescription = null)
+                                        Spacer(Modifier.width(6.dp))
+                                    }
+                                    Text(if (isLampacBusy) "Проверка…" else "Проверить")
+                                }
+                                OutlinedButton(
+                                    onClick = {
+                                        viewModel.saveLampacSettings(
+                                            LampacSettings(
+                                                baseUrl = lampacBaseUrl,
+                                                accountEmail = lampacAccountEmail,
+                                                uid = lampacUid,
+                                                token = lampacToken,
+                                                enabled = lampacEnabled
+                                            )
+                                        )
+                                    },
+                                    modifier = Modifier.weight(1f),
+                                    enabled = !isLampacBusy
+                                ) { Text("Сохранить") }
+                            }
+                            Text(
+                                lampacStatus,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = if (lampacSettings.enabled) MaterialTheme.colorScheme.secondary
+                                else MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
                     }
