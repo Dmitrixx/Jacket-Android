@@ -2019,6 +2019,8 @@ private fun SettingsScreen(
 ) {
     var selectedSettingsSection by rememberSaveable { mutableStateOf("home") }
     var jackettQuery by rememberSaveable { mutableStateOf("") }
+    var jackettCatalogQuery by rememberSaveable { mutableStateOf("") }
+    var jackettCatalogFilter by rememberSaveable { mutableStateOf("all") }
     val currentToken by viewModel.tmdbToken.collectAsState()
     val indexers by viewModel.customIndexers.collectAsState()
     val webSearchProviders by viewModel.webSearchProviders.collectAsState()
@@ -2044,6 +2046,28 @@ private fun SettingsScreen(
     val hdRezkaStatus by viewModel.hdRezkaStatus.collectAsState()
     val isHdRezkaBusy by viewModel.isHdRezkaBusy.collectAsState()
     val context = LocalContext.current
+    val filteredJackettIndexers = remember(jackettIndexers, jackettCatalogQuery, jackettCatalogFilter) {
+        val query = jackettCatalogQuery.trim().lowercase(Locale.ROOT)
+        jackettIndexers.filter { entry ->
+            val matchesQuery = query.isBlank() ||
+                entry.name.lowercase(Locale.ROOT).contains(query) ||
+                entry.id.lowercase(Locale.ROOT).contains(query) ||
+                entry.description.lowercase(Locale.ROOT).contains(query) ||
+                entry.language.orEmpty().lowercase(Locale.ROOT).contains(query)
+            val matchesFilter = when (jackettCatalogFilter) {
+                "configured" -> entry.configured
+                "unconfigured" -> !entry.configured
+                "private" -> entry.isPrivate
+                "public" -> !entry.isPrivate
+                "ru" -> {
+                    val language = entry.language.orEmpty().lowercase(Locale.ROOT)
+                    language.contains("ru") || language.contains("russian") || language.contains("рус")
+                }
+                else -> true
+            }
+            matchesQuery && matchesFilter
+        }
+    }
     LaunchedEffect(
         selectedSettingsSection,
         savedJackett?.id,
@@ -2974,6 +2998,40 @@ private fun SettingsScreen(
                         }
                     }
                     OutlinedTextField(
+                        value = jackettCatalogQuery,
+                        onValueChange = { jackettCatalogQuery = it },
+                        modifier = Modifier.fillMaxWidth(),
+                        label = { Text("Найти индексатор по названию, ID или языку") },
+                        singleLine = true,
+                        leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) }
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        listOf(
+                            "all" to "Все",
+                            "configured" to "Настроенные",
+                            "unconfigured" to "Добавить +",
+                            "private" to "Private",
+                            "public" to "Public",
+                            "ru" to "Русские"
+                        ).forEach { (filter, label) ->
+                            if (jackettCatalogFilter == filter) {
+                                Button(onClick = {}, enabled = false) { Text(label, maxLines = 1) }
+                            } else {
+                                OutlinedButton(onClick = { jackettCatalogFilter = filter }) {
+                                    Text(label, maxLines = 1)
+                                }
+                            }
+                        }
+                    }
+                    Text(
+                        "Показано: ${filteredJackettIndexers.size} из ${jackettIndexers.size}",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    OutlinedTextField(
                         value = jackettQuery,
                         onValueChange = { jackettQuery = it },
                         modifier = Modifier.fillMaxWidth(),
@@ -3074,7 +3132,17 @@ private fun SettingsScreen(
                 }
             }
 
-            items(jackettIndexers, key = { "jackett-${it.id}" }) { entry ->
+            if (filteredJackettIndexers.isEmpty()) {
+                item {
+                    MessageCard(
+                        if (jackettIndexers.isEmpty()) "Каталог Jackett пока пуст. Обновите каталог после подключения сервера."
+                        else "По заданным фильтрам индексаторы не найдены. Измените запрос или выберите «Все».",
+                        false
+                    )
+                }
+            }
+
+            items(filteredJackettIndexers, key = { "jackett-${it.id}" }) { entry ->
                 Card(
                     modifier = Modifier.fillMaxWidth(),
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
