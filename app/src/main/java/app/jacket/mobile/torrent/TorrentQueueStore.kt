@@ -1,7 +1,7 @@
 package app.jacket.mobile.torrent
 
 import android.content.Context
-import android.net.Uri
+import java.net.URLDecoder
 import java.io.File
 import java.security.MessageDigest
 
@@ -127,8 +127,11 @@ class TorrentQueueStore(context: Context) {
         private val INFO_HASH = Regex("(?i)([a-f0-9]{40}|[a-f0-9]{64})")
 
         /** Returns a canonical hex info-hash so queue operations match libtorrent's hash IDs. */
-        fun idFor(magnet: String): String {
-            val xtValues = runCatching { Uri.parse(magnet).getQueryParameters("xt") }.getOrNull().orEmpty()
+    fun idFor(magnet: String): String {
+            // Parse the query without android.net.Uri: its JVM test stub throws, which
+            // previously made every local test (and other non-Android callers) fall back
+            // to a synthetic hash instead of the real BitTorrent infohash.
+            val xtValues = queryParameters(magnet, "xt")
             val btih = xtValues.firstOrNull { it.startsWith("urn:btih:", ignoreCase = true) }
                 ?.substringAfterLast(':')
                 ?.let(::normalizeBtih)
@@ -148,12 +151,28 @@ class TorrentQueueStore(context: Context) {
                 .joinToString("") { "%02x".format(it) }
         }
 
-        fun idForFile(file: File): String {
+            fun idForFile(file: File): String {
             require(file.isFile && file.length() in 1..MAX_TORRENT_BYTES) {
                 "Файл .torrent отсутствует или превышает допустимый размер"
             }
             return file.nameWithoutExtension.lowercase().takeIf { it.matches(INFO_HASH) }
                 ?: throw IllegalArgumentException("Не удалось определить infohash из имени .torrent")
+        }
+
+        private fun queryParameters(uri: String, key: String): List<String> {
+            val query = uri.substringAfter('?', "").substringBefore('#')
+            if (query.isEmpty()) return emptyList()
+            return query.split('&').mapNotNull { field ->
+                val separator = field.indexOf('=')
+                if (separator <= 0) return@mapNotNull null
+                val name = runCatching {
+                    URLDecoder.decode(field.substring(0, separator), "UTF-8")
+                }.getOrNull()
+                if (!name.equals(key, ignoreCase = true)) return@mapNotNull null
+                runCatching {
+                    URLDecoder.decode(field.substring(separator + 1), "UTF-8")
+                }.getOrNull()
+            }
         }
 
         private fun normalizeBtih(value: String): String? {
