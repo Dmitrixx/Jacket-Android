@@ -68,7 +68,8 @@ object LampacBridgeClient {
             "year" to item.year.takeIf { it.matches(Regex("""\d{4}""")) }.orEmpty().ifBlank { "0" },
             "serial" to if (item.kind == MediaKind.SERIES) "1" else "0",
             "life" to "true",
-            "islite" to "true"
+            "islite" to "true",
+            "external_ids" to "true"
         )
         addAccountParams(params, settings)
         return appendQuery("$base/lite/events", params)
@@ -138,6 +139,10 @@ object LampacBridgeClient {
                     )
                     val online = update.optJSONArray("online") ?: JSONArray()
                     collectRoutes(online, routes)
+                    val serverMessage = update.optString("msg").takeIf(String::isNotBlank)
+                    if (routes.isEmpty() && serverMessage != null) {
+                        throw IOException(serverMessage.take(240))
+                    }
                     // Lampac's online array contains every completed source check, including
                     // providers which did not return playable content. Use its length as seen.
                     seen = online.length()
