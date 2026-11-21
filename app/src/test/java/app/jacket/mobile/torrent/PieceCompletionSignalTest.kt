@@ -29,6 +29,27 @@ class PieceCompletionSignalTest {
     }
 
     @Test
+    fun signalBroadcastsToEveryWaitingRangeWorker() {
+        val signal = PieceCompletionSignal()
+        val observed = signal.generation()
+        val waiters = 3
+        val ready = CountDownLatch(waiters)
+        val completed = CountDownLatch(waiters)
+        repeat(waiters) { index ->
+            thread(name = "piece-signal-test-$index") {
+                ready.countDown()
+                if (signal.awaitChange(observed, TimeUnit.SECONDS.toNanos(2))) {
+                    completed.countDown()
+                }
+            }
+        }
+
+        assertTrue(ready.await(1, TimeUnit.SECONDS))
+        signal.signal()
+        assertTrue(completed.await(1, TimeUnit.SECONDS))
+    }
+
+    @Test
     fun signalBeforeWaitIsNotLost() {
         val signal = PieceCompletionSignal()
         val observed = signal.generation()
