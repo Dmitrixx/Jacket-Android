@@ -13,6 +13,7 @@ import app.jacket.mobile.data.HdRezkaSettings
 import app.jacket.mobile.data.LampacBridgeClient
 import app.jacket.mobile.data.LampacSettings
 import app.jacket.mobile.data.IndexerConfig
+import app.jacket.mobile.data.IndexerErrorSanitizer
 import app.jacket.mobile.data.IndexerFailure
 import app.jacket.mobile.data.IndexerRegistry
 import app.jacket.mobile.data.JackettUrl
@@ -39,6 +40,7 @@ import kotlinx.coroutines.runInterruptible
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withContext
+import java.io.IOException
 
 /** UI state and orchestration for the self-contained catalog/indexer app. */
 class MainViewModel(application: Application) : AndroidViewModel(application) {
@@ -50,6 +52,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val sourceSearchEpoch = SourceSearchEpoch()
     private var jackettCatalogJob: Job? = null
     private var jackettConfigJob: Job? = null
+    private var jackettLoginJob: Job? = null
     private var jackettTestJob: Job? = null
     private var indexerTestJob: Job? = null
     private var episodeJob: Job? = null
@@ -151,6 +154,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _jackettCatalogStatus = MutableStateFlow<String?>(null)
     val jackettCatalogStatus: StateFlow<String?> = _jackettCatalogStatus.asStateFlow()
+
+    private val _jackettLoginStatus = MutableStateFlow<String?>(null)
+    val jackettLoginStatus: StateFlow<String?> = _jackettLoginStatus.asStateFlow()
+
+    private val _isJackettLoginBusy = MutableStateFlow(false)
+    val isJackettLoginBusy: StateFlow<Boolean> = _isJackettLoginBusy.asStateFlow()
 
     private val _testingJackettIndexerId = MutableStateFlow<String?>(null)
     val testingJackettIndexerId: StateFlow<String?> = _testingJackettIndexerId.asStateFlow()
@@ -779,6 +788,61 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
     }
+
+    /** Authenticates with Jackett's WebUI and persists only its encrypted session cookie. */
+    fun loginJackettDashboard(adminPassword: String) {
+        if (_isJackettLoginBusy.value) return
+        val current = _customIndexers.value.firstOrNull {
+            it.protocol == app.jacket.mobile.data.IndexerProtocol.JACKETT
+        }
+        if (current == null) {
+            _jackettLoginStatus.value = "Сначала сохраните адрес сервера и API-ключ Jackett."
+            return
+        }
+        if (adminPassword.isBlank()) {
+            _jackettLoginStatus.value = "Введите пароль администратора Jackett."
+            return
+        }
+        val base = JackettUrl.parseTemplate(current.searchUrlTemplate)?.baseUrl
+        if (base.isNullOrBlank()) {
+            _jackettLoginStatus.value = "Не удалось определить адрес сохранённого сервера Jackett."
+            return
+        }
+
+        jackettLoginJob?.cancel()
+        jackettLoginJob = viewModelScope.launch {
+            _isJackettLoginBusy.value = true
+            _jackettLoginStatus.value = "Проверяем пароль на вашем сервере Jackett…"
+            try {
+                val cookie = withContext(Dispatchers.IO) {
+                    JackettIndexerClient.loginDashboardCookie(base, adminPassword)
+                }
+                val latest = _customIndexers.value.firstOrNull {
+                    it.id == current.id &&
+                        it.protocol == app.jacket.mobile.data.IndexerProtocol.JACKETT
+                } ?: throw IOException("Настройки Jackett изменились во время входа. Повторите попытку.")
+                val latestBase = JackettUrl.parseTemplate(latest.searchUrlTemplate)?.baseUrl
+                if (latestBase != base) {
+                    throw IOException("Адрес Jackett изменился во время входа. Cookie не сохранён.")
+                }
+                settings.saveIndexer(latest.copy(cookie = cookie))
+                _customIndexers.value = settings.indexers()
+                _jackettLoginStatus.value = "Вход подтверждён. Сессионный Cookie сохранён в зашифрованном виде."
+                _jackettCatalogStatus.value = "Авторизация панели Jackett выполнена. Обновляем каталог…"
+                refreshJackettIndexers()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                _jackettLoginStatus.value = "Ошибка входа: " + IndexerErrorSanitizer.sanitize(
+                    error,
+                    listOf(adminPassword, current.apiKey, current.cookie)
+                )
+            } finally {
+                _isJackettLoginBusy.value = false
+            }
+        }
+    }
+
     /** Loads Jackett's native REST indexer catalogue into the in-app settings screen. */
     fun refreshJackettIndexers() {
         val config = _customIndexers.value.firstOrNull {
