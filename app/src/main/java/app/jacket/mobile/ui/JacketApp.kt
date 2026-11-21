@@ -2899,7 +2899,7 @@ private fun SettingsScreen(
                                 onValueChange = { lampacBaseUrl = it },
                                 modifier = Modifier.fillMaxWidth(),
                                 label = { Text("Адрес Lampac") },
-                                placeholder = { Text("http://192.168.1.20:9118") },
+                                placeholder = { Text("https://lampac.example или http://127.0.0.1:9118") },
                                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
                                 singleLine = true
                             )
@@ -2945,7 +2945,7 @@ private fun SettingsScreen(
                                 singleLine = true
                             )
                             Text(
-                                "Email, UID и Token шифруются Android Keystore и передаются только указанному серверу. Для локального HTTP используйте адрес LAN; удалённый сервер должен быть на HTTPS. Jacket не обходит CAPTCHA, Cloudflare, DRM, платный доступ или региональные ограничения.",
+                                "Email, UID и Token шифруются Android Keystore и передаются только указанному серверу. Удалённый сервер должен использовать HTTPS; HTTP разрешён только для 127.0.0.1. Jacket не обходит CAPTCHA, Cloudflare, DRM, платный доступ или региональные ограничения.",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
