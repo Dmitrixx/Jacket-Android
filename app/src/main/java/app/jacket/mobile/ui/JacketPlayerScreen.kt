@@ -224,6 +224,11 @@ fun JacketPlayerScreen(
             override fun onTracksChanged(tracks: androidx.media3.common.Tracks) {
                 applySurfaceFrameRate(playerView, player)
             }
+
+            override fun onIsPlayingChanged(isPlaying: Boolean) {
+                // Switching to pause, buffering or ended state releases the display request.
+                applySurfaceFrameRate(playerView, player)
+            }
         }
         player.addListener(listener)
         onDispose {
@@ -587,7 +592,10 @@ private fun applySurfaceFrameRate(playerView: PlayerView?, player: ExoPlayer?) {
     val surface = surfaceView.holder.surface
     if (!surface.isValid) return
 
-    val frameRate = player?.videoFormat?.frameRate?.let(FrameRatePolicy::normalize)
+    val frameRate = player
+        ?.takeIf { it.isPlaying }
+        ?.videoFormat?.frameRate
+        ?.let(FrameRatePolicy::normalize)
     runCatching {
         if (frameRate == null) {
             surface.setFrameRate(
