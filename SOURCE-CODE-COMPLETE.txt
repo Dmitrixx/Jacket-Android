@@ -4221,3 +4221,781 @@ data class MediaEpisode(
 }
 
 END FILE: app/src/main/java/app/jacket/mobile/data/MediaModels.kt
+
+
+========================================================================================
+FILE: app/src/main/java/app/jacket/mobile/data/MediaSettingsStore.kt
+========================================================================================
+
+package app.jacket.mobile.data
+
+import android.content.Context
+import android.net.Uri
+import android.security.keystore.KeyGenParameterSpec
+import android.security.keystore.KeyProperties
+import android.util.Base64
+import androidx.core.content.edit
+import org.json.JSONArray
+import org.json.JSONObject
+import java.nio.ByteBuffer
+import java.security.KeyStore
+import java.util.UUID
+import javax.crypto.Cipher
+import javax.crypto.KeyGenerator
+import javax.crypto.SecretKey
+import javax.crypto.spec.GCMParameterSpec
+
+/** Local settings. TMDB and all indexer credentials are encrypted with Android Keystore. */
+/**
+ * Explicitly restoring the built-in list also re-enables presets the user had
+ * previously switched off, while preserving custom sites and their settings.
+ */
+internal fun mergeTrackerShortcuts(
+    current: List<WebSearchProvider>,
+    defaults: List<WebSearchProvider>,
+    limit: Int
+): List<WebSearchProvider> {
+    val defaultIds = defaults.mapTo(hashSetOf()) { it.id }
+    val reEnabled = current.map { provider ->
+        if (provider.id in defaultIds) provider.copy(enabled = true) else provider
+    }
+    return (reEnabled + defaults).distinctBy { it.id }.take(limit)
+}
+
+class MediaSettingsStore(context: Context) {
+    private val preferences = context.applicationContext.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
+
+    fun tmdbToken(): String = decrypt(preferences.getString(KEY_TMDB_TOKEN, null))
+
+    fun saveTmdbToken(token: String) {
+        preferences.edit { putString(KEY_TMDB_TOKEN, encrypt(token.trim())) }
+    }
+
+    fun filmixToken(): String = decrypt(preferences.getString(KEY_FILMIX_TOKEN, null))
+
+    fun filmixApiBase(): String = runCatching {
+        FilmixDeviceAuth.normalizeApiBase(
+            preferences.getString(KEY_FILMIX_API_BASE, FilmixDeviceAuth.DEFAULT_API_BASE)
+                ?: FilmixDeviceAuth.DEFAULT_API_BASE
+        )
+    }.getOrDefault(FilmixDeviceAuth.DEFAULT_API_BASE)
+
+    @Synchronized
+    fun saveFilmixApiBase(value: String): String {
+        val normalized = FilmixDeviceAuth.normalizeApiBase(value)
+        preferences.edit { putString(KEY_FILMIX_API_BASE, normalized) }
+        return normalized
+    }
+
+    @Synchronized
+    fun saveFilmixToken(token: String) {
+        preferences.edit { putString(KEY_FILMIX_TOKEN, encrypt(token.trim())) }
+    }
+
+    @Synchronized
+    fun clearFilmixToken() {
+        preferences.edit { remove(KEY_FILMIX_TOKEN) }
+    }
+
+    /** Stable per-install identifier required by Filmix's device-code endpoint. */
+    @Synchronized
+    fun filmixDeviceId(): String {
+        preferences.getString(KEY_FILMIX_DEVICE_ID, null)
+            ?.takeIf { it.matches(Regex("[a-fA-F0-9]{16}")) }
+            ?.let { return it }
+        val bytes = ByteArray(8).also(java.security.SecureRandom()::nextBytes)
+        val id = bytes.joinToString("") { "%02x".format(it.toInt() and 0xff) }
+        preferences.edit { putString(KEY_FILMIX_DEVICE_ID, id) }
+        return id
+    }
+
+    fun hdRezkaSettings(): HdRezkaSettings {
+        val cookie = decrypt(preferences.getString(KEY_HDREZKA_COOKIE, null))
+        return HdRezkaSettings(
+            mirror = preferences.getString(KEY_HDREZKA_MIRROR, "") ?: "",
+            login = decrypt(preferences.getString(KEY_HDREZKA_LOGIN, null)),
+            password = decrypt(preferences.getString(KEY_HDREZKA_PASSWORD, null)),
+            cookie = cookie,
+            connected = preferences.getBoolean(KEY_HDREZKA_CONNECTED, false) &&
+                HdRezkaLoginClient.hasAuthenticatedCookie(cookie)
+        )
+    }
+
+    @Synchronized
+    fun saveHdRezkaSettings(settings: HdRezkaSettings) {
+        val mirror = settings.mirror.trim().take(300).let {
+            if (it.isBlank()) "" else HdRezkaLoginClient.validateMirror(it)
+        }
+        val login = settings.login.replace(Regex("[\\r\\n]"), "").trim().take(256)
+        val password = settings.password.take(512)
+        val cookie = settings.cookie.replace(Regex("[\\r\\n]"), "").trim().take(8_192)
+        preferences.edit {
+            putString(KEY_HDREZKA_MIRROR, mirror)
+            putString(KEY_HDREZKA_LOGIN, encrypt(login))
+            putString(KEY_HDREZKA_PASSWORD, encrypt(password))
+            putString(KEY_HDREZKA_COOKIE, encrypt(cookie))
+            putBoolean(
+                KEY_HDREZKA_CONNECTED,
+                settings.connected && HdRezkaLoginClient.hasAuthenticatedCookie(cookie)
+            )
+        }
+    }
+
+    @Synchronized
+    fun disconnectHdRezka() {
+        val current = hdRezkaSettings()
+        saveHdRezkaSettings(current.copy(cookie = "", connected = false))
+    }
+
+    fun indexers(): List<IndexerConfig> = runCatching {
+        val array = JSONArray(preferences.getString(KEY_INDEXERS, "[]"))
+        buildList {
+            for (i in 0 until array.length()) {
+                val item = array.optJSONObject(i) ?: continue
+                val config = IndexerConfig(
+                    id = item.optString("id"),
+                    name = item.optString("name"),
+                    searchUrlTemplate = item.optString("url"),
+                    protocol = runCatching {
+                        IndexerProtocol.valueOf(item.optString("protocol", "RSS"))
+                    }.getOrDefault(IndexerProtocol.RSS),
+                    apiKey = decrypt(item.optString("apiKeyEnc")),
+                    username = decrypt(item.optString("usernameEnc")),
+                    password = decrypt(item.optString("passwordEnc")),
+                    cookie = decrypt(item.optString("cookieEnc")),
+                    categories = item.optString("categories"),
+                    tags = item.optString("tags"),
+                    freeleechOnly = item.optBoolean("freeleechOnly", false),
+                    sortBy = item.optString("sortBy", "created"),
+                    sortOrder = item.optString("sortOrder", "desc"),
+                    enabled = item.optBoolean("enabled", true)
+                )
+                if (config.id.isNotBlank() && config.name.isNotBlank() && isValidTemplate(config.searchUrlTemplate)) {
+                    add(config)
+                }
+            }
+        }.distinctBy { it.id }.take(MAX_INDEXERS)
+    }.getOrDefault(emptyList())
+
+    /** Upsert also supports editing an existing indexer without losing its stable ID. */
+    @Synchronized
+    fun saveIndexer(config: IndexerConfig): IndexerConfig {
+        require(config.name.isNotBlank()) { "Укажите название индексатора" }
+        require(isValidTemplate(config.searchUrlTemplate)) {
+            "Нужен HTTPS URL либо HTTP-адрес локального сервера с маркером {query}. Для Torznab: /api?t=search&q={query}"
+        }
+        val normalized = config.copy(
+            id = config.id.ifBlank { UUID.randomUUID().toString() },
+            name = config.name.trim().take(80),
+            searchUrlTemplate = config.searchUrlTemplate.trim(),
+            apiKey = config.apiKey.replace(Regex("[\\r\\n]"), "").trim().take(512),
+            username = config.username.replace(Regex("[\\r\\n]"), "").trim().take(256),
+            password = config.password.take(512),
+            // Prevent custom auth values from injecting HTTP headers.
+            cookie = config.cookie.replace(Regex("[\\r\\n]"), "").trim().take(4096),
+            categories = config.categories.trim().take(500),
+            tags = config.tags.trim().take(300),
+            sortBy = config.sortBy.trim().take(40).ifBlank { "created" },
+            sortOrder = config.sortOrder.trim().lowercase().takeIf { it in setOf("asc", "desc") } ?: "desc"
+        )
+        val current = indexers().filterNot { it.id == normalized.id }
+        require(current.size < MAX_INDEXERS) { "Достигнут лимит в $MAX_INDEXERS индексаторов" }
+        saveIndexers(current + normalized)
+        return normalized
+    }
+
+    @Synchronized
+    fun addIndexer(name: String, urlTemplate: String) {
+        saveIndexer(IndexerConfig(id = "", name = name, searchUrlTemplate = urlTemplate))
+    }
+
+    /** Export only non-secret fields; authentication must be re-entered after import. */
+    fun exportIndexersJson(): String {
+        val root = JSONArray()
+        indexers().forEach { item ->
+            root.put(
+                JSONObject()
+                    .put("name", item.name)
+                    .put("url", item.searchUrlTemplate)
+                    .put("protocol", item.protocol.name)
+                    .put("categories", item.categories)
+                    .put("tags", item.tags)
+                    .put("freeleechOnly", item.freeleechOnly)
+                    .put("sortBy", item.sortBy)
+                    .put("sortOrder", item.sortOrder)
+                    .put("enabled", item.enabled)
+            )
+        }
+        return root.toString(2)
+    }
+
+    /** Import replaces nothing: each validated source is added with blank credentials. */
+    @Synchronized
+    fun importIndexersJson(json: String): Int {
+        require(json.length <= MAX_IMPORT_BYTES) { "Файл настроек слишком большой" }
+        val root = JSONArray(json)
+        var imported = 0
+        for (i in 0 until minOf(root.length(), MAX_INDEXERS)) {
+            val item = root.optJSONObject(i) ?: continue
+            val config = runCatching {
+                IndexerConfig(
+                    id = "",
+                    name = item.optString("name"),
+                    searchUrlTemplate = item.optString("url"),
+                    protocol = runCatching { IndexerProtocol.valueOf(item.optString("protocol", "RSS")) }
+                        .getOrDefault(IndexerProtocol.RSS),
+                    categories = item.optString("categories"),
+                    tags = item.optString("tags"),
+                    freeleechOnly = item.optBoolean("freeleechOnly", false),
+                    sortBy = item.optString("sortBy", "created"),
+                    sortOrder = item.optString("sortOrder", "desc"),
+                    enabled = item.optBoolean("enabled", true)
+                )
+            }.getOrNull() ?: continue
+            if (runCatching { saveIndexer(config) }.isSuccess) imported++
+        }
+        return imported
+    }
+
+    @Synchronized
+    fun setIndexerEnabled(id: String, enabled: Boolean) {
+        val updated = indexers().map { if (it.id == id) it.copy(enabled = enabled) else it }
+        saveIndexers(updated)
+    }
+
+    @Synchronized
+    fun removeIndexer(id: String) {
+        saveIndexers(indexers().filterNot { it.id == id })
+    }
+
+    @Synchronized
+    fun webSearchProviders(): List<WebSearchProvider> = readWebSearchProviders()
+
+    @Synchronized
+    fun restoreDefaultTrackerShortcuts(): List<WebSearchProvider> {
+        val merged = mergeTrackerShortcuts(
+            webSearchProviders(),
+            DEFAULT_TRACKER_SHORTCUTS,
+            MAX_WEB_SEARCH_PROVIDERS
+        )
+        saveWebSearchProviders(merged)
+        return readWebSearchProviders()
+    }
+
+    private fun readWebSearchProviders(): List<WebSearchProvider> = runCatching {
+        val array = JSONArray(preferences.getString(KEY_WEB_SEARCH_PROVIDERS, "[]"))
+        buildList {
+            for (i in 0 until array.length()) {
+                val item = array.optJSONObject(i) ?: continue
+                val provider = WebSearchProvider(
+                    id = item.optString("id"),
+                    name = item.optString("name"),
+                    searchUrlTemplate = item.optString("url"),
+                    enabled = item.optBoolean("enabled", true),
+                    cookie = decrypt(item.optString("cookieEnc"))
+                )
+                if (provider.id.isNotBlank() && provider.name.isNotBlank() &&
+                    runCatching { WebSearchUrlBuilder.validateTemplate(provider.searchUrlTemplate) }.isSuccess
+                ) add(provider)
+            }
+        }.distinctBy { it.id }.take(MAX_WEB_SEARCH_PROVIDERS)
+    }.getOrDefault(emptyList())
+
+    @Synchronized
+    fun saveWebSearchProvider(provider: WebSearchProvider): WebSearchProvider {
+        require(provider.name.isNotBlank()) { "Укажите название сайта" }
+        val normalized = provider.copy(
+            id = provider.id.ifBlank { UUID.randomUUID().toString() },
+            name = provider.name.trim().take(80),
+            searchUrlTemplate = WebSearchUrlBuilder.validateTemplate(provider.searchUrlTemplate),
+            cookie = provider.cookie.replace(Regex("[\\r\\n]"), "").trim().take(8_192)
+        )
+        val current = webSearchProviders().filterNot { it.id == normalized.id }
+        require(current.size < MAX_WEB_SEARCH_PROVIDERS) {
+            "Достигнут лимит в $MAX_WEB_SEARCH_PROVIDERS сайтов поиска"
+        }
+        saveWebSearchProviders(current + normalized)
+        return normalized
+    }
+
+    @Synchronized
+    fun setWebSearchProviderEnabled(id: String, enabled: Boolean) {
+        saveWebSearchProviders(webSearchProviders().map {
+            if (it.id == id) it.copy(enabled = enabled) else it
+        })
+    }
+
+    @Synchronized
+    fun removeWebSearchProvider(id: String) {
+        saveWebSearchProviders(webSearchProviders().filterNot { it.id == id })
+    }
+
+    fun favorites(): List<CatalogItem> = loadItems(KEY_FAVORITES)
+    fun history(): List<CatalogItem> = loadItems(KEY_HISTORY)
+
+    @Synchronized
+    fun saveFavorites(items: List<CatalogItem>) = saveItems(KEY_FAVORITES, items.take(MAX_SAVED_ITEMS))
+
+    @Synchronized
+    fun addToHistory(item: CatalogItem) {
+        saveItems(KEY_HISTORY, (listOf(item) + history().filterNot { it.id == item.id }).take(MAX_HISTORY))
+    }
+
+    private fun loadItems(key: String): List<CatalogItem> = runCatching {
+        val array = JSONArray(preferences.getString(key, "[]"))
+        buildList {
+            for (i in 0 until array.length()) {
+                catalogItemFromJson(array.optJSONObject(i) ?: continue)?.let(::add)
+            }
+        }
+    }.getOrDefault(emptyList())
+
+    private fun saveItems(key: String, items: List<CatalogItem>) {
+        val json = JSONArray()
+        items.forEach { json.put(it.toJson()) }
+        preferences.edit { putString(key, json.toString()) }
+    }
+
+    private fun saveWebSearchProviders(items: List<WebSearchProvider>) {
+        val json = JSONArray()
+        items.forEach { provider ->
+            json.put(
+                JSONObject()
+                    .put("id", provider.id)
+                    .put("name", provider.name)
+                    .put("url", provider.searchUrlTemplate)
+                    .put("enabled", provider.enabled)
+                    .put("cookieEnc", encrypt(provider.cookie))
+            )
+        }
+        preferences.edit { putString(KEY_WEB_SEARCH_PROVIDERS, json.toString()) }
+    }
+
+    private fun saveIndexers(items: List<IndexerConfig>) {
+        val json = JSONArray()
+        items.forEach { item ->
+            json.put(
+                JSONObject()
+                    .put("id", item.id)
+                    .put("name", item.name)
+                    .put("url", item.searchUrlTemplate)
+                    .put("protocol", item.protocol.name)
+                    .put("apiKeyEnc", encrypt(item.apiKey))
+                    .put("usernameEnc", encrypt(item.username))
+                    .put("passwordEnc", encrypt(item.password))
+                    .put("cookieEnc", encrypt(item.cookie))
+                    .put("categories", item.categories)
+                    .put("tags", item.tags)
+                    .put("freeleechOnly", item.freeleechOnly)
+                    .put("sortBy", item.sortBy)
+                    .put("sortOrder", item.sortOrder)
+                    .put("enabled", item.enabled)
+            )
+        }
+        preferences.edit { putString(KEY_INDEXERS, json.toString()) }
+    }
+
+    private fun encrypt(value: String): String {
+        if (value.isBlank()) return ""
+        val cipher = Cipher.getInstance(TRANSFORMATION)
+        cipher.init(Cipher.ENCRYPT_MODE, getOrCreateKey())
+        val encrypted = cipher.doFinal(value.toByteArray(Charsets.UTF_8))
+        val payload = ByteBuffer.allocate(cipher.iv.size + encrypted.size).put(cipher.iv).put(encrypted).array()
+        return Base64.encodeToString(payload, Base64.NO_WRAP)
+    }
+
+    private fun decrypt(value: String?): String {
+        if (value.isNullOrBlank()) return ""
+        return runCatching {
+            val buffer = ByteBuffer.wrap(Base64.decode(value, Base64.NO_WRAP))
+            require(buffer.remaining() > GCM_IV_LENGTH)
+            val iv = ByteArray(GCM_IV_LENGTH).also(buffer::get)
+            val encrypted = ByteArray(buffer.remaining()).also(buffer::get)
+            val cipher = Cipher.getInstance(TRANSFORMATION)
+            cipher.init(Cipher.DECRYPT_MODE, getOrCreateKey(), GCMParameterSpec(GCM_TAG_LENGTH_BITS, iv))
+            String(cipher.doFinal(encrypted), Charsets.UTF_8)
+        }.getOrDefault("")
+    }
+
+    private fun getOrCreateKey(): SecretKey {
+        val keyStore = KeyStore.getInstance(ANDROID_KEYSTORE).apply { load(null) }
+        (keyStore.getKey(KEY_ALIAS, null) as? SecretKey)?.let { return it }
+        val generator = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, ANDROID_KEYSTORE)
+        generator.init(
+            KeyGenParameterSpec.Builder(
+                KEY_ALIAS,
+                KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT
+            )
+                .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
+                .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
+                .setRandomizedEncryptionRequired(true)
+                .build()
+        )
+        return generator.generateKey()
+    }
+
+    private fun isValidTemplate(value: String): Boolean = runCatching {
+        if (!value.contains("{query}")) return false
+        LocalNetwork.isAllowedUrl(value.replace("{query}", "probe").replace("{apikey}", "test"))
+    }.getOrDefault(false)
+
+    private companion object {
+        val DEFAULT_TRACKER_SHORTCUTS = listOf(
+            WebSearchProvider(
+                id = "tracker-rutracker",
+                name = "RuTracker",
+                searchUrlTemplate = "https://rutracker.org/forum/tracker.php?nm={query}"
+            ),
+            WebSearchProvider(
+                id = "tracker-nnmclub",
+                name = "NNM-Club",
+                searchUrlTemplate = "https://nnmclub.to/forum/tracker.php?nm={query}"
+            ),
+            WebSearchProvider(
+                id = "tracker-rutor",
+                name = "Rutor",
+                searchUrlTemplate = "https://rutor.info/search/0/0/100/2/{query}"
+            ),
+            WebSearchProvider(
+                id = "tracker-kinozal",
+                name = "Kinozal",
+                searchUrlTemplate = "https://kinozal.tv/browse.php?s={query}"
+            ),
+            WebSearchProvider(
+                id = "tracker-1337x",
+                name = "1337x",
+                searchUrlTemplate = "https://1337x.to/search/{query}/1/"
+            ),
+            WebSearchProvider(
+                id = "tracker-tpb",
+                name = "The Pirate Bay",
+                searchUrlTemplate = "https://thepiratebay.org/search.php?q={query}"
+            ),
+            WebSearchProvider(
+                id = "tracker-archive",
+                name = "Internet Archive",
+                searchUrlTemplate = "https://archive.org/search?query={query}%20AND%20mediatype%3Amovies"
+            )
+        )
+
+        const val PREFERENCES = "jacket_media_settings"
+        const val KEY_TMDB_TOKEN = "tmdb_token_enc"
+        const val KEY_FILMIX_TOKEN = "filmix_device_token_enc"
+        const val KEY_FILMIX_API_BASE = "filmix_api_base"
+        const val KEY_FILMIX_DEVICE_ID = "filmix_device_id"
+        const val KEY_HDREZKA_MIRROR = "hdrezka_mirror"
+        const val KEY_HDREZKA_LOGIN = "hdrezka_login_enc"
+        const val KEY_HDREZKA_PASSWORD = "hdrezka_password_enc"
+        const val KEY_HDREZKA_COOKIE = "hdrezka_cookie_enc"
+        const val KEY_HDREZKA_CONNECTED = "hdrezka_connected"
+        const val KEY_INDEXERS = "rss_indexers"
+        const val KEY_WEB_SEARCH_PROVIDERS = "web_search_providers"
+        const val KEY_TRACKER_PRESETS_SEEDED = "tracker_presets_seeded"
+        const val KEY_FAVORITES = "catalog_favorites"
+        const val KEY_HISTORY = "catalog_history"
+        const val MAX_INDEXERS = 100
+        const val MAX_WEB_SEARCH_PROVIDERS = 50
+        const val MAX_IMPORT_BYTES = 256 * 1024
+        const val MAX_SAVED_ITEMS = 200
+        const val MAX_HISTORY = 30
+        const val ANDROID_KEYSTORE = "AndroidKeyStore"
+        // Keep the existing alias so saved TMDB tokens remain readable.
+        const val KEY_ALIAS = "jacket_tmdb_settings_key"
+        const val TRANSFORMATION = "AES/GCM/NoPadding"
+        const val GCM_IV_LENGTH = 12
+        const val GCM_TAG_LENGTH_BITS = 128
+    }
+}
+
+END FILE: app/src/main/java/app/jacket/mobile/data/MediaSettingsStore.kt
+
+
+========================================================================================
+FILE: app/src/main/java/app/jacket/mobile/data/MediaSourceCatalog.kt
+========================================================================================
+
+package app.jacket.mobile.data
+
+enum class MediaSourceIntegration {
+    DIRECT_ADAPTER,
+    AUTH_SETTINGS_ONLY,
+    MEDIA_ADAPTER_MISSING
+}
+
+/** Curated source metadata. An entry is not considered connected until a real adapter exists. */
+data class MediaSourceDescriptor(
+    val id: String,
+    val name: String,
+    val displayName: String,
+    val priority: Int,
+    val types: List<String>,
+    val authRequired: Boolean,
+    val supports4k: Boolean,
+    val notes: String,
+    val integration: MediaSourceIntegration
+)
+
+object MediaSourceCatalog {
+    val sources: List<MediaSourceDescriptor> = listOf(
+        MediaSourceDescriptor(
+            id = "hdrezka",
+            name = "HDRezka",
+            displayName = "HDRezka / Rezka",
+            priority = 1,
+            types = listOf("movie", "serial", "anime"),
+            authRequired = false,
+            supports4k = true,
+            notes = "Подключён прямой поиск по заданному HTTPS-зеркалу, озвучкам, сериям и поддерживаемым HTTPS-потокам. CAPTCHA/Anubis не обходится.",
+            integration = MediaSourceIntegration.DIRECT_ADAPTER
+        ),
+        MediaSourceDescriptor(
+            id = "filmix",
+            name = "Filmix",
+            displayName = "Filmix",
+            priority = 2,
+            types = listOf("movie", "serial"),
+            authRequired = true,
+            supports4k = true,
+            notes = "Подключён поиск через Filmix API v2, варианты качества с учётом тарифа аккаунта и прямое воспроизведение поддерживаемых HTTPS-ссылок.",
+            integration = MediaSourceIntegration.DIRECT_ADAPTER
+        ),
+        MediaSourceDescriptor(
+            id = "coldfilm",
+            name = "ColdFilm",
+            displayName = "ColdFilm",
+            priority = 3,
+            types = listOf("serial"),
+            authRequired = false,
+            supports4k = false,
+            notes = "Сериалы и собственная озвучка. Проверенный адаптер пока не подключён.",
+            integration = MediaSourceIntegration.MEDIA_ADAPTER_MISSING
+        ),
+        MediaSourceDescriptor(
+            id = "baskino",
+            name = "Baskino",
+            displayName = "Baskino",
+            priority = 4,
+            types = listOf("movie", "serial"),
+            authRequired = false,
+            supports4k = false,
+            notes = "Нужен проверенный адаптер и подтверждённый формат источника.",
+            integration = MediaSourceIntegration.MEDIA_ADAPTER_MISSING
+        ),
+        MediaSourceDescriptor(
+            id = "kinogo",
+            name = "Kinogo",
+            displayName = "Kinogo",
+            priority = 5,
+            types = listOf("movie", "serial"),
+            authRequired = false,
+            supports4k = false,
+            notes = "Нужен проверенный адаптер и подтверждённый формат источника.",
+            integration = MediaSourceIntegration.MEDIA_ADAPTER_MISSING
+        ),
+        MediaSourceDescriptor(
+            id = "videocdn",
+            name = "VideoCDN",
+            displayName = "VideoCDN",
+            priority = 6,
+            types = listOf("movie", "serial"),
+            authRequired = false,
+            supports4k = false,
+            notes = "Требуется документированный API или совместимый плагин-поставщик.",
+            integration = MediaSourceIntegration.MEDIA_ADAPTER_MISSING
+        ),
+        MediaSourceDescriptor(
+            id = "collaps",
+            name = "Collaps",
+            displayName = "Collaps",
+            priority = 7,
+            types = listOf("movie", "serial"),
+            authRequired = false,
+            supports4k = false,
+            notes = "Требуется документированный API или совместимый плагин-поставщик.",
+            integration = MediaSourceIntegration.MEDIA_ADAPTER_MISSING
+        ),
+        MediaSourceDescriptor(
+            id = "kinobase",
+            name = "Kinobase",
+            displayName = "Kinobase",
+            priority = 8,
+            types = listOf("movie", "serial"),
+            authRequired = false,
+            supports4k = false,
+            notes = "Дополнительный источник. Проверенный адаптер пока не подключён.",
+            integration = MediaSourceIntegration.MEDIA_ADAPTER_MISSING
+        ),
+        MediaSourceDescriptor(
+            id = "cdnmovies",
+            name = "CDNMovies",
+            displayName = "CDNMovies",
+            priority = 9,
+            types = listOf("movie", "serial"),
+            authRequired = false,
+            supports4k = false,
+            notes = "Резервный источник. Проверенный адаптер пока не подключён.",
+            integration = MediaSourceIntegration.MEDIA_ADAPTER_MISSING
+        ),
+        MediaSourceDescriptor(
+            id = "lordfilm",
+            name = "Lordfilm",
+            displayName = "Lordfilm",
+            priority = 10,
+            types = listOf("movie", "serial"),
+            authRequired = false,
+            supports4k = false,
+            notes = "Требуется проверенный источник и поддержка смены URL через настройки, не через обход блокировок.",
+            integration = MediaSourceIntegration.MEDIA_ADAPTER_MISSING
+        )
+    )
+}
+
+END FILE: app/src/main/java/app/jacket/mobile/data/MediaSourceCatalog.kt
+
+
+========================================================================================
+FILE: app/src/main/java/app/jacket/mobile/data/ReleaseHeuristics.kt
+========================================================================================
+
+package app.jacket.mobile.data
+
+/** Small title-only release classifier. These tags are heuristics, not tracker-specific metadata. */
+object ReleaseHeuristics {
+    private val resolutionPatterns = listOf(
+        "2160p" to Regex("""(?i)(?<![a-z0-9])(?:2160p|4k|uhd)(?![a-z0-9])"""),
+        "1080p" to Regex("""(?i)(?<![a-z0-9])1080[pi]?(?![a-z0-9])"""),
+        "720p" to Regex("""(?i)(?<![a-z0-9])720[pi]?(?![a-z0-9])""")
+    )
+    private val audioPatterns = listOf(
+        "DTS-HD MA" to Regex("""(?i)dts[ ._-]?hd[ ._-]?(?:ma|master)"""),
+        "TrueHD" to Regex("""(?i)true[ ._-]?hd"""),
+        "Atmos" to Regex("""(?i)\batmos\b"""),
+        "DTS" to Regex("""(?i)\bdts\b"""),
+        "EAC3" to Regex("""(?i)eac3|ddp(?:\d\.\d)?"""),
+        "AC3" to Regex("""(?i)\bac3\b|dd(?:\d\.\d)?"""),
+        "AAC" to Regex("""(?i)\baac\b"""),
+        "FLAC" to Regex("""(?i)\bflac\b""")
+    )
+    private val sourcePatterns = listOf(
+        "WEB-DL" to Regex("""(?i)web[ ._-]?dl"""),
+        "WEBRip" to Regex("""(?i)web[ ._-]?rip"""),
+        "BluRay" to Regex("""(?i)blu[ ._-]?ray|bdrip|brrip"""),
+        "HDR" to Regex("""(?i)(?<![a-z0-9])hdr(?:10\+?)?(?![a-z0-9])"""),
+        "DV" to Regex("""(?i)(?<![a-z0-9])(?:dolby[ ._-]?vision|dv)(?![a-z0-9])""")
+    )
+
+    private val dimensionPattern = Regex(
+        """(?i)(?<![0-9])([0-9]{3,4})\s*[x×]\s*([0-9]{3,4})(?![0-9])"""
+    )
+    private val channelPattern = Regex(
+        """(?i)(?<![0-9])([1-8]\.[0-2])(?![0-9])"""
+    )
+    private val languageNames = linkedMapOf(
+        "RUS" to Regex("""(?i)(?<![a-z0-9])(?:rus|russian)(?![a-z0-9])"""),
+        "UKR" to Regex("""(?i)(?<![a-z0-9])(?:ukr|ukrainian)(?![a-z0-9])"""),
+        "ENG" to Regex("""(?i)(?<![a-z0-9])(?:eng|english)(?![a-z0-9])"""),
+        "GER" to Regex("""(?i)(?<![a-z0-9])(?:ger|german)(?![a-z0-9])"""),
+        "FRE" to Regex("""(?i)(?<![a-z0-9])(?:fre|french)(?![a-z0-9])"""),
+        "SPA" to Regex("""(?i)(?<![a-z0-9])(?:spa|spanish)(?![a-z0-9])"""),
+        "ITA" to Regex("""(?i)(?<![a-z0-9])(?:ita|italian)(?![a-z0-9])"""),
+        "POR" to Regex("""(?i)(?<![a-z0-9])(?:por|portuguese)(?![a-z0-9])"""),
+        "POL" to Regex("""(?i)(?<![a-z0-9])(?:pol|polish)(?![a-z0-9])"""),
+        "JPN" to Regex("""(?i)(?<![a-z0-9])(?:jpn|japanese)(?![a-z0-9])"""),
+        "CHI" to Regex("""(?i)(?<![a-z0-9])(?:chi|chinese)(?![a-z0-9])"""),
+        "HEB" to Regex("""(?i)(?<![a-z0-9])(?:heb|hebrew)(?![a-z0-9])""")
+    )
+    private val subtitlePattern = Regex(
+        """(?i)(?:sub(?:title)?s?[ ._-]*[:=]?[ ._-]*(rus|ukr|eng|ger|fre|spa|ita|por|pol|jpn|chi|heb))|(?:(rus|ukr|eng|ger|fre|spa|ita|por|pol|jpn|chi|heb)[ ._-]*sub(?:title)?s?)"""
+    )
+    private val bitratePattern = Regex(
+        """(?i)([0-9]+(?:[.,][0-9]+)?)\s*(?:mbit/s|мбит/с|mbps)"""
+    )
+
+    fun classify(title: String): ReleaseMetadata {
+        val quality = resolutionPatterns.firstOrNull { it.second.containsMatchIn(title) }?.first
+        val hdr = Regex("""(?i)(?<![a-z0-9])hdr(?:10\+?)?(?![a-z0-9])""").containsMatchIn(title)
+        val dolbyVision = Regex("""(?i)(?<![a-z0-9])(?:dolby[ ._-]?vision|dv)(?![a-z0-9])""").containsMatchIn(title)
+        val codec = when {
+            Regex("""(?i)(?<![a-z0-9])(?:hevc|h\.265|x265)(?![a-z0-9])""").containsMatchIn(title) -> "HEVC / H.265"
+            Regex("""(?i)(?<![a-z0-9])(?:av1)(?![a-z0-9])""").containsMatchIn(title) -> "AV1"
+            Regex("""(?i)(?<![a-z0-9])(?:avc|h\.264|x264)(?![a-z0-9])""").containsMatchIn(title) -> "AVC / H.264"
+            else -> null
+        }
+        val audio = audioPatterns.filter { it.second.containsMatchIn(title) }.map { it.first }
+        val source = sourcePatterns.filter { it.second.containsMatchIn(title) }.map { it.first } +
+            listOf("DUB", "MVO", "AVO", "VO", "LE", "LostFilm", "NewStudio").filter {
+                Regex("""(?i)(?<![a-z0-9])${Regex.escape(it)}(?![a-z0-9])""").containsMatchIn(title)
+            }
+        val dimensions = dimensionPattern.find(title)?.let { "${it.groupValues[1]}x${it.groupValues[2]}" }
+        val channelCount = channelPattern.find(title)?.groupValues?.getOrNull(1)
+        val subtitleLanguages = subtitlePattern.findAll(title).mapNotNull { match ->
+            (match.groupValues.getOrNull(1).orEmpty().ifBlank { match.groupValues.getOrNull(2).orEmpty() })
+                .uppercase().takeIf(String::isNotBlank)
+        }.distinct().toList()
+        val foundLanguages = languageNames.mapNotNull { (code, pattern) ->
+            code.takeIf { pattern.containsMatchIn(title) }
+        }
+        val audioLanguages = foundLanguages.filterNot { it in subtitleLanguages }
+        val bitrate = bitratePattern.find(title)?.groupValues?.getOrNull(1)?.replace(',', '.')?.let { "$it Мбит/с" }
+        val displayQuality = quality ?: when {
+            dimensions?.startsWith("3840") == true -> "2160p"
+            dimensions?.startsWith("1920") == true -> "FHD"
+            dimensions?.startsWith("1280") == true -> "720p"
+            else -> null
+        }
+        return ReleaseMetadata(
+            quality = displayQuality,
+            hdr = hdr,
+            dolbyVision = dolbyVision,
+            videoCodec = codec,
+            audioTags = audio.distinct(),
+            sourceTags = source.distinct(),
+            resolutionDimensions = dimensions,
+            audioChannels = channelCount,
+            audioLanguages = audioLanguages,
+            subtitleLanguages = subtitleLanguages,
+            bitrate = bitrate
+        )
+    }
+}
+
+END FILE: app/src/main/java/app/jacket/mobile/data/ReleaseHeuristics.kt
+
+
+========================================================================================
+FILE: app/src/main/java/app/jacket/mobile/data/TorrentEntry.kt
+========================================================================================
+
+package app.jacket.mobile.data
+
+import java.util.Locale
+
+data class TorrentEntry(
+    val id: String,
+    val title: String,
+    val magnetUri: String?,
+    val torrentUrl: String?,
+    val sizeBytes: Long?,
+    val seeders: Int?,
+    val leechers: Int?,
+    val publishedAt: String?,
+    val indexer: String?
+) {
+    val openUri: String?
+        get() = magnetUri ?: torrentUrl
+}
+
+fun formatBytes(bytes: Long?): String {
+    if (bytes == null || bytes <= 0L) return "Размер неизвестен"
+    val units = arrayOf("Б", "КБ", "МБ", "ГБ", "ТБ")
+    var value = bytes.toDouble()
+    var unit = 0
+    while (value >= 1024.0 && unit < units.lastIndex) {
+        value /= 1024.0
+        unit++
+    }
+    return if (unit == 0) "${value.toLong()} ${units[unit]}"
+    else String.format(Locale.ROOT, "%.1f %s", value, units[unit])
+}
+
+END FILE: app/src/main/java/app/jacket/mobile/data/TorrentEntry.kt
