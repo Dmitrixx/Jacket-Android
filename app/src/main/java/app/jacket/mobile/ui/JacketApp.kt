@@ -2120,6 +2120,7 @@ private fun SettingsScreen(
     val jackettConfigStatus by viewModel.jackettConfigStatus.collectAsState()
     val filmixToken by viewModel.filmixToken.collectAsState()
     val filmixApiBase by viewModel.filmixApiBase.collectAsState()
+    val filmixCustomApiBase by viewModel.filmixCustomApiBase.collectAsState()
     val filmixCode by viewModel.filmixCode.collectAsState()
     val filmixStatus by viewModel.filmixStatus.collectAsState()
     val isFilmixPairing by viewModel.isFilmixPairing.collectAsState()
@@ -2161,6 +2162,7 @@ private fun SettingsScreen(
         }
     }
     var token by remember(currentToken) { mutableStateOf(currentToken) }
+    var filmixCustomApiInput by remember(filmixCustomApiBase) { mutableStateOf(filmixCustomApiBase) }
     val savedRates = remember(context) { TorrentEngine.rateLimits(context) }
     var downloadLimit by rememberSaveable { mutableStateOf(savedRates.first.toString()) }
     var uploadLimit by rememberSaveable { mutableStateOf(savedRates.second.toString()) }
@@ -2550,47 +2552,50 @@ private fun SettingsScreen(
                             Text("API-сервер", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
                             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                                 val compactApiButtonPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp)
-                                if (filmixApiBase == FilmixDeviceAuth.DEFAULT_API_BASE) {
-                                    Button(
-                                        onClick = {},
-                                        enabled = false,
-                                        modifier = Modifier.weight(1f),
-                                        contentPadding = compactApiButtonPadding
-                                    ) {
-                                        Text("Основной", maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis)
-                                    }
+                                if (filmixApiBase == FilmixDeviceAuth.AUTO_API_BASE) {
+                                    Button(onClick = {}, enabled = false, modifier = Modifier.weight(1f), contentPadding = compactApiButtonPadding) { Text("Авто", maxLines = 1) }
                                 } else {
-                                    OutlinedButton(
-                                        onClick = { viewModel.selectFilmixApiBase(FilmixDeviceAuth.DEFAULT_API_BASE) },
-                                        enabled = !isFilmixPairing,
-                                        modifier = Modifier.weight(1f),
-                                        contentPadding = compactApiButtonPadding
-                                    ) {
-                                        Text("Основной", maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis)
-                                    }
+                                    OutlinedButton(onClick = { viewModel.selectFilmixApiBase(FilmixDeviceAuth.AUTO_API_BASE) }, enabled = !isFilmixPairing, modifier = Modifier.weight(1f), contentPadding = compactApiButtonPadding) { Text("Авто", maxLines = 1) }
+                                }
+                                if (filmixApiBase == FilmixDeviceAuth.DEFAULT_API_BASE) {
+                                    Button(onClick = {}, enabled = false, modifier = Modifier.weight(1f), contentPadding = compactApiButtonPadding) { Text("Основной", maxLines = 1) }
+                                } else {
+                                    OutlinedButton(onClick = { viewModel.selectFilmixApiBase(FilmixDeviceAuth.DEFAULT_API_BASE) }, enabled = !isFilmixPairing, modifier = Modifier.weight(1f), contentPadding = compactApiButtonPadding) { Text("Основной", maxLines = 1) }
                                 }
                                 if (filmixApiBase == FilmixDeviceAuth.ALTERNATE_API_BASE) {
-                                    Button(
-                                        onClick = {},
-                                        enabled = false,
-                                        modifier = Modifier.weight(1f),
-                                        contentPadding = compactApiButtonPadding
-                                    ) {
-                                        Text("Резервный", maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis)
-                                    }
+                                    Button(onClick = {}, enabled = false, modifier = Modifier.weight(1f), contentPadding = compactApiButtonPadding) { Text("Резервный", maxLines = 1) }
                                 } else {
-                                    OutlinedButton(
-                                        onClick = { viewModel.selectFilmixApiBase(FilmixDeviceAuth.ALTERNATE_API_BASE) },
-                                        enabled = !isFilmixPairing,
-                                        modifier = Modifier.weight(1f),
-                                        contentPadding = compactApiButtonPadding
-                                    ) {
-                                        Text("Резервный", maxLines = 1, softWrap = false, overflow = TextOverflow.Ellipsis)
-                                    }
+                                    OutlinedButton(onClick = { viewModel.selectFilmixApiBase(FilmixDeviceAuth.ALTERNATE_API_BASE) }, enabled = !isFilmixPairing, modifier = Modifier.weight(1f), contentPadding = compactApiButtonPadding) { Text("Резервный", maxLines = 1) }
                                 }
                             }
+                            OutlinedTextField(
+                                value = filmixCustomApiInput,
+                                onValueChange = { filmixCustomApiInput = it.take(300) },
+                                modifier = Modifier.fillMaxWidth(),
+                                label = { Text("Своё HTTPS-зеркало API") },
+                                placeholder = { Text("https://media.example/api/v2") },
+                                singleLine = true,
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
+                                enabled = !isFilmixPairing
+                            )
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                OutlinedButton(
+                                    onClick = { viewModel.saveFilmixCustomApiBase(filmixCustomApiInput) },
+                                    enabled = !isFilmixPairing, modifier = Modifier.weight(1f)
+                                ) { Text("Сохранить зеркало") }
+                                Button(
+                                    onClick = { viewModel.selectFilmixApiBase(filmixCustomApiInput) },
+                                    enabled = !isFilmixPairing && filmixCustomApiInput.isNotBlank(),
+                                    modifier = Modifier.weight(1f)
+                                ) { Text("Использовать") }
+                            }
                             Text(
-                                "Выбран: ${filmixApiBase.substringAfter("://").substringBefore('/')}. Автопереключения нет; TLS-проверка остаётся включённой.",
+                                when (filmixApiBase) {
+                                    FilmixDeviceAuth.AUTO_API_BASE -> "AUTO проверяет сохранённое пользовательское зеркало первым, затем основной и резервный серверы."
+                                    FilmixDeviceAuth.DEFAULT_API_BASE -> "Выбран основной сервер Filmix."
+                                    FilmixDeviceAuth.ALTERNATE_API_BASE -> "Выбран резервный сервер Filmix."
+                                    else -> "Выбран пользовательский сервер: " + filmixApiBase.substringAfter("://").substringBefore("/")
+                                } + " Перед отправкой ID и токена проверяется API и TLS-сертификат. Для AUTO после успешной привязки используется сервер, выдавший код.",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
