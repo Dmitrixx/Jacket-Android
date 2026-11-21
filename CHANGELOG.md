@@ -1,5 +1,11 @@
 # Changelog
 
+## Next
+
+- Add Jackett WebUI password login through the dashboard POST controller; retain only the returned Jackett session cookie in encrypted local settings. The admin password itself is transient and is never persisted.
+- Add regression coverage for the reverse-proxy login path, URL-encoded POST body, session-cookie extraction and rejected logins without a Jackett cookie.
+
+
 ## 2.8.0
 
 - Consolidated native Filmix and HDRezka search/player adapters, encrypted account state, provider diagnostics and the unified detail-card source picker.
