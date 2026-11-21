@@ -791,7 +791,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Exception) {
-                _jackettLoginStatus.value = IndexerErrorSanitizer.sanitize(
+                _jackettLoginStatus.value = "Ошибка входа: " + IndexerErrorSanitizer.sanitize(
                     error,
                     listOf(adminPassword, current.apiKey, current.cookie)
                 )
