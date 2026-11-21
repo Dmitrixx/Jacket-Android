@@ -7,6 +7,8 @@
 - Allow an explicitly user-entered HTTPS Filmix API host with strict URL/host validation, normal certificate validation and no cross-host token forwarding.
 
 - Added the native optional Jackett indexer catalogue, dynamic per-indexer configuration/testing, private-indexer support and richer torrent release cards. Jackett remains user-managed and is not bundled.
+- Added Jackett WebUI password login; the administrator password is transient, while only the returned session Cookie is stored in encrypted local settings.
+- Extended release-title labels with CAMRip/TeleSync/TeleCine/SCR, 10-bit/Hi10P, HLG, HDR10+ and recognized dubbing studios; added an optional filter to hide screen-copy releases.
 - Added a ten-provider catalogue in priority order. Only Filmix and HDRezka have direct adapters; ColdFilm, Baskino, Kinogo, VideoCDN, Collaps, Kinobase, CDNMovies and Lordfilm remain unconnected descriptors pending a compatible verified integration.
 - Added completion-order partial tracker results, bounded detail-page resolution, a 25-second aggregate deadline and protection against stale search callbacks.
 - Match the Android 12+ display refresh rate to the active video frame rate on SurfaceView playback; clear the request when playback pauses or stops and when the surface is detached. Older Android versions remain unchanged.
