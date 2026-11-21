@@ -21,9 +21,28 @@ object ReleaseHeuristics {
         "WEB-DL" to Regex("""(?i)web[ ._-]?dl"""),
         "WEBRip" to Regex("""(?i)web[ ._-]?rip"""),
         "BluRay" to Regex("""(?i)blu[ ._-]?ray|bdrip|brrip"""),
-        "HDR" to Regex("""(?i)(?<![a-z0-9])hdr(?:10\+?)?(?![a-z0-9])"""),
+        "CAMRip" to Regex("""(?i)(?<![a-z0-9])cam(?:rip)?(?![a-z0-9])"""),
+        "TeleSync" to Regex("""(?i)(?<![a-z0-9])(?:telesync|tele[ ._-]?sync|ts)(?![a-z0-9])"""),
+        "TeleCine" to Regex("""(?i)(?<![a-z0-9])(?:telecine|tele[ ._-]?cine|tc)(?![a-z0-9])"""),
+        "SCR" to Regex("""(?i)(?<![a-z0-9])(?:scr|screener)(?![a-z0-9])"""),
+        "10-bit" to Regex("""(?i)(?<![a-z0-9])(?:10[ ._-]?bit|hi[ ._-]?10p)(?![a-z0-9])"""),
+        "HLG" to Regex("""(?i)(?<![a-z0-9])hlg(?![a-z0-9])"""),
+        "HDR10+" to Regex("""(?i)(?<![a-z0-9])hdr10\+(?![a-z0-9])"""),
+        "HDR" to Regex("""(?i)(?<![a-z0-9])hdr(?:10(?!\+))?(?![a-z0-9+])"""),
         "DV" to Regex("""(?i)(?<![a-z0-9])(?:dolby[ ._-]?vision|dv)(?![a-z0-9])""")
     )
+    private val studioPatterns = listOf(
+        "Red Head Sound" to Regex("""(?i)(?<![a-z0-9])red[ ._-]*head[ ._-]*sound(?![a-z0-9])"""),
+        "RHS" to Regex("""(?i)(?<![a-z0-9])rhs(?![a-z0-9])"""),
+        "HDRezka" to Regex("""(?i)(?<![a-z0-9])hd[ ._-]?rezka(?![a-z0-9])"""),
+        "Кубик в кубе" to Regex("""(?iu)(?<![а-яёa-z0-9])кубик[ ._-]+в[ ._-]+кубе(?![а-яёa-z0-9])"""),
+        "Jaskier" to Regex("""(?i)(?<![a-z0-9])jaskier(?![a-z0-9])"""),
+        "TVShows" to Regex("""(?i)(?<![a-z0-9])tv[ ._-]?shows(?![a-z0-9])"""),
+        "AlexFilm" to Regex("""(?i)(?<![a-z0-9])alex[ ._-]?film(?![a-z0-9])"""),
+        "AniLibria" to Regex("""(?i)(?<![a-z0-9])ani[ ._-]?libria(?![a-z0-9])"""),
+        "Дубляж" to Regex("""(?iu)(?<![а-яёa-z0-9])дубляж(?![а-яёa-z0-9])""")
+    )
+    private val screenCopyTags = setOf("CAMRip", "TeleSync", "TeleCine", "SCR")
 
     private val dimensionPattern = Regex(
         """(?i)(?<![0-9])([0-9]{3,4})\s*[x×]\s*([0-9]{3,4})(?![0-9])"""
@@ -66,7 +85,8 @@ object ReleaseHeuristics {
         val source = sourcePatterns.filter { it.second.containsMatchIn(title) }.map { it.first } +
             listOf("DUB", "MVO", "AVO", "VO", "LE", "LostFilm", "NewStudio").filter {
                 Regex("""(?i)(?<![a-z0-9])${Regex.escape(it)}(?![a-z0-9])""").containsMatchIn(title)
-            }
+            } +
+            studioPatterns.filter { it.second.containsMatchIn(title) }.map { it.first }
         val dimensions = dimensionPattern.find(title)?.let { "${it.groupValues[1]}x${it.groupValues[2]}" }
         val channelCount = channelPattern.find(title)?.groupValues?.getOrNull(1)
         val subtitleLanguages = subtitlePattern.findAll(title).mapNotNull { match ->
@@ -95,7 +115,8 @@ object ReleaseHeuristics {
             audioChannels = channelCount,
             audioLanguages = audioLanguages,
             subtitleLanguages = subtitleLanguages,
-            bitrate = bitrate
+            bitrate = bitrate,
+            screenCopy = source.any { it in screenCopyTags }
         )
     }
 }

@@ -71,7 +71,72 @@ object JackettIndexerClient {
     private const val MAX_CONFIG_BODY_BYTES = 128 * 1024
     private const val CONNECT_TIMEOUT_MS = 8_000
     private const val READ_TIMEOUT_MS = 12_000
+    private const val MAX_ADMIN_PASSWORD_CHARS = 512
     private const val USER_AGENT = "JacketAndroid/2.6 (Jackett native indexer manager)"
+
+    /**
+     * Authenticates to Jackett's WebUI controller and returns only its session cookie.
+     *
+     * Jackett redirects after a login attempt even when credentials are rejected, so a
+     * successful response is identified by a non-empty Jackett= session cookie.
+     */
+    fun loginDashboardCookie(baseUrl: String, adminPassword: String): String {
+        val base = JackettUrl.normalizeBase(baseUrl)
+            ?: throw IllegalArgumentException("Некорректный адрес сервера Jackett")
+        require(adminPassword.length <= MAX_ADMIN_PASSWORD_CHARS) {
+            "Пароль администратора Jackett слишком длинный"
+        }
+        val url = buildDashboardLoginUrl(base)
+        if (!LocalNetwork.isAllowedUrl(url)) {
+            throw IOException("Jackett должен быть доступен по HTTPS или по локальному HTTP")
+        }
+        val body = ("password=" + URLEncoder.encode(adminPassword, Charsets.UTF_8.name()))
+            .toByteArray(Charsets.UTF_8)
+        val connection = (URL(url).openConnection() as HttpURLConnection).apply {
+            requestMethod = "POST"
+            connectTimeout = CONNECT_TIMEOUT_MS
+            readTimeout = READ_TIMEOUT_MS
+            instanceFollowRedirects = false
+            doOutput = true
+            setRequestProperty("Accept", "text/html, application/xhtml+xml")
+            setRequestProperty("Content-Type", "application/x-www-form-urlencoded; charset=utf-8")
+            setRequestProperty("User-Agent", USER_AGENT)
+            setFixedLengthStreamingMode(body.size)
+        }
+        try {
+            connection.outputStream.use { it.write(body) }
+            val status = connection.responseCode
+            if (status !in 300..399) {
+                throw IOException("Jackett вернул HTTP $status при авторизации панели")
+            }
+            return extractDashboardCookie(connection.headerFields)
+                ?: throw IOException(
+                    "Jackett не выдал сессионный Cookie. Проверьте пароль администратора и защиту панели."
+                )
+        } finally {
+            connection.disconnect()
+        }
+    }
+
+    internal fun buildDashboardLoginUrl(baseUrl: String): String {
+        val base = JackettUrl.normalizeBase(baseUrl)
+            ?: throw IllegalArgumentException("Некорректный адрес сервера Jackett")
+        return "$base/UI/Dashboard"
+    }
+
+    internal fun extractDashboardCookie(headers: Map<String?, List<String>>): String? {
+        val values = headers.entries
+            .filter { it.key?.equals("Set-Cookie", ignoreCase = true) == true }
+            .flatMap { it.value }
+        return values.firstNotNullOfOrNull { value ->
+            val cookie = value.substringBefore(';').trim()
+            cookie.takeIf {
+                it.startsWith("Jackett=", ignoreCase = true) &&
+                    it.substringAfter('=', "").isNotBlank() &&
+                    it.length <= 8_192
+            }
+        }
+    }
     private val INDEXER_ID_PATTERN = Regex("[a-zA-Z0-9][a-zA-Z0-9._:-]{0,99}")
 
     fun fetch(config: IndexerConfig): List<JackettIndexerEntry> {

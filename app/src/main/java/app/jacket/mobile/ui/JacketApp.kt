@@ -1093,6 +1093,7 @@ private fun DetailScreen(
     var minSeeders by rememberSaveable { mutableStateOf("0") }
     var qualityFilter by rememberSaveable { mutableStateOf("Все") }
     var hdrOnly by rememberSaveable { mutableStateOf(false) }
+    var hideScreenCopies by rememberSaveable { mutableStateOf(false) }
     var magnetOnly by rememberSaveable { mutableStateOf(false) }
     var torrentOnly by rememberSaveable { mutableStateOf(false) }
     val minSeedersValue = minSeeders.toIntOrNull()?.coerceAtLeast(0) ?: 0
@@ -1102,6 +1103,7 @@ private fun DetailScreen(
             (source.seeders ?: 0) >= minSeedersValue) &&
             (qualityFilter == "Все" || (source.qualityLabel ?: release.quality) == qualityFilter) &&
             (!hdrOnly || release.hdr || release.dolbyVision) &&
+            (!hideScreenCopies || !release.screenCopy) &&
             (!magnetOnly || source.magnetUri != null) &&
             (!torrentOnly || source.downloadUrl != null)
     }
@@ -1609,6 +1611,14 @@ private fun DetailScreen(
                                 if (torrentOnly) magnetOnly = false
                             }) { Text(if (torrentOnly) "✓ .torrent" else ".torrent") }
                         }
+                        Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                            OutlinedButton(onClick = { hideScreenCopies = !hideScreenCopies }) {
+                                Text(
+                                    if (hideScreenCopies) "✓ Без CAM / TS / TC / SCR"
+                                    else "Скрыть CAM / TS / TC / SCR"
+                                )
+                            }
+                        }
                     }
 
                     if (filteredSources.isEmpty()) {
@@ -2113,6 +2123,8 @@ private fun SettingsScreen(
     val jackettIndexers by viewModel.jackettIndexers.collectAsState()
     val loadingJackettIndexers by viewModel.isLoadingJackettIndexers.collectAsState()
     val jackettCatalogStatus by viewModel.jackettCatalogStatus.collectAsState()
+    val jackettLoginStatus by viewModel.jackettLoginStatus.collectAsState()
+    val isJackettLoginBusy by viewModel.isJackettLoginBusy.collectAsState()
     val testingJackettIndexerId by viewModel.testingJackettIndexerId.collectAsState()
     val savedJackett = indexers.firstOrNull { it.protocol == IndexerProtocol.JACKETT }
     val jackettConfigIndexerId by viewModel.jackettConfigIndexerId.collectAsState()
@@ -3230,6 +3242,9 @@ private fun SettingsScreen(
                     saved = savedJackett,
                     status = savedJackett?.let { statuses[it.id] },
                     onSave = viewModel::saveJackett,
+                    onLogin = viewModel::loginJackettDashboard,
+                    loginStatus = jackettLoginStatus,
+                    loginBusy = isJackettLoginBusy,
                     onTest = { savedJackett?.let { viewModel.testIndexer(it.id) } },
                     onRemove = { savedJackett?.let { viewModel.removeIndexer(it.id) } }
                 )
