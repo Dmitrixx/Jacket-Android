@@ -70,6 +70,7 @@ class LampacBridgeClientTest {
         assertTrue(url.contains("source=tmdb"))
         assertTrue(url.contains("serial=0"))
         assertTrue(url.contains("life=true"))
+        assertTrue(url.contains("external_ids=true"))
         assertTrue(url.contains("account_email=user%2Btest%40example.com"))
         assertTrue(url.contains("uid=device-1"))
         assertTrue(url.contains("token=secret%20token"))
