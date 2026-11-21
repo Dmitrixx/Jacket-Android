@@ -97,7 +97,9 @@ data class HdRezkaSettings(
     val login: String = "",
     val password: String = "",
     val cookie: String = "",
-    val connected: Boolean = false
+    val connected: Boolean = false,
+    /** Explicit opt-in for a user-owned HTTPS mirror outside the known Rezka host patterns. */
+    val allowCustomMirror: Boolean = false
 )
 
 data class SourceResult(

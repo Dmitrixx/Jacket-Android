@@ -46,7 +46,7 @@ object HdRezkaLoginClient {
     private const val MAX_REDIRECTS = 6
     private val REDIRECT_CODES = setOf(301, 302, 303, 307, 308)
 
-    fun validateMirror(value: String): String {
+    fun validateMirror(value: String, allowCustomMirror: Boolean = false): String {
         val supplied = value.trim()
         require(supplied.isNotBlank()) { "Укажите адрес источника HDRezka" }
         val clean = supplied.trimEnd('/') + "/"
@@ -57,14 +57,8 @@ object HdRezkaLoginClient {
             "Укажите HTTPS-домен зеркала без логина и пароля в URL"
         }
         val host = uri.host.lowercase().removePrefix("www.")
-        // rezkify.com is a user-reported alternate mirror; keep it as an exact
-        // allowlisted host rather than trusting arbitrary redirect domains.
-        val isRezkaMirror = host == "rezkify.com" ||
-            host.startsWith("hdrezka.") || host.startsWith("hdrezka-") ||
-            host.startsWith("rezka.") || host.startsWith("rezka-") ||
-            host.startsWith("standby-rezka.")
-        require(isRezkaMirror) {
-            "Адрес должен относиться к зеркалу HDRezka"
+        require(isKnownRezkaMirror(host) || allowCustomMirror) {
+            "Адрес должен относиться к зеркалу HDRezka. Для собственного HTTPS-домена включите явное доверие к пользовательскому зеркалу."
         }
         require(uri.rawQuery.isNullOrBlank() && uri.rawFragment.isNullOrBlank() &&
             (uri.rawPath.isNullOrBlank() || uri.rawPath == "/")
@@ -72,16 +66,55 @@ object HdRezkaLoginClient {
         return clean.trimEnd('/')
     }
 
-    fun login(mirror: String, username: String, password: String): HdRezkaLoginResult {
+    internal fun isKnownRezkaMirror(rawHost: String): Boolean {
+        val host = rawHost.lowercase().removePrefix("www.")
+        return host == "rezkify.com" ||
+            host.startsWith("hdrezka.") || host.startsWith("hdrezka-") ||
+            host.startsWith("rezka.") || host.startsWith("rezka-") ||
+            host.startsWith("standby-rezka.")
+    }
+
+    /**
+     * A user-owned custom mirror is pinned to its configured origin.
+     * Known Rezka host patterns retain the existing allowlisted mirror redirects.
+     */
+    internal fun validateRedirectTarget(
+        value: String,
+        initialMirror: String,
+        allowCustomMirror: Boolean
+    ): String {
+        val initial = validateMirror(initialMirror, allowCustomMirror)
+        val target = validateMirror(value, allowCustomMirror)
+        val initialHost = URI(initial).host.orEmpty()
+        val targetHost = URI(target).host.orEmpty()
+        val allowed = if (isKnownRezkaMirror(initialHost)) {
+            isKnownRezkaMirror(targetHost)
+        } else {
+            sameOrigin(initial, target)
+        }
+        require(allowed) {
+            "Перенаправление пользовательского зеркала на другой домен заблокировано."
+        }
+        return target
+    }
+
+    fun login(
+        mirror: String,
+        username: String,
+        password: String,
+        allowCustomMirror: Boolean = false
+    ): HdRezkaLoginResult {
         require(username.isNotBlank()) { "Введите логин или email HDRezka" }
         require(password.isNotBlank()) { "Введите пароль HDRezka" }
 
-        val initialMirror = validateMirror(mirror)
+        val initialMirror = validateMirror(mirror, allowCustomMirror)
         val cookies = CookieManager(null, CookiePolicy.ACCEPT_ALL)
         // The landing page is only needed for redirects and Set-Cookie headers.
         // Avoid buffering its often-large HTML during login.
-        val bootstrap = requestFollowingGetRedirects("$initialMirror/", cookies, captureBody = false)
-        val activeBase = validateMirror(originOf(bootstrap.finalUrl))
+        val bootstrap = requestFollowingGetRedirects(
+            "$initialMirror/", cookies, initialMirror, allowCustomMirror, captureBody = false
+        )
+        val activeBase = validateRedirectTarget(originOf(bootstrap.finalUrl), initialMirror, allowCustomMirror)
 
         val form = listOf(
             "login_name" to username,
@@ -94,9 +127,11 @@ object HdRezkaLoginClient {
             startUrl = "$activeBase/ajax/login/?t=${System.currentTimeMillis()}",
             body = form,
             cookies = cookies,
-            referer = "$activeBase/"
+            referer = "$activeBase/",
+            initialMirror = initialMirror,
+            allowCustomMirror = allowCustomMirror
         )
-        val confirmedBase = validateMirror(originOf(response.finalUrl))
+        val confirmedBase = validateRedirectTarget(originOf(response.finalUrl), initialMirror, allowCustomMirror)
         if (response.status == 403 || containsChallenge(response.body)) {
             throw IOException(
                 "HDRezka показала защитную проверку. Jacket не обходит CAPTCHA или Cloudflare; " +
@@ -117,19 +152,21 @@ object HdRezkaLoginClient {
     }
 
     /** Checks a mirror without sending account credentials. */
-    fun probeMirror(mirror: String): String {
-        val initialMirror = validateMirror(mirror)
+    fun probeMirror(mirror: String, allowCustomMirror: Boolean = false): String {
+        val initialMirror = validateMirror(mirror, allowCustomMirror)
         val cookies = CookieManager(null, CookiePolicy.ACCEPT_ALL)
         val response = requestFollowingGetRedirects(
             "$initialMirror/",
             cookies,
+            initialMirror,
+            allowCustomMirror,
             captureBody = true,
             previewOnly = true
         )
         if (containsChallenge(response.body)) {
             throw IOException("Зеркало доступно, но требует браузерную проверку CAPTCHA/Cloudflare.")
         }
-        return validateMirror(originOf(response.finalUrl))
+        return validateRedirectTarget(originOf(response.finalUrl), initialMirror, allowCustomMirror)
     }
 
     /** Converts network failures into useful diagnostics without exposing cookies or headers. */
@@ -166,7 +203,9 @@ object HdRezkaLoginClient {
         startUrl: String,
         body: String,
         cookies: CookieManager,
-        referer: String
+        referer: String,
+        initialMirror: String,
+        allowCustomMirror: Boolean
     ): HttpResult {
         var currentUrl = startUrl
         var method = "POST"
@@ -181,6 +220,8 @@ object HdRezkaLoginClient {
                 currentBody,
                 cookies,
                 currentReferer,
+                initialMirror,
+                allowCustomMirror,
                 captureBody = true,
                 previewOnly = true
             )
@@ -188,7 +229,7 @@ object HdRezkaLoginClient {
 
             val location = response.location
                 ?: throw IOException("HDRezka перенаправила вход без адреса (HTTP ${response.status})")
-            val nextUrl = resolveRedirect(currentUrl, location)
+            val nextUrl = resolveRedirect(currentUrl, location, initialMirror, allowCustomMirror)
             val nextMethod = loginRedirectMethod(response.status)
                 ?: method.takeIf { sameOrigin(currentUrl, nextUrl) }
                 ?: throw IOException("HDRezka перенаправила вход на другой домен; повторная отправка пароля заблокирована.")
@@ -226,6 +267,8 @@ object HdRezkaLoginClient {
     private fun requestFollowingGetRedirects(
         startUrl: String,
         cookies: CookieManager,
+        initialMirror: String,
+        allowCustomMirror: Boolean,
         captureBody: Boolean = true,
         previewOnly: Boolean = false
     ): HttpResult {
@@ -233,12 +276,13 @@ object HdRezkaLoginClient {
         repeat(MAX_REDIRECTS + 1) {
             val response = request(
                 currentUrl, "GET", null, cookies, currentUrl,
+                initialMirror, allowCustomMirror,
                 captureBody = captureBody, previewOnly = previewOnly
             )
             if (response.status in setOf(301, 302, 303, 307, 308)) {
                 val location = response.location
                     ?: throw IOException("HDRezka вернула перенаправление без адреса")
-                currentUrl = resolveRedirect(currentUrl, location)
+                currentUrl = resolveRedirect(currentUrl, location, initialMirror, allowCustomMirror)
             } else {
                 if (response.status == 403 || containsChallenge(response.body)) {
                     throw IOException("HDRezka требует браузерную проверку. Автоматический обход не выполняется.")
@@ -258,11 +302,13 @@ object HdRezkaLoginClient {
         body: String?,
         cookies: CookieManager,
         referer: String,
+        initialMirror: String,
+        allowCustomMirror: Boolean,
         captureBody: Boolean = true,
         previewOnly: Boolean = false
     ): HttpResult {
         val uri = URI(url)
-        validateMirror(originOf(url))
+        validateRedirectTarget(originOf(url), initialMirror, allowCustomMirror)
         val connection = (URL(url).openConnection() as HttpURLConnection).apply {
             requestMethod = method
             connectTimeout = 12_000
@@ -344,9 +390,14 @@ object HdRezkaLoginClient {
         }
     }
 
-    private fun resolveRedirect(baseUrl: String, location: String): String {
+    private fun resolveRedirect(
+        baseUrl: String,
+        location: String,
+        initialMirror: String,
+        allowCustomMirror: Boolean
+    ): String {
         val resolved = URL(URL(baseUrl), location).toString()
-        validateMirror(originOf(resolved))
+        validateRedirectTarget(originOf(resolved), initialMirror, allowCustomMirror)
         return resolved
     }
 

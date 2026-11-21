@@ -77,7 +77,59 @@ class HdRezkaLoginClientTest {
     }
 
     @Test(expected = IllegalArgumentException::class)
-    fun rejectsUnrelatedHost() {
+    fun rejectsUnrelatedHostWithoutExplicitTrust() {
         HdRezkaLoginClient.validateMirror("https://example.com")
+    }
+
+    @Test
+    fun acceptsCustomHttpsMirrorOnlyAfterExplicitTrust() {
+        assertEquals(
+            "https://media.home.example",
+            HdRezkaLoginClient.validateMirror(
+                "https://media.home.example/",
+                allowCustomMirror = true
+            )
+        )
+    }
+
+    @Test(expected = IllegalArgumentException::class)
+    fun customMirrorCannotRedirectToAnotherOrigin() {
+        HdRezkaLoginClient.validateRedirectTarget(
+            "https://attacker.example",
+            "https://media.home.example",
+            allowCustomMirror = true
+        )
+    }
+
+    @Test
+    fun customMirrorAllowsOnlySameOriginRedirects() {
+        assertEquals(
+            "https://media.home.example",
+            HdRezkaLoginClient.validateRedirectTarget(
+                "https://media.home.example/",
+                "https://media.home.example",
+                allowCustomMirror = true
+            )
+        )
+    }
+
+    @Test
+    fun knownRezkaMirrorRedirectsStayWithinKnownHostPatterns() {
+        assertEquals(
+            "https://rezka.zip",
+            HdRezkaLoginClient.validateRedirectTarget(
+                "https://rezka.zip",
+                "https://hdrezka.example",
+                allowCustomMirror = false
+            )
+        )
+    }
+
+    @Test(expected = IllegalArgumentException::class)
+    fun explicitCustomMirrorTrustDoesNotAllowCleartextHttp() {
+        HdRezkaLoginClient.validateMirror(
+            "http://media.home.example",
+            allowCustomMirror = true
+        )
     }
 }

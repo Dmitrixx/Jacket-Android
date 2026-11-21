@@ -88,14 +88,15 @@ class MediaSettingsStore(context: Context) {
             password = decrypt(preferences.getString(KEY_HDREZKA_PASSWORD, null)),
             cookie = cookie,
             connected = preferences.getBoolean(KEY_HDREZKA_CONNECTED, false) &&
-                HdRezkaLoginClient.hasAuthenticatedCookie(cookie)
+                HdRezkaLoginClient.hasAuthenticatedCookie(cookie),
+            allowCustomMirror = preferences.getBoolean(KEY_HDREZKA_ALLOW_CUSTOM_MIRROR, false)
         )
     }
 
     @Synchronized
     fun saveHdRezkaSettings(settings: HdRezkaSettings) {
         val mirror = settings.mirror.trim().take(300).let {
-            if (it.isBlank()) "" else HdRezkaLoginClient.validateMirror(it)
+            if (it.isBlank()) "" else HdRezkaLoginClient.validateMirror(it, settings.allowCustomMirror)
         }
         val login = settings.login.replace(Regex("[\\r\\n]"), "").trim().take(256)
         val password = settings.password.take(512)
@@ -109,6 +110,7 @@ class MediaSettingsStore(context: Context) {
                 KEY_HDREZKA_CONNECTED,
                 settings.connected && HdRezkaLoginClient.hasAuthenticatedCookie(cookie)
             )
+            putBoolean(KEY_HDREZKA_ALLOW_CUSTOM_MIRROR, settings.allowCustomMirror)
         }
     }
 
@@ -459,6 +461,7 @@ class MediaSettingsStore(context: Context) {
         const val KEY_HDREZKA_PASSWORD = "hdrezka_password_enc"
         const val KEY_HDREZKA_COOKIE = "hdrezka_cookie_enc"
         const val KEY_HDREZKA_CONNECTED = "hdrezka_connected"
+        const val KEY_HDREZKA_ALLOW_CUSTOM_MIRROR = "hdrezka_allow_custom_mirror"
         const val KEY_INDEXERS = "rss_indexers"
         const val KEY_WEB_SEARCH_PROVIDERS = "web_search_providers"
         const val KEY_TRACKER_PRESETS_SEEDED = "tracker_presets_seeded"
