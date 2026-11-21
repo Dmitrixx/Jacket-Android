@@ -129,7 +129,7 @@ object JackettIndexerClient {
 
     internal fun extractDashboardCookie(headers: Map<String?, List<String>>): String? {
         val values = headers.entries
-            .filter { it.key.equals("Set-Cookie", ignoreCase = true) }
+            .filter { it.key?.equals("Set-Cookie", ignoreCase = true) == true }
             .flatMap { it.value }
         return values.firstNotNullOfOrNull { value ->
             val cookie = value.substringBefore(';').trim()
