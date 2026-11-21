@@ -1,15 +1,12 @@
 # Changelog
 
-## Next
-
-- Add Jackett WebUI password login through the dashboard POST controller; retain only the returned Jackett session cookie in encrypted local settings. The admin password itself is transient and is never persisted.
-- Add regression coverage for the reverse-proxy login path, URL-encoded POST body, session-cookie extraction and rejected logins without a Jackett cookie.
-
-
 ## 2.8.0
 
 - Consolidated native Filmix and HDRezka search/player adapters, encrypted account state, provider diagnostics and the unified detail-card source picker.
 - Added the native optional Jackett indexer catalogue, dynamic per-indexer configuration/testing, private-indexer support and richer torrent release cards. Jackett remains user-managed and is not bundled.
+- Add Jackett WebUI password login through the dashboard POST controller; retain only the returned Jackett session cookie in encrypted local settings. The admin password itself is transient and is never persisted.
+- Add regression coverage for the reverse-proxy login path, URL-encoded POST body, session-cookie extraction and rejected logins without a Jackett cookie.
+
 - Added a ten-provider catalogue in priority order. Only Filmix and HDRezka have direct adapters; ColdFilm, Baskino, Kinogo, VideoCDN, Collaps, Kinobase, CDNMovies and Lordfilm remain unconnected descriptors pending a compatible verified integration.
 - Added completion-order partial tracker results, bounded detail-page resolution, a 25-second aggregate deadline and protection against stale search callbacks.
 - Restricted built-in HTML tracker requests, redirects and parsed download URLs to public HTTPS targets, including non-public IPv6 rejection. DNS rebinding is not fully prevented.
