@@ -48,7 +48,11 @@ android {
     testOptions { unitTests.isIncludeAndroidResources = true }
 
     packaging {
-        resources { excludes += "/META-INF/{AL2.0,LGPL2.1}" }
+        resources {
+            // Keep META-INF/media3-ffmpeg-decoder/**: it carries the FFmpeg LGPL
+            // text, NOTICE, build provenance and source-rebuild information.
+            excludes += "/META-INF/{AL2.0,LGPL2.1}"
+        }
     }
 }
 
@@ -71,8 +75,10 @@ dependencies {
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.material:material-icons-extended")
 
-    // In-app playback for direct, licensed media streams.
+    // In-app playback for direct, licensed media streams and the matching
+    // LGPL-only FFmpeg audio extension (AC-3/E-AC-3/DTS/MLP/TrueHD fallback).
     val media3Version = "1.11.1"
+    implementation("io.put:media3-ffmpeg-decoder:1.11.1+1")
     implementation("androidx.media3:media3-exoplayer:$media3Version")
     implementation("androidx.media3:media3-exoplayer-hls:$media3Version")
     implementation("androidx.media3:media3-exoplayer-dash:$media3Version")
