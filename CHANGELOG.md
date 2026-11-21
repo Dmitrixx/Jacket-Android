@@ -11,6 +11,7 @@
 - Extended release-title labels with CAMRip/TeleSync/TeleCine/SCR, 10-bit/Hi10P, HLG, HDR10+ and recognized dubbing studios; added an optional filter to hide screen-copy releases.
 - Added a ten-provider catalogue in priority order. Only Filmix and HDRezka have direct adapters; ColdFilm, Baskino, Kinogo, VideoCDN, Collaps, Kinobase, CDNMovies and Lordfilm remain unconnected descriptors pending a compatible verified integration.
 - Added completion-order partial tracker results, bounded detail-page resolution, a 25-second aggregate deadline and protection against stale search callbacks.
+- Run torrent indexers, built-in HTML trackers, Filmix, HDRezka and Lampac detail-card searches concurrently; publish each provider's results as soon as they arrive, with a shared 60-second deadline and late-callback protection.
 - Match the Android 12+ display refresh rate to the active video frame rate on SurfaceView playback; clear the request when playback pauses or stops and when the surface is detached. Older Android versions remain unchanged.
 - Replace torrent piece polling with a condition signal driven by libtorrent piece-finished alerts; pause/removal, session shutdown and superseded seek windows wake waiting stream workers, cancelling stale HTTP Range work. Clear active stream leases before shutdown notification and check the stop state immediately before condition waits.
 - Add a tail-piece deadline to the initial torrent byte-range plan, after the bounded forward window, and lower the global peer-connection ceiling on low-RAM Android devices.
