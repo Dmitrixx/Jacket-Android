@@ -5,8 +5,133 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.io.BufferedInputStream
+import java.io.ByteArrayOutputStream
+import java.io.IOException
+import java.net.InetAddress
+import java.net.ServerSocket
 
 class JackettIndexerClientTest {
+
+    @Test
+    fun buildsDashboardLoginUrlAndPreservesReverseProxyPrefix() {
+        assertEquals(
+            "https://seedbox.example/wp-content/Jackett/UI/Dashboard",
+            JackettIndexerClient.buildDashboardLoginUrl("https://seedbox.example/wp-content/Jackett")
+        )
+    }
+
+    @Test
+    fun extractsOnlyNonEmptyJackettSessionCookie() {
+        val headers = mapOf<String?, List<String>>(
+            "Set-Cookie" to listOf(
+                "OtherCookie=ignored; Path=/",
+                "Jackett=session-123; Path=/; HttpOnly"
+            )
+        )
+        assertEquals("Jackett=session-123", JackettIndexerClient.extractDashboardCookie(headers))
+        assertEquals(
+            null,
+            JackettIndexerClient.extractDashboardCookie(
+                mapOf<String?, List<String>>("Set-Cookie" to listOf("OtherCookie=value; Path=/", "Jackett=; Path=/"))
+            )
+        )
+    }
+
+    @Test
+    fun postsUrlEncodedPasswordAndReturnsOnlyJackettCookie() {
+        val server = ServerSocket(0, 1, InetAddress.getByName("127.0.0.1"))
+        val capturedRequest = mutableListOf<Pair<String, String>>()
+        val worker = Thread {
+            server.accept().use { socket ->
+                socket.soTimeout = 5_000
+                val input = BufferedInputStream(socket.getInputStream())
+                val requestLine = readHttpLine(input)
+                val headers = mutableMapOf<String, String>()
+                while (true) {
+                    val line = readHttpLine(input)
+                    if (line.isEmpty()) break
+                    val separator = line.indexOf(':')
+                    if (separator > 0) {
+                        headers[line.substring(0, separator).lowercase()] =
+                            line.substring(separator + 1).trim()
+                    }
+                }
+                val bodySize = headers["content-length"]?.toIntOrNull() ?: 0
+                val body = input.readNBytes(bodySize).toString(Charsets.UTF_8)
+                capturedRequest.add(requestLine to body)
+                val response = (
+                    "HTTP/1.1 302 Found\r\n" +
+                        "Set-Cookie: OtherCookie=ignored; Path=/\r\n" +
+                        "Set-Cookie: Jackett=session-123; Path=/; HttpOnly\r\n" +
+                        "Location: /reverse/Jackett/UI/Dashboard\r\n" +
+                        "Content-Length: 0\r\nConnection: close\r\n\r\n"
+                    ).toByteArray(Charsets.ISO_8859_1)
+                socket.getOutputStream().use { output ->
+                    output.write(response)
+                    output.flush()
+                }
+            }
+        }.apply { isDaemon = true; start() }
+
+        try {
+            val base = "http://127.0.0.1:${server.localPort}/reverse/Jackett"
+            val cookie = JackettIndexerClient.loginDashboardCookie(base, "admin pass&word")
+            worker.join(5_000)
+
+            assertFalse(worker.isAlive)
+            assertEquals("Jackett=session-123", cookie)
+            assertEquals("POST", capturedRequest.single().first.substringBefore(' '))
+            assertEquals(
+                "/reverse/Jackett/UI/Dashboard",
+                capturedRequest.single().first.split(' ').getOrNull(1)
+            )
+            assertEquals("password=admin+pass%26word", capturedRequest.single().second)
+        } finally {
+            server.close()
+            worker.join(1_000)
+        }
+    }
+
+    @Test(expected = IOException::class)
+    fun rejectsRedirectWithoutJackettSessionCookie() {
+        val server = ServerSocket(0, 1, InetAddress.getByName("127.0.0.1"))
+        val worker = Thread {
+            server.accept().use { socket ->
+                val input = BufferedInputStream(socket.getInputStream())
+                while (readHttpLine(input).isNotEmpty()) Unit
+                val response = (
+                    "HTTP/1.1 302 Found\r\n" +
+                        "Set-Cookie: OtherCookie=ignored; Path=/\r\n" +
+                        "Location: /Jackett/UI/Dashboard\r\n" +
+                        "Content-Length: 0\r\nConnection: close\r\n\r\n"
+                    ).toByteArray(Charsets.ISO_8859_1)
+                socket.getOutputStream().use { output ->
+                    output.write(response)
+                    output.flush()
+                }
+            }
+        }.apply { isDaemon = true; start() }
+        try {
+            JackettIndexerClient.loginDashboardCookie(
+                "http://127.0.0.1:${server.localPort}/Jackett",
+                "wrong-password"
+            )
+            worker.join(5_000)
+        } finally {
+            server.close()
+            worker.join(1_000)
+        }
+    }
+
+    @Test(expected = IllegalArgumentException::class)
+    fun rejectsAdminPasswordOverConfiguredLimit() {
+        JackettIndexerClient.loginDashboardCookie(
+            "http://127.0.0.1:9117",
+            "x".repeat(513)
+        )
+    }
+
     @Test
     fun buildsNativeCatalogueEndpointWithoutLosingReverseProxyPath() {
         assertEquals(
@@ -256,3 +381,24 @@ class JackettIndexerClientTest {
         JackettIndexerClient.buildIndexerConfigUrl("https://seedbox.example", "../admin")
     }
 }
+
+
+private fun readHttpLine(input: BufferedInputStream): String {
+    val output = ByteArrayOutputStream()
+    while (true) {
+        val value = input.read()
+        if (value < 0) break
+        if (value == 13) {
+            val next = input.read()
+            if (next == 10) break
+            output.write(value)
+            if (next >= 0) output.write(next)
+        } else if (value == 10) {
+            break
+        } else {
+            output.write(value)
+        }
+    }
+    return output.toString(Charsets.ISO_8859_1.name())
+}
+
