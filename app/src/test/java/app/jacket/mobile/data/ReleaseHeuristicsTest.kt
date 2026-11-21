@@ -40,6 +40,28 @@ class ReleaseHeuristicsTest {
     }
 
     @Test
+    fun detectsScreenCopiesHdrVariantsFreeleechAndRussianDubs() {
+        val release = ReleaseHeuristics.classify(
+            "Film.1080p.TS.HDR10+.HLG.10-bit.Freeleech.RHS.Kubik.v.Kube"
+        )
+        assertTrue(release.sourceTags.contains("TeleSync"))
+        assertTrue(release.sourceTags.contains("HDR10+"))
+        assertTrue(release.sourceTags.contains("HLG"))
+        assertTrue(release.sourceTags.contains("10-bit"))
+        assertTrue(release.sourceTags.contains("Freeleech"))
+        assertTrue(release.sourceTags.contains("RHS"))
+        assertTrue(release.sourceTags.contains("Кубик в кубе"))
+    }
+
+    @Test
+    fun detectsCamripAndScreenerSeparately() {
+        val cam = ReleaseHeuristics.classify("Film.CAMRip")
+        val screen = ReleaseHeuristics.classify("Film.SCR")
+        assertTrue(cam.sourceTags.contains("CAMRip"))
+        assertTrue(screen.sourceTags.contains("SCR"))
+    }
+
+    @Test
     fun doesNotInventMetadataForPlainTitle() {
         val release = ReleaseHeuristics.classify("A Simple Film Title")
         assertEquals(null, release.quality)
