@@ -16,7 +16,8 @@ Compose UI (phone / tablet / Android TV)
    TorrentEngine (one libtorrent4j SessionManager)
         ├── magnet / private .torrent metainfo
         ├── file priorities + range-driven piece deadlines
-        ├── 8 MiB / 32-piece forward playback window
+        ├── 8 MiB / 32-piece forward playback window + initial tail-piece request
+        ├── piece-finished condition signal (no timed polling loop)
         ├── DHT and download/upload rate limits
         ├── resume-data / error snapshots
         └── verified download files in app-specific storage
@@ -78,11 +79,11 @@ The registry intentionally does not include tracker-specific HTML parsers or sol
 - Magnet links and imported `.torrent` files are stored in the queue. The metainfo is copied into app-private `filesDir/torrent-metainfo`.
 - Once metadata exists, UI can inspect files.
 - Selecting a video file sets its priority to TOP and all other files to IGNORE. Global sequential mode is disabled for playback because it would continue from the beginning after a seek.
-- `StreamPiecePlanner` maps an HTTP Range start/length to torrent piece indices using `fileOffset` and `pieceLength`. The current piece gets the closest deadline; following pieces receive increasing deadlines in an 8 MiB / 32-piece bounded window. A new seek replaces the previous window.
+- `StreamPiecePlanner` maps an HTTP Range start/length to torrent piece indices using `fileOffset` and `pieceLength`. The current piece gets the closest deadline; following pieces receive increasing deadlines in an 8 MiB / 32-piece bounded window. The initial byte-zero request may also schedule the file's final piece after the forward window to help containers whose index is stored at the tail. A new seek replaces the previous window.
 - This is deadline-based piece scheduling, not a hard guarantee that every peer will deliver pieces in strict order: peer availability and network conditions still apply. It does, however, prioritize the currently requested playback position ahead of the forward buffer.
 - `LocalStreamServer` listens only on `127.0.0.1`, probes ports 8090–8099, and validates Host and route.
 - Range responses are constructed by a pure `RangeResponseBuilder`; malformed and unsatisfiable ranges are rejected.
-- The server waits for the exact requested byte interval's pieces to be hash-checked and written to disk before reading that interval. It never requires the whole file to finish first.
+- The server waits for the exact requested byte interval's pieces to be hash-checked and written to disk before reading that interval. It never requires the whole file to finish first. Waiting is signaled by libtorrent `PIECE_FINISHED` alerts and a generation-checked condition, rather than a 120 ms polling sleep; pause/removal wakes waiters immediately.
 - `StreamDiskCache` stores recent byte intervals in a 32 MiB LRU disk ring (maximum 256 KiB per segment). A seek that overlaps a cached interval can read the cached suffix; old slots are evicted as new segments arrive.
 - Cache reads allocate at most one segment per active HTTP worker. The cache file is temporary and deleted when the local server closes.
 - The disk ring stores disposable playback copies only. Verified torrent data is never removed by cache eviction, preserving hash-check state, seeding data and fast-resume consistency.
@@ -102,9 +103,11 @@ Resume data is asynchronous and periodic: abruptly killing the process can lose 
 
 ## Foreground-service lifecycle
 
+- The libtorrent session caps connections at 80 on Android devices that report low RAM and 200 otherwise.
 - Idle/background transfer uses `dataSync`.
 - Active in-app torrent playback switches the foreground service to `mediaPlayback`.
 - Android 15+ can time-limit `dataSync`. If the time limit arrives with no active playback, the service saves resume data and stops rather than claiming infinite background seeding.
+- On Android 12+, the player requests the source video's frame rate on its `SurfaceView` using fixed-source compatibility and the long-form `CHANGE_FRAME_RATE_ALWAYS` strategy. Media3's own frame-rate calls are disabled to avoid competing requests; the surface request is reset when the view is detached. Devices before API 31 keep the system-selected rate.
 - The player releases ExoPlayer and stores position when its screen is left; the download service and torrent session remain alive unless Android stops them or the user removes/stops the task.
 
 ## UI and device profiles
@@ -124,7 +127,7 @@ Resume data is asynchronous and periodic: abruptly killing the process can lose 
 
 ## Automated tests
 
-The JVM suite includes XML fixtures for RSS/Torznab, release-name heuristics, queue codec round-trips, Range parsing / response headers, byte-range-to-piece planning, forward-window limits, disk-cache LRU eviction, overlapping-range cache hits and route / Host policy checks. JNI torrent streaming, actual file-piece availability, Android foreground-service behavior and TV remote navigation require device-level acceptance tests.
+The JVM suite includes XML fixtures for RSS/Torznab, release-name heuristics, queue codec round-trips, Range parsing / response headers, byte-range-to-piece planning, forward-window and tail-prefetch deadlines, piece-completion signaling, frame-rate normalization, disk-cache LRU eviction, overlapping-range cache hits and route / Host policy checks. JNI torrent streaming, actual file-piece availability, Android foreground-service behavior and TV remote navigation require device-level acceptance tests.
 
 
 ## Consolidated source, stream and navigation safeguards
