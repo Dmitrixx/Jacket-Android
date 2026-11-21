@@ -155,6 +155,60 @@ class HdRezkaCatalogClientTest {
     }
 
     @Test
+    fun buildsCurrentEngineAjaxSearchEndpoint() {
+        assertEquals(
+            "https://hdrezka.example/engine/ajax/search.php?q=Interstellar+2024",
+            HdRezkaCatalogClient.buildSearchUrl("https://hdrezka.example", "Interstellar 2024")
+        )
+    }
+
+    @Test
+    fun parsesCurrentAjaxSearchAnchorsWithoutLegacyResultCards() {
+        val html = """
+            <ul>
+              <li><a href="/film/123-demo.html"><span class="enty">Демо</span> (Original, 2024)</a></li>
+              <li><a href="/search/?q=other">Search</a></li>
+            </ul>
+        """.trimIndent()
+        val entries = HdRezkaCatalogClient.parseSearchEntries(html, "https://hdrezka.example")
+        assertEquals(1, entries.size)
+        assertEquals("Демо", entries.single().title)
+        assertEquals("https://hdrezka.example/film/123-demo.html", entries.single().pageUrl)
+    }
+
+    @Test
+    fun decodesHdRezkaTrashPayloadAndSelectsDirectQualityFallback() {
+        val encoded = "#hWzEwODBwXWh0dHBzOi8vY2RuLmV4YW1wbGUv" +
+            "//_//JCQhIUAkJEBeIUAjJCRA" +
+            "bW92aWVfMTA4MC5tcDQsWzcyMHBdaHR0cHM6Ly9jZG4uZXhhbXBsZS9tb3ZpZV83MjAubXA0" +
+            "//_//QEBAQEAhIyMhXl5e" +
+            "//_//IyMjI14hISMjIUBA" +
+            "//_//Xl5eIUAjIyEhIyM=" +
+            "//_//JCQjISFAIyFAIyM=" +
+            "//_//IUAjIyEhQCNAIQ==" +
+            "//_//ISMhIyMhQCQkQF4=" +
+            "//_//XiFAJEAhIyNeQCM="
+        val decoded = HdRezkaCatalogClient.decodeStreamPayload(encoded)
+        assertEquals(
+            "[1080p]https://cdn.example/movie_1080.mp4,[720p]https://cdn.example/movie_720.mp4",
+            decoded
+        )
+        val variants = HdRezkaCatalogClient.parseQualityVariants(encoded)
+        assertEquals(listOf("1080p", "720p"), variants.map { it.qualityLabel })
+        assertEquals("https://cdn.example/movie_1080.mp4", variants.first().url)
+    }
+
+    @Test
+    fun prefersLastHttpsFallbackForAQuality() {
+        val variants = HdRezkaCatalogClient.parseQualityVariants(
+            "[1080p Ultra]https://cdn.example/master.m3u8 or https://cdn.example/file.mp4"
+        )
+        assertEquals(1, variants.size)
+        assertEquals("1080p", variants.single().qualityLabel)
+        assertEquals("https://cdn.example/file.mp4", variants.single().url)
+    }
+
+    @Test
     fun parsesQualityVariantsAndSubtitleLanguages() {
         val variants = HdRezkaCatalogClient.parseQualityVariants(
             "[1080p]https://cdn.example/movie_1080.m3u8,[720p]https://cdn.example/movie_720.m3u8"

@@ -8,6 +8,7 @@ import java.net.HttpURLConnection
 import java.net.URI
 import java.net.URL
 import java.net.URLEncoder
+import java.util.Base64
 
 data class HdRezkaSearchEntry(val title: String, val pageUrl: String, val posterUrl: String?, val description: String)
 data class HdRezkaTranslator(
@@ -39,8 +40,19 @@ object HdRezkaCatalogClient {
     private const val MAX_SEARCH_RESULTS = 8
     private const val MAX_TRANSLATORS = 8
     private const val MAX_REDIRECTS = 4
+    private const val MAX_OBFUSCATED_URL_CHARS = 512 * 1024
     private const val USER_AGENT = "Jacket-Android/2.7 (Android media client)"
-    private val qualityPattern = Regex("\\[([^\\]]+)](https://[^,\\s]+)", RegexOption.IGNORE_CASE)
+    private val qualityPattern = Regex("""^\\[([^\\]]+)](.+)$""", RegexOption.IGNORE_CASE)
+    private val encodedTrashTokens = listOf(
+        "JCQhIUAkJEBeIUAjJCRA",
+        "QEBAQEAhIyMhXl5e",
+        "IyMjI14hISMjIUBA",
+        "Xl5eIUAjIyEhIyM=",
+        "JCQjISFAIyFAIyM=",
+        "IUAjIyEhQCNAIQ==",
+        "ISMhIyMhQCQkQF4=",
+        "XiFAJEAhIyNeQCM="
+    )
     private val directUrlPattern = Regex("https://[^\\s,\\]<>\\\"']+", RegexOption.IGNORE_CASE)
     private val episodeCodePattern = Regex("(?i)S(\\d{1,2})E(\\d{1,3})")
     private val seriesInitPattern = Regex("""initCDNSeriesEvents\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)(?:\s*,|\s*\))""")
@@ -55,7 +67,7 @@ object HdRezkaCatalogClient {
     ): List<SourceResult> {
         require(query.isNotBlank()) { "Введите название для поиска HDRezka" }
         val mirror = HdRezkaLoginClient.validateMirror(settings.mirror)
-        val searchUrl = "$mirror/search/?do=search&subaction=search&q=${encode(query.trim().take(160))}"
+        val searchUrl = buildSearchUrl(mirror, query)
         val html = requestText(mirror, searchUrl, "GET", null, "$mirror/", settings)
         val entries = parseSearchEntries(html, mirror).distinctBy { it.pageUrl }.take(MAX_SEARCH_RESULTS)
         return buildList {
@@ -136,27 +148,54 @@ object HdRezkaCatalogClient {
         }.distinctBy { it.id }.take(80)
     }
 
+    internal fun buildSearchUrl(mirror: String, query: String): String =
+        "$mirror/engine/ajax/search.php?q=${encode(query.trim().take(160))}"
+
     internal fun parseSearchEntries(html: String, mirror: String): List<HdRezkaSearchEntry> {
         val document = Jsoup.parse(html, mirror)
-        return document.select(".b-content__inline_item").mapNotNull { card ->
-            val anchor = card.selectFirst(".b-content__inline_item-link a[href]")
-                ?: card.selectFirst("a.b-content__inline_item-link[href]")
-                ?: card.selectFirst("a[href]") ?: return@mapNotNull null
-            val page = anchor.absUrl("href").takeIf { it.isNotBlank() && isSameOrigin(it, mirror) }
-                ?: return@mapNotNull null
-            val title = anchor.attr("title").ifBlank { anchor.text() }.trim().takeIf { it.isNotBlank() }
-                ?: return@mapNotNull null
-            val image = card.selectFirst(".b-content__inline_item-cover img, img")
+        fun toEntry(anchor: org.jsoup.nodes.Element, container: org.jsoup.nodes.Element?): HdRezkaSearchEntry? {
+            val pageUrl = anchor.absUrl("href")
+                .takeIf { it.isNotBlank() && isSameOrigin(it, mirror) }
+                ?: return null
+            val path = runCatching { URI(pageUrl).path.orEmpty().lowercase() }.getOrDefault("")
+            if (!isLikelyMediaPage(path)) return null
+            val title = anchor.selectFirst(".enty")?.text()?.trim()
+                ?.takeIf { it.isNotBlank() }
+                ?: anchor.attr("title").ifBlank { anchor.text() }.trim()
+                    .takeIf { it.isNotBlank() }
+                ?: return null
+            val image = container?.selectFirst(".b-content__inline_item-cover img, img")
             val poster = image?.let { element ->
                 sequenceOf("src", "data-src", "data-original")
                     .map { element.absUrl(it) }
                     .firstOrNull(::isHttpsUrl)
             }
-            val details = card.selectFirst(".b-content__inline_item-details, .b-content__inline_item-info")
-                ?.text()?.trim().orEmpty().take(500)
-            HdRezkaSearchEntry(title, page, poster, details)
-        }.take(100)
+            val description = container?.text()?.trim().orEmpty().take(500)
+            return HdRezkaSearchEntry(title, pageUrl, poster, description)
+        }
+
+        val cards = document.select(".b-content__inline_item")
+        val cardEntries = cards.mapNotNull { card ->
+            val anchor = card.selectFirst(".b-content__inline_item-link a[href]")
+                ?: card.selectFirst("a.b-content__inline_item-link[href]")
+                ?: card.selectFirst("a[href]")
+                ?: return@mapNotNull null
+            toEntry(anchor, card)
+        }
+        if (cardEntries.isNotEmpty()) return cardEntries.distinctBy { it.pageUrl }.take(100)
+
+        // The current DLE AJAX search returns simple anchors with .enty titles,
+        // rather than the older full-card .b-content__inline_item markup.
+        return document.select("a[href]").mapNotNull { anchor ->
+            toEntry(anchor, anchor.parent())
+        }.distinctBy { it.pageUrl }.take(100)
     }
+
+    private fun isLikelyMediaPage(path: String): Boolean =
+        Regex("""/(?:films?|serials?|series|cartoons?|anime|shorts?)/""")
+            .containsMatchIn(path) ||
+            Regex("""/[a-z][a-z0-9_-]{1,24}/[0-9]{1,12}[-.]""")
+                .containsMatchIn(path)
 
     internal fun parseTranslators(html: String): List<HdRezkaTranslator> =
         Jsoup.parse(html).select("#translators-list [data-translator_id], [data-translator_id]")
@@ -197,7 +236,13 @@ object HdRezkaCatalogClient {
                 isDirector = movieInit?.groupValues?.getOrNull(5) ?: "0"
             )
         }
-        val favs = document.selectFirst("input#ctrl_favs")?.attr("value").orEmpty().take(256)
+        val favs = (
+            document.selectFirst("input#ctrl_favs")?.attr("value")
+                ?: document.selectFirst("[data-favs]")?.attr("data-favs")
+                ?: Regex("""var\\s+sof\\s*=.*?\\.send\\([^,]+,\\s*['"]([^'"]+)['"]""", RegexOption.DOT_MATCHES_ALL)
+                    .find(html)?.groupValues?.getOrNull(1)
+                ?: ""
+        ).take(256)
         val isSeries = seriesInit != null ||
             document.selectFirst("#simple-episodes-tabs, #simple-seasons-tabs") != null ||
             document.select(".b-simple_episode__item").isNotEmpty()
@@ -266,17 +311,47 @@ object HdRezkaCatalogClient {
         return HdRezkaEpisodeIds(seasonId, episodeId)
     }
 
-    internal fun parseQualityVariants(raw: String): List<HdRezkaQualityVariant> {
+    internal fun decodeStreamPayload(raw: String): String? {
         val value = raw.trim()
-        if (value.isBlank() || value.startsWith("#2")) return emptyList()
-        val variants = qualityPattern.findAll(value).mapNotNull { m ->
-            val label = m.groupValues[1].trim().take(32)
-            val url = m.groupValues[2].trim().trimEnd(')', ';')
-            url.takeIf(::isHttpsUrl)?.let { HdRezkaQualityVariant(label, it) }
-        }.distinctBy { it.url }.toList()
-        if (variants.isNotEmpty()) return variants
+        if (value.isBlank()) return null
+        if (!value.startsWith("#")) return value
+        if (value.length > MAX_OBFUSCATED_URL_CHARS || value.length < 4) return null
+
+        var payload = value.substring(2)
+        encodedTrashTokens.forEach { token ->
+            payload = payload.replace("//_//$token", "")
+        }
+        val bytes = runCatching { Base64.getDecoder().decode(payload) }.getOrNull()
+            ?: return null
+        if (bytes.isEmpty() || bytes.size > MAX_OBFUSCATED_URL_CHARS) return null
+        val decoded = bytes.toString(Charsets.UTF_8)
+        if (decoded.any { it.isISOControl() && it !in '\\t' && it !in '\\r' && it !in '\\n' }) {
+            return null
+        }
+        return decoded.takeIf { it.contains("https://", ignoreCase = true) }
+    }
+
+    internal fun parseQualityVariants(raw: String): List<HdRezkaQualityVariant> {
+        val value = decodeStreamPayload(raw) ?: return emptyList()
+        val parsed = value.split(',').mapNotNull { segment ->
+            val match = qualityPattern.matchEntire(segment.trim()) ?: return@mapNotNull null
+            val label = match.groupValues[1].trim().take(64)
+            val urls = match.groupValues[2].split(Regex("""\\s+or\\s+"""))
+            // HDRezka serves several alternative files for one quality; follow
+            // the player convention and prefer the last (usually direct MP4) URL.
+            val url = urls.asReversed().firstOrNull { candidate ->
+                isHttpsUrl(candidate.trim())
+            }?.trim() ?: return@mapNotNull null
+            val numericQuality = Regex("""(?i)([0-9]{3,4})""")
+                .find(label)?.groupValues?.getOrNull(1)
+            val normalizedLabel = numericQuality?.let { "${it}p" } ?: label
+            HdRezkaQualityVariant(normalizedLabel, url)
+        }.distinctBy { it.url }
+        if (parsed.isNotEmpty()) return parsed
         val direct = directUrlPattern.find(value)?.value?.trim()?.trimEnd(')', ';')
-        return listOfNotNull(direct?.takeIf(::isHttpsUrl)?.let { HdRezkaQualityVariant(null, it) })
+        return listOfNotNull(direct?.takeIf(::isHttpsUrl)?.let {
+            HdRezkaQualityVariant(null, it)
+        })
     }
 
     internal fun parseStreamSources(
