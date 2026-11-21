@@ -57,7 +57,7 @@ object FilmixCatalogClient {
     ): List<SourceResult> {
         require(query.isNotBlank()) { "Введите название для поиска Filmix" }
         require(token.isNotBlank()) { "Сначала привяжите устройство Filmix" }
-        val safeBase = FilmixDeviceAuth.normalizeApiBase(apiBase)
+        val safeBase = FilmixDeviceAuth.normalizeApiBase(apiBase, allowCustomHost = true)
         val safeDeviceId = deviceId.takeIf { it.matches(Regex("[a-fA-F0-9]{16}")) }
             ?: throw IllegalArgumentException("Некорректный ID устройства Filmix")
 

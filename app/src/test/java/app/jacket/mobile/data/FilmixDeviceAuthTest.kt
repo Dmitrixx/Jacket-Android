@@ -101,6 +101,78 @@ class FilmixDeviceAuthTest {
         assertFalse(message.contains("certificate subject"))
     }
 
+
+    @Test
+    fun supportsAutoSelectionAndExplicitCustomHttpsHost() {
+        val custom = "https://media.example/api/v2"
+        assertEquals(FilmixDeviceAuth.AUTO_API_BASE, FilmixDeviceAuth.normalizeApiSelection("AUTO"))
+        assertEquals(custom, FilmixDeviceAuth.normalizeApiSelection(custom))
+        assertEquals(custom, FilmixDeviceAuth.normalizeApiBase(custom, allowCustomHost = true))
+    }
+
+    @Test
+    fun autoCandidatesProbeCustomThenOfficialEndpoints() {
+        val custom = "https://media.example/api/v2"
+        assertEquals(
+            listOf(custom, FilmixDeviceAuth.DEFAULT_API_BASE, FilmixDeviceAuth.ALTERNATE_API_BASE),
+            FilmixDeviceAuth.apiBaseCandidates(FilmixDeviceAuth.AUTO_API_BASE, custom)
+        )
+    }
+
+    @Test
+    fun explicitOfficialSelectionDoesNotProbeCustomHost() {
+        assertEquals(
+            listOf(FilmixDeviceAuth.ALTERNATE_API_BASE),
+            FilmixDeviceAuth.apiBaseCandidates(
+                FilmixDeviceAuth.ALTERNATE_API_BASE,
+                "https://media.example/api/v2"
+            )
+        )
+    }
+
+    @Test
+    fun autoFallsBackWhenCustomEndpointProbeOrTokenRequestFails() {
+        val custom = "https://media.example/api/v2"
+        val attempted = mutableListOf<String>()
+        val (activeBase, value) = FilmixDeviceAuth.firstSuccessfulApiBase(
+            FilmixDeviceAuth.AUTO_API_BASE,
+            custom
+        ) { candidate ->
+            attempted += candidate
+            if (candidate == custom) throw java.io.IOException("custom API offline")
+            "activation-response"
+        }
+
+        assertEquals(FilmixDeviceAuth.DEFAULT_API_BASE, activeBase)
+        assertEquals("activation-response", value)
+        assertEquals(listOf(custom, FilmixDeviceAuth.DEFAULT_API_BASE), attempted)
+    }
+
+    @Test(expected = IllegalArgumentException::class)
+    fun rejectsCleartextCustomFilmixApi() {
+        FilmixDeviceAuth.normalizeApiBase("http://media.example/api/v2", allowCustomHost = true)
+    }
+
+    @Test(expected = IllegalArgumentException::class)
+    fun rejectsIpLiteralAsCustomFilmixApi() {
+        FilmixDeviceAuth.normalizeApiBase("https://192.168.1.10/api/v2", allowCustomHost = true)
+    }
+
+    @Test(expected = IllegalArgumentException::class)
+    fun rejectsLocalDomainAsCustomFilmixApi() {
+        FilmixDeviceAuth.normalizeApiBase("https://filmix.local/api/v2", allowCustomHost = true)
+    }
+
+    @Test(expected = IllegalArgumentException::class)
+    fun rejectsCredentialsInCustomFilmixApi() {
+        FilmixDeviceAuth.normalizeApiBase("https://user:pass@media.example/api/v2", allowCustomHost = true)
+    }
+
+    @Test(expected = IllegalArgumentException::class)
+    fun rejectsQueryInCustomFilmixApi() {
+        FilmixDeviceAuth.normalizeApiBase("https://media.example/api/v2?token=secret", allowCustomHost = true)
+    }
+
     @Test(expected = IllegalArgumentException::class)
     fun rejectsMalformedDeviceId() {
         FilmixDeviceAuth.buildTokenRequestUrl("bad-id")

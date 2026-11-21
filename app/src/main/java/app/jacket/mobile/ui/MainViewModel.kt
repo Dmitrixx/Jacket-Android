@@ -68,8 +68,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _filmixToken = MutableStateFlow(settings.filmixToken())
     val filmixToken: StateFlow<String> = _filmixToken.asStateFlow()
 
-    private val _filmixApiBase = MutableStateFlow(settings.filmixApiBase())
+    private val _filmixApiBase = MutableStateFlow(settings.filmixApiSelection())
     val filmixApiBase: StateFlow<String> = _filmixApiBase.asStateFlow()
+
+    private val _filmixCustomApiBase = MutableStateFlow(settings.filmixCustomApiBase())
+    val filmixCustomApiBase: StateFlow<String> = _filmixCustomApiBase.asStateFlow()
 
     private val _filmixCode = MutableStateFlow<String?>(null)
     val filmixCode: StateFlow<String?> = _filmixCode.asStateFlow()
@@ -1035,12 +1038,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             _filmixStatus.value = "Запрашиваем код у Filmix…"
             try {
                 val deviceId = settings.filmixDeviceId()
-                val selectedApi = settings.filmixApiBase()
+                val selectedApi = settings.filmixApiSelection()
+                val customApi = settings.filmixCustomApiBase()
                 val pending = withContext(Dispatchers.IO) {
-                    FilmixDeviceAuth.requestCode(deviceId, selectedApi)
+                    FilmixDeviceAuth.requestCode(deviceId, selectedApi, customApi)
                 }
+                // Keep catalog requests pinned to the exact origin that issued this code.
+                settings.saveFilmixApiBase(pending.apiBase)
+                val activeHost = pending.apiBase.substringAfter("://").substringBefore('/')
                 _filmixCode.value = pending.code
-                _filmixStatus.value = "Введите код на странице устройств Filmix. Проверяем подтверждение автоматически."
+                _filmixStatus.value = "API Filmix выбран: $activeHost. Введите код на странице устройств."
                 val deadline = System.currentTimeMillis() + FILMIX_PAIRING_TIMEOUT_MS
 
                 while (isActive && System.currentTimeMillis() < deadline) {
@@ -1079,13 +1086,39 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun selectFilmixApiBase(value: String) {
         if (_isFilmixPairing.value) return
-        runCatching { settings.saveFilmixApiBase(value) }
-            .onSuccess { normalized ->
-                _filmixApiBase.value = normalized
-                val host = normalized.substringAfter("://").substringBefore('/')
-                _filmixStatus.value = "Выбран API-сервер $host. TLS будет проверен перед выдачей кода."
+        runCatching {
+            val normalized = FilmixDeviceAuth.normalizeApiSelection(value)
+            if (normalized != FilmixDeviceAuth.AUTO_API_BASE &&
+                normalized !in setOf(FilmixDeviceAuth.DEFAULT_API_BASE, FilmixDeviceAuth.ALTERNATE_API_BASE)
+            ) {
+                settings.saveFilmixCustomApiBase(normalized)
+                _filmixCustomApiBase.value = settings.filmixCustomApiBase()
             }
-            .onFailure { _filmixStatus.value = it.message ?: "Не удалось сохранить API Filmix" }
+            settings.saveFilmixApiSelection(normalized)
+        }.onSuccess { normalized ->
+            _filmixApiBase.value = normalized
+            val description = when (normalized) {
+                FilmixDeviceAuth.AUTO_API_BASE -> "AUTO: пользовательское зеркало (если задано), затем основной и резервный сервер."
+                FilmixDeviceAuth.DEFAULT_API_BASE -> "основной сервер"
+                FilmixDeviceAuth.ALTERNATE_API_BASE -> "резервный сервер"
+                else -> "пользовательский сервер " + normalized.substringAfter("://").substringBefore('/')
+            }
+            _filmixStatus.value = "Выбран режим Filmix: $description TLS-проверка остаётся включённой."
+        }.onFailure { _filmixStatus.value = it.message ?: "Не удалось сохранить API Filmix" }
+    }
+
+    fun saveFilmixCustomApiBase(value: String) {
+        if (_isFilmixPairing.value) return
+        runCatching { settings.saveFilmixCustomApiBase(value) }
+            .onSuccess {
+                _filmixCustomApiBase.value = it
+                _filmixStatus.value = if (it.isBlank()) {
+                    "Пользовательское зеркало Filmix очищено."
+                } else {
+                    "Пользовательский HTTPS API сохранён. Выберите его напрямую или режим AUTO."
+                }
+            }
+            .onFailure { _filmixStatus.value = it.message ?: "Некорректный пользовательский API Filmix" }
     }
 
     fun cancelFilmixPairing() {
