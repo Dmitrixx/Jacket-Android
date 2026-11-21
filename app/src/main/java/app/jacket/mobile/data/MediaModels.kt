@@ -77,6 +77,20 @@ data class WebSearchProvider(
     val cookie: String = ""
 )
 
+enum class MediaSourceType {
+    TORRENT,
+    FILMIX,
+    HDREZKA,
+    LICENSED_DIRECT
+}
+
+data class MediaSubtitle(
+    val url: String,
+    val mimeType: String,
+    val language: String? = null,
+    val label: String
+)
+
 /** Private HDRezka account data. Password and session cookies are encrypted in local storage. */
 data class HdRezkaSettings(
     val mirror: String = "",
@@ -100,7 +114,15 @@ data class SourceResult(
     val pageUrl: String? = null,
     val category: String? = null,
     val indexerId: String? = null,
-    val tracker: String? = null
+    val tracker: String? = null,
+    val publishedDate: String? = null,
+    val sourceType: MediaSourceType = MediaSourceType.TORRENT,
+    val qualityLabel: String? = null,
+    val translationName: String? = null,
+    val requiresSubscription: Boolean = false,
+    val subtitles: List<MediaSubtitle> = emptyList(),
+    /** Only non-secret, media-origin headers such as Referer. Never store account cookies here. */
+    val requestHeaders: Map<String, String> = emptyMap()
 )
 
 fun CatalogItem.toJson(): JSONObject = JSONObject()
@@ -154,7 +176,12 @@ data class ReleaseMetadata(
     val dolbyVision: Boolean,
     val videoCodec: String?,
     val audioTags: List<String>,
-    val sourceTags: List<String>
+    val sourceTags: List<String>,
+    val resolutionDimensions: String? = null,
+    val audioChannels: String? = null,
+    val audioLanguages: List<String> = emptyList(),
+    val subtitleLanguages: List<String> = emptyList(),
+    val bitrate: String? = null
 )
 
 

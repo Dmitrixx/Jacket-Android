@@ -2,8 +2,6 @@ package app.jacket.mobile.torrent
 
 import android.content.Context
 import android.net.Uri
-import org.json.JSONArray
-import org.json.JSONObject
 import java.io.File
 import java.security.MessageDigest
 
@@ -29,35 +27,17 @@ class TorrentQueueStore(context: Context) {
     @Synchronized
     fun all(): List<QueuedTorrent> {
         val raw = preferences.getString(KEY_QUEUE, "[]").orEmpty()
-        val decoded = if (raw.startsWith("JACKET_QUEUE_V2")) {
+        val isVersion2 = raw.startsWith("JACKET_QUEUE_V2")
+        val decoded = if (isVersion2) {
             runCatching { TorrentQueueCodec.decode(raw) }.getOrDefault(emptyList())
         } else {
-            // One-time migration of the previous SharedPreferences JSON schema.
-            runCatching {
-                val array = JSONArray(raw)
-                buildList {
-                    for (index in 0 until array.length()) {
-                        val item = array.optJSONObject(index) ?: continue
-                        val magnet = item.optString("magnet").takeIf { it.startsWith("magnet:?") }
-                        val path = item.optString("torrentPath").takeIf { it.isNotBlank() && File(it).isFile }
-                        if (magnet == null && path == null) continue
-                        val id = item.optString("id").ifBlank { magnet?.let(::idFor) ?: idForFile(File(path!!)) }
-                        add(
-                            QueuedTorrent(
-                                id = id,
-                                title = item.optString("title").ifBlank { "Торрент ${id.take(10)}" },
-                                magnetUri = magnet,
-                                torrentPath = path,
-                                selectedFileIndex = item.optInt("selectedFileIndex", -1).takeIf { it >= 0 }
-                            )
-                        )
-                    }
-                }
-            }.getOrDefault(emptyList())
+            // Legacy IDs are untrusted: canonicalize magnets and validate file IDs
+            // before writing V2, so one malformed record cannot poison the queue.
+            runCatching { TorrentQueueCodec.decodeLegacy(raw) }.getOrDefault(emptyList())
         }
         val valid = decoded.filter { it.magnetUri?.startsWith("magnet:?") == true ||
             (!it.torrentPath.isNullOrBlank() && File(it.torrentPath).isFile) }.take(MAX_QUEUE_SIZE)
-        if (decoded.isNotEmpty() && !raw.startsWith("JACKET_QUEUE_V2")) save(valid)
+        if (raw != TorrentQueueCodec.encode(valid)) save(valid)
         return valid
     }
 
@@ -105,14 +85,18 @@ class TorrentQueueStore(context: Context) {
         save(all().filterNot { it.id.equals(id, true) })
         val paused = preferences.getStringSet(KEY_PAUSED, emptySet()).orEmpty().toMutableSet()
         paused.remove(id)
-        preferences.edit().putStringSet(KEY_PAUSED, paused).apply()
+        check(preferences.edit().putStringSet(KEY_PAUSED, paused).commit()) {
+            "Не удалось надёжно сохранить состояние паузы загрузки"
+        }
     }
 
     @Synchronized
     fun setPaused(id: String, paused: Boolean) {
         val values = preferences.getStringSet(KEY_PAUSED, emptySet()).orEmpty().toMutableSet()
         if (paused) values.add(id) else values.remove(id)
-        preferences.edit().putStringSet(KEY_PAUSED, values).apply()
+        check(preferences.edit().putStringSet(KEY_PAUSED, values).commit()) {
+            "Не удалось надёжно сохранить состояние паузы загрузки"
+        }
     }
 
     fun isPaused(id: String): Boolean = id in preferences.getStringSet(KEY_PAUSED, emptySet()).orEmpty()
@@ -124,7 +108,12 @@ class TorrentQueueStore(context: Context) {
     }
 
     private fun save(items: List<QueuedTorrent>) {
-        preferences.edit().putString(KEY_QUEUE, TorrentQueueCodec.encode(items)).apply()
+        // Queue writes happen on the torrent service IO dispatcher. Commit before
+        // libtorrent is mutated so a process kill cannot lose the newest magnet,
+        // .torrent path or selected-file decision from an asynchronously applied edit.
+        check(preferences.edit().putString(KEY_QUEUE, TorrentQueueCodec.encode(items)).commit()) {
+            "Не удалось надёжно сохранить очередь торрентов"
+        }
     }
 
     companion object {
@@ -159,9 +148,13 @@ class TorrentQueueStore(context: Context) {
                 .joinToString("") { "%02x".format(it) }
         }
 
-        fun idForFile(file: File): String = file.nameWithoutExtension.lowercase().takeIf { it.matches(INFO_HASH) }
-            ?: MessageDigest.getInstance("SHA-256").digest(file.readBytes())
-                .take(20).joinToString("") { "%02x".format(it) }
+        fun idForFile(file: File): String {
+            require(file.isFile && file.length() in 1..MAX_TORRENT_BYTES) {
+                "Файл .torrent отсутствует или превышает допустимый размер"
+            }
+            return file.nameWithoutExtension.lowercase().takeIf { it.matches(INFO_HASH) }
+                ?: throw IllegalArgumentException("Не удалось определить infohash из имени .torrent")
+        }
 
         private fun normalizeBtih(value: String): String? {
             val clean = value.trim()

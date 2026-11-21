@@ -30,7 +30,7 @@ import app.jacket.mobile.data.JackettUrl
 fun JackettSetupCard(
     saved: IndexerConfig?,
     status: String?,
-    onSave: (address: String, apiKey: String, indexer: String) -> Unit,
+    onSave: (address: String, apiKey: String, indexer: String, dashboardCookie: String) -> Unit,
     onTest: () -> Unit,
     onRemove: () -> Unit
 ) {
@@ -39,6 +39,7 @@ fun JackettSetupCard(
     }
     var address by remember(saved?.id, parsed?.baseUrl) { mutableStateOf(parsed?.baseUrl.orEmpty()) }
     var apiKey by remember(saved?.id, saved?.apiKey) { mutableStateOf(saved?.apiKey.orEmpty()) }
+    var dashboardCookie by remember(saved?.id, saved?.cookie) { mutableStateOf(saved?.cookie.orEmpty()) }
     var indexer by remember(saved?.id, parsed?.indexer) {
         mutableStateOf(parsed?.indexer ?: JackettUrl.DEFAULT_INDEXER)
     }
@@ -75,6 +76,20 @@ fun JackettSetupCard(
                 modifier = Modifier.fillMaxWidth()
             )
             OutlinedTextField(
+                value = dashboardCookie,
+                onValueChange = { dashboardCookie = it.replace(Regex("[\\r\\n]"), "").take(8192) },
+                label = { Text("Cookie панели Jackett (необязательно)") },
+                placeholder = { Text("Cookie из авторизованной панели Jackett") },
+                singleLine = false,
+                visualTransformation = PasswordVisualTransformation(),
+                modifier = Modifier.fillMaxWidth()
+            )
+            Text(
+                "Cookie нужна для просмотра и сохранения настроек приватных индексаторов, если панель требует вход. Она шифруется на устройстве и отправляется только указанному серверу; для внешнего сервера используйте HTTPS.",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            OutlinedTextField(
                 value = indexer,
                 onValueChange = { indexer = it },
                 label = { Text("Фильтр индексатора (all — все)") },
@@ -83,7 +98,7 @@ fun JackettSetupCard(
             )
             Button(
                 modifier = Modifier.fillMaxWidth(),
-                onClick = { onSave(address, apiKey, indexer) },
+                onClick = { onSave(address, apiKey, indexer, dashboardCookie) },
                 enabled = address.isNotBlank() && apiKey.isNotBlank()
             ) { Text(if (saved == null) "Подключить и проверить" else "Сохранить и проверить") }
             if (saved != null) {

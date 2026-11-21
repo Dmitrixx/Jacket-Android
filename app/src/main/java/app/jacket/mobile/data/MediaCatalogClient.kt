@@ -401,7 +401,12 @@ class MediaCatalogClient {
             streamUrl = detail.streamUrl,
             sizeBytes = detail.fileSizeBytes,
             licenseUrl = detail.licenseUrl,
-            pageUrl = detail.pageUrl
+            pageUrl = detail.pageUrl,
+            sourceType = if (detail.streamUrl != null) {
+                MediaSourceType.LICENSED_DIRECT
+            } else {
+                MediaSourceType.TORRENT
+            }
         )
     }
 
