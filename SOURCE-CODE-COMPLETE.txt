@@ -16900,3 +16900,206 @@ class StreamPiecePlannerTest {
 }
 
 END FILE: app/src/test/java/app/jacket/mobile/torrent/StreamPiecePlannerTest.kt
+
+
+========================================================================================
+FILE: app/src/test/java/app/jacket/mobile/torrent/TorrentQueueCodecTest.kt
+========================================================================================
+
+package app.jacket.mobile.torrent
+
+import org.json.JSONArray
+import org.json.JSONObject
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertThrows
+import org.junit.Test
+import java.io.File
+import java.nio.file.Files
+
+class TorrentQueueCodecTest {
+    @Test
+    fun roundTripsMagnetAndSelectedFile() {
+        val item = QueuedTorrent(
+            id = "0123456789abcdef0123456789abcdef01234567",
+            title = "Some release 1080p",
+            magnetUri = "magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567&dn=Some%20release",
+            selectedFileIndex = 3
+        )
+        assertEquals(listOf(item), TorrentQueueCodec.decode(TorrentQueueCodec.encode(listOf(item))))
+    }
+
+    @Test
+    fun skipsCorruptV2RecordAndKeepsValidQueueEntries() {
+        val valid = QueuedTorrent(
+            id = "0123456789abcdef0123456789abcdef01234567",
+            title = "Keep me",
+            magnetUri = "magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567"
+        )
+        val encoded = TorrentQueueCodec.encode(listOf(valid))
+        val corrupted = encoded + "\ninvalid\t-\t-\t-\t-1"
+
+        assertEquals(listOf(valid), TorrentQueueCodec.decode(corrupted))
+    }
+
+    @Test
+    fun rejectsOversizedQueueBeforeEncoding() {
+        val oversizedMagnet = "magnet:?" + "🦄".repeat(8_000)
+        val items = (0 until 300).map { index ->
+            QueuedTorrent(
+                id = index.toString(16).padStart(40, '0'),
+                title = "Large queue item",
+                magnetUri = oversizedMagnet
+            )
+        }
+
+        assertThrows(IllegalArgumentException::class.java) {
+            TorrentQueueCodec.encode(items)
+        }
+    }
+
+    @Test
+    fun migratesLegacyMagnetWithInvalidIdAndDeduplicatesByCanonicalHash() {
+        val hash = "0123456789abcdef0123456789abcdef01234567"
+        val magnet = "magnet:?xt=urn:btih:$hash&dn=Old%20release"
+        val legacy = JSONArray()
+            .put(JSONObject().put("id", "not-a-hash").put("magnet", magnet))
+            .put(JSONObject().put("id", hash.uppercase()).put("magnet", magnet))
+            .toString()
+
+        val migrated = TorrentQueueCodec.decodeLegacy(legacy)
+
+        assertEquals(listOf(TorrentQueueStore.idFor(magnet)), migrated.map { it.id })
+        assertEquals("Торрент ${hash.take(10)}", migrated.single().title)
+    }
+
+    @Test
+    fun migratesLegacyFileUsingHashFilenameAndSkipsUnverifiableIds() {
+        val hash = "abcdef0123456789abcdef0123456789abcdef01"
+        val directory = Files.createTempDirectory("jacket-legacy-queue").toFile()
+        val hashNamedFile = File(directory, "$hash.torrent")
+        val unverifiedFile = File(directory, "old-name.torrent")
+        try {
+            hashNamedFile.writeText("metainfo")
+            unverifiedFile.writeText("metainfo")
+            val legacy = JSONArray()
+                .put(JSONObject().put("id", "invalid").put("torrentPath", hashNamedFile.absolutePath))
+                .put(JSONObject().put("id", "invalid").put("torrentPath", unverifiedFile.absolutePath))
+                .toString()
+
+            val migrated = TorrentQueueCodec.decodeLegacy(legacy)
+
+            assertEquals(listOf(hash), migrated.map { it.id })
+            assertEquals(hashNamedFile.absolutePath, migrated.single().torrentPath)
+        } finally {
+            hashNamedFile.delete()
+            unverifiedFile.delete()
+            directory.delete()
+        }
+    }
+
+    @Test
+    fun roundTripsLocalTorrentPathAndUnicodeTitle() {
+        val item = QueuedTorrent(
+            id = "abcdefabcdefabcdefabcdefabcdefabcdefabcd",
+            title = "Фильм — тест",
+            torrentPath = "/data/user/0/app/files/torrent-metainfo/example.torrent"
+        )
+        assertEquals(listOf(item), TorrentQueueCodec.decode(TorrentQueueCodec.encode(listOf(item))))
+    }
+}
+
+END FILE: app/src/test/java/app/jacket/mobile/torrent/TorrentQueueCodecTest.kt
+
+
+========================================================================================
+FILE: app/src/test/java/app/jacket/mobile/ui/PlaybackChromeTest.kt
+========================================================================================
+
+package app.jacket.mobile.ui
+
+import org.junit.Assert.assertEquals
+import org.junit.Test
+
+class PlaybackChromeTest {
+    @Test
+    fun cyclesPlaybackSpeedAndLabels() {
+        assertEquals(1.25f, PlaybackChrome.nextSpeed(1f), 0.001f)
+        assertEquals(0.5f, PlaybackChrome.nextSpeed(2f), 0.001f)
+        assertEquals(0.5f, PlaybackChrome.nextSpeed(9f), 0.001f)
+        assertEquals("1×", PlaybackChrome.speedLabel(1f))
+        assertEquals("1.5×", PlaybackChrome.speedLabel(1.5f))
+    }
+
+    @Test
+    fun cyclesSleepTimerAndFit() {
+        assertEquals(15, PlaybackChrome.nextSleepMinutes(0))
+        assertEquals(0, PlaybackChrome.nextSleepMinutes(60))
+        assertEquals("Сон выкл", PlaybackChrome.sleepLabel(0))
+        assertEquals("Сон 30", PlaybackChrome.sleepLabel(30))
+        assertEquals(PlaybackChrome.Fit.Fill, PlaybackChrome.nextFit(PlaybackChrome.Fit.Fit))
+        assertEquals(PlaybackChrome.Fit.Fit, PlaybackChrome.nextFit(PlaybackChrome.Fit.Zoom))
+        assertEquals("Крупно", PlaybackChrome.fitLabel(PlaybackChrome.Fit.Zoom))
+    }
+
+    @Test
+    fun formatsClocksWithoutPaddingHours() {
+        assertEquals("0:00", PlaybackChrome.formatClock(0L))
+        assertEquals("1:05", PlaybackChrome.formatClock(65_000L))
+        assertEquals("1:01:01", PlaybackChrome.formatClock(3_661_000L))
+        assertEquals("Осталось 5:00", PlaybackChrome.remainingPhrase(60_000L, 360_000L))
+        assertEquals(
+            "Продолжить с сохранённой позиции",
+            PlaybackChrome.remainingPhrase(10_000L, 0L)
+        )
+    }
+}
+
+END FILE: app/src/test/java/app/jacket/mobile/ui/PlaybackChromeTest.kt
+
+
+========================================================================================
+FILE: app/src/test/java/app/jacket/mobile/ui/SourceSearchEpochTest.kt
+========================================================================================
+
+package app.jacket.mobile.ui
+
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+class SourceSearchEpochTest {
+    @Test
+    fun newerSearchInvalidatesCompletionFromOlderSearch() {
+        val epoch = SourceSearchEpoch()
+        val olderSearch = epoch.next()
+        val newerSearch = epoch.next()
+
+        assertFalse(epoch.isCurrent(olderSearch))
+        assertTrue(epoch.isCurrent(newerSearch))
+    }
+
+    @Test
+    fun clearingSearchInvalidatesPreviouslyStartedWork() {
+        val epoch = SourceSearchEpoch()
+        val activeSearch = epoch.next()
+        val clearedState = epoch.next()
+
+        assertFalse(epoch.isCurrent(activeSearch))
+        assertTrue(epoch.isCurrent(clearedState))
+    }
+}
+
+END FILE: app/src/test/java/app/jacket/mobile/ui/SourceSearchEpochTest.kt
+
+
+========================================================================================
+FILE: build.gradle.kts
+========================================================================================
+
+plugins {
+    id("com.android.application") version "9.5.1" apply false
+    id("org.jetbrains.kotlin.android") version "2.4.21" apply false
+    id("org.jetbrains.kotlin.plugin.compose") version "2.4.21" apply false
+}
+
+END FILE: build.gradle.kts
