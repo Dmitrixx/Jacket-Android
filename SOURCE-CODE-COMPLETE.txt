@@ -1553,3 +1553,1483 @@ object FilmixDeviceAuth {
 }
 
 END FILE: app/src/main/java/app/jacket/mobile/data/FilmixDeviceAuth.kt
+
+
+========================================================================================
+FILE: app/src/main/java/app/jacket/mobile/data/HdRezkaCatalogClient.kt
+========================================================================================
+
+package app.jacket.mobile.data
+
+import org.json.JSONObject
+import org.jsoup.Jsoup
+import java.io.ByteArrayOutputStream
+import java.io.IOException
+import java.net.HttpURLConnection
+import java.net.URI
+import java.net.URL
+import java.net.URLEncoder
+import java.util.Base64
+
+data class HdRezkaSearchEntry(val title: String, val pageUrl: String, val posterUrl: String?, val description: String)
+data class HdRezkaTranslator(
+    val id: String,
+    val name: String,
+    val isCamrip: String = "0",
+    val isAds: String = "0",
+    val isDirector: String = "0",
+    val isPremium: Boolean = false
+)
+data class HdRezkaPageContext(
+    val postId: String,
+    val translators: List<HdRezkaTranslator>,
+    val favs: String,
+    val isSeries: Boolean,
+    val defaultSeasonId: String? = null,
+    val defaultEpisodeId: String? = null
+)
+data class HdRezkaEpisodeIds(val seasonId: String, val episodeId: String)
+data class HdRezkaQualityVariant(val qualityLabel: String?, val url: String)
+
+/**
+ * Direct HTTPS adapter for one mirror explicitly entered by the user.
+ * No mirror discovery/rotation, proxy, TLS spoofing, CAPTCHA solver or cleartext fallback.
+ * Session cookies are sent only to the exact configured mirror origin, never to a CDN.
+ */
+object HdRezkaCatalogClient {
+    private const val MAX_RESPONSE_BYTES = 4 * 1024 * 1024
+    private const val MAX_SEARCH_RESULTS = 8
+    private const val MAX_TRANSLATORS = 8
+    private const val MAX_REDIRECTS = 4
+    private const val MAX_OBFUSCATED_URL_CHARS = 512 * 1024
+    private const val USER_AGENT = "Jacket-Android/2.7 (Android media client)"
+    private val qualityPattern = Regex("""^\[([^\]]+)](.+)$""", RegexOption.IGNORE_CASE)
+    private val encodedTrashTokens = listOf(
+        "JCQhIUAkJEBeIUAjJCRA",
+        "QEBAQEAhIyMhXl5e",
+        "IyMjI14hISMjIUBA",
+        "Xl5eIUAjIyEhIyM=",
+        "JCQjISFAIyFAIyM=",
+    )
+    private val directUrlPattern = Regex("https://[^\\s,\\]<>\\\"']+", RegexOption.IGNORE_CASE)
+    private val episodeCodePattern = Regex("(?i)S(\\d{1,2})E(\\d{1,3})")
+    private val seriesInitPattern = Regex("""initCDNSeriesEvents\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)(?:\s*,|\s*\))""")
+    private val movieInitPattern = Regex("""initCDNMoviesEvents\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)(?:\s*,|\s*\))""")
+    private val redirectCodes = setOf(301, 302, 303, 307, 308)
+
+    fun searchSources(
+        settings: HdRezkaSettings,
+        query: String,
+        kind: MediaKind,
+        episodeCode: String? = null
+    ): List<SourceResult> {
+        require(query.isNotBlank()) { "Введите название для поиска HDRezka" }
+        val mirror = HdRezkaLoginClient.validateMirror(settings.mirror)
+        val searchUrl = buildSearchUrl(mirror)
+        val searchBody = buildSearchBody(query)
+        val html = requestText(
+            mirror,
+            searchUrl,
+            "POST",
+            searchBody,
+            "$mirror/",
+            settings,
+            "application/x-www-form-urlencoded; charset=UTF-8"
+        )
+        val entries = parseSearchEntries(html, mirror).distinctBy { it.pageUrl }.take(MAX_SEARCH_RESULTS)
+        return buildList {
+            entries.forEach entryLoop@{ entry ->
+                val pageHtml = requestText(mirror, entry.pageUrl, "GET", null, "$mirror/", settings)
+                val page = parsePageContext(pageHtml, entry.pageUrl) ?: return@entryLoop
+                if (kind == MediaKind.MOVIE && page.isSeries) return@entryLoop
+                if (kind == MediaKind.SERIES && !page.isSeries) return@entryLoop
+                val translators = page.translators.ifEmpty {
+                    listOf(HdRezkaTranslator("0", "Оригинал"))
+                }.take(MAX_TRANSLATORS)
+
+                if (!page.isSeries) {
+                    translators.forEach translatorLoop@{ translator ->
+                        if (translator.isPremium) {
+                            add(paywallResult(entry, translator, null))
+                            return@translatorLoop
+                        }
+                        val response = ajax(
+                            mirror, entry.pageUrl, settings, page.favs, linkedMapOf(
+                                "action" to "get_movie",
+                                "id" to page.postId,
+                                "translator_id" to translator.id,
+                                "is_camrip" to translator.isCamrip,
+                                "is_ads" to translator.isAds,
+                                "is_director" to translator.isDirector
+                            )
+                        )
+                        addAll(parseStreamSources(response, entry, translator, entry.pageUrl, null))
+                    }
+                } else {
+                    val match = episodeCodePattern.find(episodeCode.orEmpty())
+                    if (match == null) {
+                        translators.forEach { translator ->
+                            add(SourceResult(
+                                id = "hdrezka:${page.postId}:${translator.id}:episodes",
+                                title = entry.title,
+                                providerName = "HDRezka",
+                                pageUrl = entry.pageUrl,
+                                sourceType = MediaSourceType.HDREZKA,
+                                translationName = translator.name,
+                                requiresSubscription = translator.isPremium
+                            ))
+                        }
+                        return@entryLoop
+                    }
+                    val wantedSeason = match.groupValues[1].toIntOrNull() ?: return@entryLoop
+                    val wantedEpisode = match.groupValues[2].toIntOrNull() ?: return@entryLoop
+                    translators.forEach translatorLoop@{ translator ->
+                        if (translator.isPremium) {
+                            add(paywallResult(entry, translator, episodeCode))
+                            return@translatorLoop
+                        }
+                        val episodeResponse = ajax(
+                            mirror, entry.pageUrl, settings, page.favs, linkedMapOf(
+                                "action" to "get_episodes",
+                                "id" to page.postId,
+                                "translator_id" to translator.id
+                            )
+                        )
+                        val episodeIds = resolveEpisodeIds(
+                            episodeResponse, wantedSeason, wantedEpisode,
+                            page.defaultSeasonId, page.defaultEpisodeId
+                        ) ?: return@translatorLoop
+                        val streamResponse = ajax(
+                            mirror, entry.pageUrl, settings, page.favs, linkedMapOf(
+                                "action" to "get_stream",
+                                "id" to page.postId,
+                                "translator_id" to translator.id,
+                                "season" to episodeIds.seasonId,
+                                "episode" to episodeIds.episodeId
+                            )
+                        )
+                        addAll(parseStreamSources(streamResponse, entry, translator, entry.pageUrl, episodeCode))
+                    }
+                }
+            }
+        }.distinctBy { it.id }.take(80)
+    }
+
+    internal fun buildSearchUrl(mirror: String): String =
+        "$mirror/engine/ajax/search.php"
+
+    internal fun buildSearchBody(query: String): String {
+        require(query.isNotBlank()) { "Введите название для поиска HDRezka" }
+        return "q=${encode(query.trim().take(160))}"
+    }
+
+    internal fun parseSearchEntries(html: String, mirror: String): List<HdRezkaSearchEntry> {
+        val document = Jsoup.parse(html, mirror)
+        fun toEntry(anchor: org.jsoup.nodes.Element, container: org.jsoup.nodes.Element?): HdRezkaSearchEntry? {
+            val pageUrl = anchor.absUrl("href")
+                .takeIf { it.isNotBlank() && isSameOrigin(it, mirror) }
+                ?: return null
+            val path = runCatching { URI(pageUrl).path.orEmpty().lowercase() }.getOrDefault("")
+            if (!isLikelyMediaPage(path)) return null
+            val title = anchor.selectFirst(".enty")?.text()?.trim()
+                ?.takeIf { it.isNotBlank() }
+                ?: anchor.attr("title").ifBlank { anchor.text() }.trim()
+                    .takeIf { it.isNotBlank() }
+                ?: return null
+            val image = container?.selectFirst(".b-content__inline_item-cover img, img")
+            val poster = image?.let { element ->
+                sequenceOf("src", "data-src", "data-original")
+                    .map { element.absUrl(it) }
+                    .firstOrNull(::isHttpsUrl)
+            }
+            val description = container?.text()?.trim().orEmpty().take(500)
+            return HdRezkaSearchEntry(title, pageUrl, poster, description)
+        }
+
+        val cards = document.select(".b-content__inline_item")
+        val cardEntries = cards.mapNotNull { card ->
+            val anchor = card.selectFirst(".b-content__inline_item-link a[href]")
+                ?: card.selectFirst("a.b-content__inline_item-link[href]")
+                ?: card.selectFirst("a[href]")
+                ?: return@mapNotNull null
+            toEntry(anchor, card)
+        }
+        if (cardEntries.isNotEmpty()) return cardEntries.distinctBy { it.pageUrl }.take(100)
+
+        // The current DLE AJAX search returns simple anchors with .enty titles,
+        // rather than the older full-card .b-content__inline_item markup.
+        return document.select("a[href]").mapNotNull { anchor ->
+            toEntry(anchor, anchor.parent())
+        }.distinctBy { it.pageUrl }.take(100)
+    }
+
+    private fun isLikelyMediaPage(path: String): Boolean =
+        Regex("""/(?:films?|serials?|series|cartoons?|anime|shorts?)/""")
+            .containsMatchIn(path) ||
+            Regex("""/[a-z][a-z0-9_-]{1,24}/[0-9]{1,12}[-.]""")
+                .containsMatchIn(path)
+
+    internal fun parseTranslators(html: String): List<HdRezkaTranslator> =
+        Jsoup.parse(html).select("#translators-list [data-translator_id], [data-translator_id]")
+            .mapNotNull { element ->
+                val id = element.attr("data-translator_id").trim()
+                    .takeIf { it.matches(Regex("[0-9]{1,12}")) } ?: return@mapNotNull null
+                val name = element.attr("title").ifBlank { element.text() }.trim()
+                    .take(100).ifBlank { "Озвучка $id" }
+                HdRezkaTranslator(
+                    id = id,
+                    name = name,
+                    isCamrip = element.attr("data-camrip").ifBlank { "0" },
+                    isAds = element.attr("data-ads").ifBlank { "0" },
+                    isDirector = element.attr("data-director").ifBlank { "0" },
+                    isPremium = element.hasClass("b-prem_translator")
+                )
+            }.distinctBy { it.id }.take(MAX_TRANSLATORS)
+
+    internal fun parsePageContext(html: String, pageUrl: String): HdRezkaPageContext? {
+        val document = Jsoup.parse(html, pageUrl)
+        val seriesInit = seriesInitPattern.find(html)
+        val movieInit = movieInitPattern.find(html)
+        val postId = document.selectFirst("input#post_id, input[name=post_id]")?.attr("value")
+            ?.takeIf { it.matches(Regex("[0-9]{1,12}")) }
+            ?: seriesInit?.groupValues?.get(1)
+            ?: movieInit?.groupValues?.get(1)
+            ?: runCatching { URI(pageUrl).path.orEmpty() }.getOrDefault("")
+                .let { Regex("/(?:films?|serials?|cartoons?|anime)/([0-9]{1,12})-").find(it)?.groupValues?.get(1) }
+            ?: return null
+        val translators = parseTranslators(html).toMutableList()
+        val defaultTranslator = seriesInit?.groupValues?.get(2) ?: movieInit?.groupValues?.get(2)
+        if (translators.isEmpty() && defaultTranslator != null) {
+            translators += HdRezkaTranslator(
+                id = defaultTranslator,
+                name = "Оригинал",
+                isCamrip = movieInit?.groupValues?.getOrNull(3) ?: "0",
+                isAds = movieInit?.groupValues?.getOrNull(4) ?: "0",
+                isDirector = movieInit?.groupValues?.getOrNull(5) ?: "0"
+            )
+        }
+        val favs = (
+            document.selectFirst("input#ctrl_favs")?.attr("value")
+                ?: document.selectFirst("[data-favs]")?.attr("data-favs")
+                ?: Regex("""var\s+sof\s*=.*?\.send\([^,]+,\s*['"]([^'"]+)['"]""", RegexOption.DOT_MATCHES_ALL)
+                    .find(html)?.groupValues?.getOrNull(1)
+                ?: ""
+        ).take(256)
+        val isSeries = seriesInit != null ||
+            document.selectFirst("#simple-episodes-tabs, #simple-seasons-tabs") != null ||
+            document.select(".b-simple_episode__item").isNotEmpty()
+        return HdRezkaPageContext(
+            postId, translators.distinctBy { it.id }.take(MAX_TRANSLATORS), favs, isSeries,
+            seriesInit?.groupValues?.getOrNull(3),
+            seriesInit?.groupValues?.getOrNull(4)
+        )
+    }
+
+    internal fun parsePostId(html: String, pageUrl: String): String? =
+        parsePageContext(html, pageUrl)?.postId
+
+    internal fun isSeriesPage(html: String): Boolean {
+        val document = Jsoup.parse(html)
+        return document.selectFirst("meta[property=og:type]")?.attr("content")
+            .equals("video.tv_series", true) || seriesInitPattern.containsMatchIn(html) ||
+            document.selectFirst("#simple-episodes-tabs, #simple-seasons-tabs") != null ||
+            document.select(".b-simple_episode__item").isNotEmpty()
+    }
+
+    internal fun resolveEpisodeIds(
+        response: JSONObject,
+        wantedSeason: Int,
+        wantedEpisode: Int,
+        fallbackSeasonId: String? = null,
+        fallbackEpisodeId: String? = null
+    ): HdRezkaEpisodeIds? {
+        val seasonsHtml = response.optString("seasons")
+            .ifBlank { response.optJSONObject("data")?.optString("seasons").orEmpty() }
+        val episodesHtml = response.optString("episodes")
+            .ifBlank { response.optJSONObject("data")?.optString("episodes").orEmpty() }
+        if (episodesHtml.isBlank()) {
+            return if (wantedSeason == 1 && wantedEpisode == 1 &&
+                fallbackSeasonId?.matches(Regex("[0-9]{1,12}")) == true &&
+                fallbackEpisodeId?.matches(Regex("[0-9]{1,12}")) == true
+            ) HdRezkaEpisodeIds(fallbackSeasonId, fallbackEpisodeId) else null
+        }
+        val seasonTabs = Jsoup.parse("<ul>$seasonsHtml</ul>").select(".b-simple_season__item")
+        val seasonTab = seasonTabs.firstOrNull { tab ->
+            Regex("\\d+").find(tab.text())?.value?.toIntOrNull() == wantedSeason
+        } ?: seasonTabs.getOrNull(wantedSeason - 1)
+        val preferredSeasonId = seasonTab?.attr("data-tab_id")
+            ?.takeIf { it.matches(Regex("[0-9]{1,12}")) }
+        val items = Jsoup.parse("<div>$episodesHtml</div>")
+            .select(".b-simple_episode__item[data-season_id][data-episode_id]")
+        if (items.isEmpty()) return null
+        val availableSeasonIds = items.map { it.attr("data-season_id") }.distinct()
+        val seasonId = preferredSeasonId?.takeIf(availableSeasonIds::contains)
+            ?: if (availableSeasonIds.contains(wantedSeason.toString())) wantedSeason.toString()
+            else availableSeasonIds.getOrNull(wantedSeason - 1)
+                ?: fallbackSeasonId?.takeIf(availableSeasonIds::contains)
+                ?: return null
+        val seasonEpisodes = items.filter { it.attr("data-season_id") == seasonId }
+        val selected = seasonEpisodes.firstOrNull { element ->
+            Regex("\\d+").find(element.text())?.value?.toIntOrNull() == wantedEpisode ||
+                element.attr("data-episode-number") == wantedEpisode.toString()
+        } ?: seasonEpisodes.getOrNull(wantedEpisode - 1)
+        if (selected == null) {
+            return if (wantedSeason == 1 && wantedEpisode == 1 && fallbackSeasonId == seasonId &&
+                fallbackEpisodeId?.matches(Regex("[0-9]{1,12}")) == true
+            ) HdRezkaEpisodeIds(seasonId, fallbackEpisodeId) else null
+        }
+        val episodeId = selected.attr("data-episode_id")
+            .takeIf { it.matches(Regex("[0-9]{1,12}")) } ?: return null
+        return HdRezkaEpisodeIds(seasonId, episodeId)
+    }
+
+    internal fun decodeStreamPayload(raw: String): String? {
+        val value = raw.trim()
+        if (value.isBlank()) return null
+        if (!value.startsWith("#")) return value
+        if (value.length > MAX_OBFUSCATED_URL_CHARS || value.length < 4) return null
+
+        var payload = value.substring(2)
+        encodedTrashTokens.forEach { token ->
+            payload = payload.replace("//_//$token", "")
+        }
+        val bytes = runCatching { Base64.getDecoder().decode(payload) }.getOrNull()
+            ?: return null
+        if (bytes.isEmpty() || bytes.size > MAX_OBFUSCATED_URL_CHARS) return null
+        val decoded = bytes.toString(Charsets.UTF_8)
+        if (decoded.any { it.isISOControl() && it != '\t' && it != '\r' && it != '\n' }) {
+            return null
+        }
+        return decoded.takeIf { it.contains("https://", ignoreCase = true) }
+    }
+
+    internal fun parseQualityVariants(raw: String): List<HdRezkaQualityVariant> {
+        val value = decodeStreamPayload(raw) ?: return emptyList()
+        val parsed = value.split(',').mapNotNull { segment ->
+            val match = qualityPattern.matchEntire(segment.trim()) ?: return@mapNotNull null
+            val label = match.groupValues[1].trim().take(64)
+            val urls = match.groupValues[2].split(Regex("""\s+or\s+"""))
+                .map(String::trim)
+                .filter(::isHttpsUrl)
+            // Media3 handles both MP4 and HLS. Prefer a direct MP4 for seeking
+            // compatibility, then HLS, then the first supported HTTPS fallback.
+            val url = urls.firstOrNull { it.substringBefore('?').endsWith(".mp4", true) }
+                ?: urls.firstOrNull { it.substringBefore('?').endsWith(".m3u8", true) }
+                ?: urls.firstOrNull()
+                ?: return@mapNotNull null
+            val numericQuality = Regex("""(?i)([0-9]{3,4})""")
+                .find(label)?.groupValues?.getOrNull(1)
+            val normalizedLabel = numericQuality?.let { "${it}p" } ?: label
+            HdRezkaQualityVariant(normalizedLabel, url)
+        }.distinctBy { it.url }
+        if (parsed.isNotEmpty()) return parsed
+        val direct = directUrlPattern.find(value)?.value?.trim()?.trimEnd(')', ';')
+        return listOfNotNull(direct?.takeIf(::isHttpsUrl)?.let {
+            HdRezkaQualityVariant(null, it)
+        })
+    }
+
+    internal fun parseStreamSources(
+        response: JSONObject,
+        entry: HdRezkaSearchEntry,
+        translator: HdRezkaTranslator,
+        pageUrl: String,
+        episodeLabel: String?
+    ): List<SourceResult> {
+        val data = response.optJSONObject("data") ?: response.optJSONObject("response") ?: response
+        val premium = isPremiumResponse(response) || translator.isPremium
+        if (response.has("success") && !response.optBoolean("success", false)) {
+            if (premium) return listOf(paywallResult(entry, translator, episodeLabel))
+            val message = response.optString("message").replace(Regex("[\\r\\n\\t]+"), " ").take(160)
+            throw IOException(message.ifBlank { "HDRezka не вернула медиапоток для выбранной озвучки" })
+        }
+        val variants = parseQualityVariants(data.optString("url").ifBlank { data.optString("stream") })
+        if (variants.isEmpty()) {
+            if (premium) return listOf(paywallResult(entry, translator, episodeLabel))
+            return emptyList()
+        }
+        val subtitles = parseSubtitles(data)
+        return variants.map { variant ->
+            val title = entry.title + if (episodeLabel.isNullOrBlank()) "" else " • $episodeLabel"
+            SourceResult(
+                id = "hdrezka:${entry.pageUrl.hashCode()}:${translator.id}:${episodeLabel.orEmpty()}:${variant.qualityLabel ?: variant.url.hashCode()}",
+                title = title,
+                providerName = "HDRezka",
+                streamUrl = variant.url,
+                pageUrl = pageUrl,
+                sourceType = MediaSourceType.HDREZKA,
+                qualityLabel = variant.qualityLabel,
+                translationName = translator.name,
+                subtitles = subtitles,
+                requestHeaders = mapOf(
+                    "Referer" to pageUrl,
+                    "User-Agent" to USER_AGENT
+                )
+            )
+        }
+    }
+
+    private fun paywallResult(entry: HdRezkaSearchEntry, translator: HdRezkaTranslator, episodeLabel: String?): SourceResult =
+        SourceResult(
+            id = "hdrezka:${entry.pageUrl.hashCode()}:${translator.id}:${episodeLabel.orEmpty()}:premium",
+            title = entry.title + if (episodeLabel.isNullOrBlank()) "" else " • $episodeLabel",
+            providerName = "HDRezka",
+            pageUrl = entry.pageUrl,
+            sourceType = MediaSourceType.HDREZKA,
+            translationName = translator.name,
+            requiresSubscription = true
+        )
+
+    private fun isPremiumResponse(response: JSONObject): Boolean {
+        val flag = response.opt("premium_content")
+        return when (flag) {
+            is Boolean -> flag
+            is Number -> flag.toInt() == 1
+            is String -> flag == "1" || flag.equals("true", true)
+            else -> false
+        } || response.optString("message").contains("premium", true) ||
+            response.optString("message").contains("преми", true)
+    }
+
+    internal fun parseSubtitles(data: JSONObject): List<MediaSubtitle> {
+        val raw = data.optString("subtitle").ifBlank { data.optString("subtitles") }
+        if (raw.isBlank()) return emptyList()
+        val languages = data.optJSONObject("subtitle_lns") ?: JSONObject()
+        val defaultLanguage = data.optString("subtitle_def").takeIf { it.isNotBlank() }
+        val matcher = Regex("\\[([^\\]]+)](https://[^,\\s]+)", RegexOption.IGNORE_CASE)
+        val parsed = matcher.findAll(raw).mapNotNull { m ->
+            val language = m.groupValues[1].trim().take(12)
+            val url = m.groupValues[2].trim()
+            if (!isHttpsUrl(url)) return@mapNotNull null
+            MediaSubtitle(
+                url = url,
+                mimeType = if (url.substringBefore('?').endsWith(".srt", true)) "application/x-subrip" else "text/vtt",
+                language = language,
+                label = languages.optString(language).takeIf { it.isNotBlank() } ?: language
+            )
+        }.toMutableList()
+        if (parsed.isEmpty()) {
+            directUrlPattern.find(raw)?.value?.let { url ->
+                if (isHttpsUrl(url)) parsed += MediaSubtitle(
+                    url = url,
+                    mimeType = if (url.substringBefore('?').endsWith(".srt", true)) "application/x-subrip" else "text/vtt",
+                    language = defaultLanguage,
+                    label = defaultLanguage?.let { languages.optString(it).ifBlank { it } } ?: "Субтитры"
+                )
+            }
+        }
+        return parsed.distinctBy { it.url }.take(12)
+    }
+
+    private fun ajax(
+        mirror: String,
+        pageUrl: String,
+        settings: HdRezkaSettings,
+        favs: String,
+        fields: Map<String, String>
+    ): JSONObject {
+        val values = LinkedHashMap(fields)
+        values["favs"] = favs
+        val body = values.entries.joinToString("&") { "${encode(it.key)}=${encode(it.value)}" }
+        val text = requestText(
+            mirror, "$mirror/ajax/get_cdn_series/?t=${System.currentTimeMillis()}", "POST", body, pageUrl, settings,
+            "application/x-www-form-urlencoded; charset=UTF-8"
+        )
+        return runCatching { JSONObject(text) }
+            .getOrElse { throw IOException("HDRezka вернула некорректный ответ медиаплеера") }
+    }
+
+    private fun requestText(
+        mirror: String,
+        url: String,
+        method: String,
+        body: String?,
+        referer: String,
+        settings: HdRezkaSettings = HdRezkaSettings(),
+        contentType: String? = null
+    ): String {
+        require(isSameOrigin(url, mirror)) { "HDRezka перенаправила запрос на другой домен; Cookie не отправлена." }
+        var currentUrl = url
+        var currentMethod = method
+        var currentBody = body
+        repeat(MAX_REDIRECTS + 1) {
+            val requestBody = currentBody
+            val uri = URI(currentUrl)
+            val connection = (URL(currentUrl).openConnection() as HttpURLConnection).apply {
+                requestMethod = currentMethod
+                connectTimeout = 10_000
+                readTimeout = 18_000
+                instanceFollowRedirects = false
+                setRequestProperty("Accept", "application/json, text/plain, */*")
+                setRequestProperty("Accept-Language", "ru-RU,ru;q=0.9,en;q=0.8")
+                setRequestProperty("Cache-Control", "no-cache")
+                setRequestProperty("User-Agent", USER_AGENT)
+                setRequestProperty("X-Requested-With", "XMLHttpRequest")
+                setRequestProperty("Origin", mirror)
+                setRequestProperty("Referer", referer)
+                if (HdRezkaLoginClient.hasAuthenticatedCookie(settings.cookie) &&
+                    uri.host.equals(URI(mirror).host, true)
+                ) setRequestProperty("Cookie", settings.cookie)
+                if (requestBody != null) {
+                    doOutput = true
+                    setRequestProperty("Content-Type", contentType ?: "application/x-www-form-urlencoded")
+                }
+            }
+            try {
+                if (requestBody != null) connection.outputStream.use { it.write(requestBody.toByteArray(Charsets.UTF_8)) }
+                val status = connection.responseCode
+                if (status in redirectCodes) {
+                    val location = connection.getHeaderField("Location")
+                        ?: throw IOException("HDRezka вернула перенаправление без адреса")
+                    val next = URL(URL(currentUrl), location).toString()
+                    if (!isSameOrigin(next, mirror)) {
+                        throw IOException("HDRezka перенаправила запрос на другой домен. Автоматический переход запрещён.")
+                    }
+                    if (status in setOf(301, 302, 303)) {
+                        currentMethod = "GET"
+                        currentBody = null
+                    }
+                    currentUrl = next
+                    return@repeat
+                }
+                val stream = if (status in 200..299) connection.inputStream else connection.errorStream
+                val text = (stream?.use { readLimited(it, MAX_RESPONSE_BYTES) } ?: ByteArray(0)).toString(Charsets.UTF_8)
+                if (status == 403 || HdRezkaLoginClient.containsBrowserChallenge(text)) {
+                    throw IOException(
+                        "HDRezka требует браузерную проверку или заблокировала прямой доступ. " +
+                            "Jacket не обходит CAPTCHA/Anubis; откройте сайт обычным браузером."
+                    )
+                }
+                if (status !in 200..299) throw IOException("HDRezka ответила HTTP $status на ${uri.path}")
+                return text
+            } finally {
+                connection.disconnect()
+            }
+        }
+        throw IOException("Слишком много перенаправлений HDRezka")
+    }
+
+    private fun readLimited(input: java.io.InputStream, maxBytes: Int): ByteArray {
+        val output = ByteArrayOutputStream()
+        val buffer = ByteArray(8192)
+        while (true) {
+            val count = input.read(buffer)
+            if (count < 0) break
+            if (output.size() + count > maxBytes) throw IOException("Ответ HDRezka слишком большой")
+            output.write(buffer, 0, count)
+        }
+        return output.toByteArray()
+    }
+
+    private fun isSameOrigin(url: String, mirror: String): Boolean = runCatching {
+        val target = URI(url)
+        val base = URI(mirror)
+        target.scheme.equals("https", true) && target.rawUserInfo == null &&
+            target.host.equals(base.host, true) &&
+            (if (target.port >= 0) target.port else 443) == (if (base.port >= 0) base.port else 443)
+    }.getOrDefault(false)
+
+    private fun isHttpsUrl(value: String): Boolean = runCatching {
+        val uri = URI(value)
+        uri.scheme.equals("https", true) && !uri.host.isNullOrBlank() && uri.rawUserInfo == null
+    }.getOrDefault(false)
+
+    private fun encode(value: String): String = URLEncoder.encode(value, Charsets.UTF_8.name())
+}
+
+END FILE: app/src/main/java/app/jacket/mobile/data/HdRezkaCatalogClient.kt
+
+
+========================================================================================
+FILE: app/src/main/java/app/jacket/mobile/data/HdRezkaLoginClient.kt
+========================================================================================
+
+package app.jacket.mobile.data
+
+import java.io.ByteArrayOutputStream
+import java.io.IOException
+import java.net.CookieManager
+import java.net.CookiePolicy
+import java.net.HttpURLConnection
+import java.net.URI
+import java.net.URL
+import java.net.URLEncoder
+
+data class HdRezkaLoginResult(
+    val activeMirror: String,
+    val cookieHeader: String
+)
+
+/**
+ * Standard HTTPS sign-in for an HDRezka account.
+ *
+ * This client does not spoof TLS fingerprints, solve JavaScript challenges,
+ * bypass CAPTCHA, or retry through proxy networks. If the site presents an
+ * anti-bot challenge, sign-in is reported as unavailable and users may supply
+ * their own session cookie obtained through the normal browser login.
+ */
+object HdRezkaLoginClient {
+    /**
+     * Checks the shape of the standard DLE authentication cookie pair only.
+     * This does not prove that the remote server still accepts the session.
+     */
+    fun hasAuthenticatedCookie(cookieHeader: String): Boolean {
+        if (cookieHeader.isBlank() || cookieHeader.length > 8_192 ||
+            cookieHeader.any { it == '\r' || it == '\n' }
+        ) return false
+        val values = cookieHeader.split(';').mapNotNull { part ->
+            val pair = part.trim().split('=', limit = 2)
+            pair.takeIf { it.size == 2 && it[0].isNotBlank() }
+                ?.let { it[0].trim().lowercase() to it[1].trim() }
+        }.toMap()
+        val userId = values["dle_user_id"].orEmpty()
+        val password = values["dle_password"].orEmpty()
+        return userId.isNotBlank() && userId != "0" && password.isNotBlank()
+    }
+
+    private const val MAX_RESPONSE_BYTES = 512 * 1024
+    private const val MAX_RESPONSE_PREVIEW_BYTES = 64 * 1024
+    private const val MAX_REDIRECTS = 6
+    private val REDIRECT_CODES = setOf(301, 302, 303, 307, 308)
+
+    fun validateMirror(value: String): String {
+        val supplied = value.trim()
+        require(supplied.isNotBlank()) { "Укажите адрес источника HDRezka" }
+        val clean = supplied.trimEnd('/') + "/"
+        val uri = runCatching { URI(clean) }
+            .getOrElse { throw IllegalArgumentException("Некорректный адрес зеркала HDRezka", it) }
+        require(uri.scheme.equals("https", true)) { "Зеркало должно использовать HTTPS" }
+        require(!uri.host.isNullOrBlank() && uri.rawUserInfo == null) {
+            "Укажите HTTPS-домен зеркала без логина и пароля в URL"
+        }
+        val host = uri.host.lowercase().removePrefix("www.")
+        // rezkify.com is a user-reported alternate mirror; keep it as an exact
+        // allowlisted host rather than trusting arbitrary redirect domains.
+        val isRezkaMirror = host == "rezkify.com" ||
+            host.startsWith("hdrezka.") || host.startsWith("hdrezka-") ||
+            host.startsWith("rezka.") || host.startsWith("rezka-") ||
+            host.startsWith("standby-rezka.")
+        require(isRezkaMirror) {
+            "Адрес должен относиться к зеркалу HDRezka"
+        }
+        require(uri.rawQuery.isNullOrBlank() && uri.rawFragment.isNullOrBlank() &&
+            (uri.rawPath.isNullOrBlank() || uri.rawPath == "/")
+        ) { "Укажите только домен зеркала, без пути и параметров" }
+        return clean.trimEnd('/')
+    }
+
+    fun login(mirror: String, username: String, password: String): HdRezkaLoginResult {
+        require(username.isNotBlank()) { "Введите логин или email HDRezka" }
+        require(password.isNotBlank()) { "Введите пароль HDRezka" }
+
+        val initialMirror = validateMirror(mirror)
+        val cookies = CookieManager(null, CookiePolicy.ACCEPT_ALL)
+        // The landing page is only needed for redirects and Set-Cookie headers.
+        // Avoid buffering its often-large HTML during login.
+        val bootstrap = requestFollowingGetRedirects("$initialMirror/", cookies, captureBody = false)
+        val activeBase = validateMirror(originOf(bootstrap.finalUrl))
+
+        val form = listOf(
+            "login_name" to username,
+            "login_password" to password,
+            "login_not_save" to "0",
+            "login" to "submit"
+        ).joinToString("&") { "${encode(it.first)}=${encode(it.second)}" }
+
+        val response = requestFollowingLoginRedirects(
+            startUrl = "$activeBase/ajax/login/?t=${System.currentTimeMillis()}",
+            body = form,
+            cookies = cookies,
+            referer = "$activeBase/"
+        )
+        val confirmedBase = validateMirror(originOf(response.finalUrl))
+        if (response.status == 403 || containsChallenge(response.body)) {
+            throw IOException(
+                "HDRezka показала защитную проверку. Jacket не обходит CAPTCHA или Cloudflare; " +
+                    "войдите через обычный браузер и вставьте свою Cookie-сессию."
+            )
+        }
+        if (response.status !in 200..299) {
+            throw IOException("HDRezka вернула HTTP ${response.status}")
+        }
+
+        val cookieHeader = cookies.get(URI("$confirmedBase/"), emptyMap())
+            .entries.firstOrNull { it.key.equals("Cookie", true) }
+            ?.value.orEmpty().joinToString("; ")
+        if (!hasAuthenticatedCookie(cookieHeader)) {
+            throw IOException("HDRezka не подтвердила вход: сервер не выдал dle_user_id и dle_password.")
+        }
+        return HdRezkaLoginResult(confirmedBase, cookieHeader)
+    }
+
+    /** Checks a mirror without sending account credentials. */
+    fun probeMirror(mirror: String): String {
+        val initialMirror = validateMirror(mirror)
+        val cookies = CookieManager(null, CookiePolicy.ACCEPT_ALL)
+        val response = requestFollowingGetRedirects(
+            "$initialMirror/",
+            cookies,
+            captureBody = true,
+            previewOnly = true
+        )
+        if (containsChallenge(response.body)) {
+            throw IOException("Зеркало доступно, но требует браузерную проверку CAPTCHA/Cloudflare.")
+        }
+        return validateMirror(originOf(response.finalUrl))
+    }
+
+    /** Converts network failures into useful diagnostics without exposing cookies or headers. */
+    fun userFriendlyError(error: Throwable): String {
+        val chain = generateSequence(error) { it.cause }.take(8).toList()
+        return when {
+            chain.any { it is javax.net.ssl.SSLException } ->
+                "Ошибка HTTPS-сертификата HDRezka. Сертификаты не обходятся; проверьте доступность разрешённого источника и правильность домена."
+            chain.any { it is java.net.UnknownHostException } ->
+                "Не удалось найти домен HDRezka. Проверьте зеркало и DNS/доступ к сайту."
+            chain.any { it is java.net.SocketTimeoutException } ->
+                "HDRezka не ответила вовремя. Зеркало перегружено или недоступно из вашей сети."
+            chain.any { it is java.net.ConnectException } ->
+                "Не удалось подключиться к HDRezka. Проверьте доступность зеркала или сеть."
+            else -> error.message?.replace(Regex("[\\r\\n\\t]+"), " ")?.take(240)
+                ?.ifBlank { "Не удалось подключиться к HDRezka." } ?: "Не удалось подключиться к HDRezka."
+        }
+    }
+
+    internal fun loginRedirectMethod(status: Int): String? = when (status) {
+        301, 302, 303 -> "GET"
+        307, 308 -> null
+        else -> ""
+    }
+
+    private data class HttpResult(
+        val status: Int,
+        val finalUrl: String,
+        val body: String,
+        val location: String?
+    )
+
+    private fun requestFollowingLoginRedirects(
+        startUrl: String,
+        body: String,
+        cookies: CookieManager,
+        referer: String
+    ): HttpResult {
+        var currentUrl = startUrl
+        var method = "POST"
+        var currentBody: String? = body
+        var currentReferer = referer
+        repeat(MAX_REDIRECTS + 1) {
+            // The response body is inspected only for anti-bot markers. Do not
+            // download hundreds of kilobytes of a login page just to classify it.
+            val response = request(
+                currentUrl,
+                method,
+                currentBody,
+                cookies,
+                currentReferer,
+                captureBody = true,
+                previewOnly = true
+            )
+            if (response.status !in REDIRECT_CODES) return response
+
+            val location = response.location
+                ?: throw IOException("HDRezka перенаправила вход без адреса (HTTP ${response.status})")
+            val nextUrl = resolveRedirect(currentUrl, location)
+            val nextMethod = loginRedirectMethod(response.status)
+                ?: method.takeIf { sameOrigin(currentUrl, nextUrl) }
+                ?: throw IOException("HDRezka перенаправила вход на другой домен; повторная отправка пароля заблокирована.")
+            if (nextMethod.isEmpty()) {
+                throw IOException("HDRezka вернула неожиданный код перенаправления")
+            }
+            if (nextMethod == "GET") currentBody = null
+            currentUrl = nextUrl
+            method = nextMethod
+            currentReferer = originOf(currentUrl) + "/"
+        }
+        throw IOException("Слишком много перенаправлений при входе в HDRezka")
+    }
+
+    private fun sameOrigin(first: String, second: String): Boolean = runCatching {
+        val a = URI(first)
+        val b = URI(second)
+        a.scheme.equals(b.scheme, true) &&
+            a.host.equals(b.host, true) &&
+            effectivePort(a) == effectivePort(b)
+    }.getOrDefault(false)
+
+    private fun effectivePort(uri: URI): Int =
+        if (uri.port >= 0) uri.port else 443
+
+    internal fun containsBrowserChallenge(body: String): Boolean =
+        body.contains("cf-chl", true) ||
+            body.contains("Just a moment", true) ||
+            body.contains("challenge-platform", true) ||
+            (body.contains("anubis", true) &&
+                (body.contains("Доступ запрещён", true) || body.contains("Access denied", true)))
+
+    private fun containsChallenge(body: String): Boolean = containsBrowserChallenge(body)
+
+    private fun requestFollowingGetRedirects(
+        startUrl: String,
+        cookies: CookieManager,
+        captureBody: Boolean = true,
+        previewOnly: Boolean = false
+    ): HttpResult {
+        var currentUrl = startUrl
+        repeat(MAX_REDIRECTS + 1) {
+            val response = request(
+                currentUrl, "GET", null, cookies, currentUrl,
+                captureBody = captureBody, previewOnly = previewOnly
+            )
+            if (response.status in setOf(301, 302, 303, 307, 308)) {
+                val location = response.location
+                    ?: throw IOException("HDRezka вернула перенаправление без адреса")
+                currentUrl = resolveRedirect(currentUrl, location)
+            } else {
+                if (response.status == 403 || containsChallenge(response.body)) {
+                    throw IOException("HDRezka требует браузерную проверку. Автоматический обход не выполняется.")
+                }
+                if (response.status !in 200..299) {
+                    throw IOException("Не удалось определить рабочее зеркало HDRezka: HTTP ${response.status}")
+                }
+                return response
+            }
+        }
+        throw IOException("Слишком много перенаправлений при поиске зеркала HDRezka")
+    }
+
+    private fun request(
+        url: String,
+        method: String,
+        body: String?,
+        cookies: CookieManager,
+        referer: String,
+        captureBody: Boolean = true,
+        previewOnly: Boolean = false
+    ): HttpResult {
+        val uri = URI(url)
+        validateMirror(originOf(url))
+        val connection = (URL(url).openConnection() as HttpURLConnection).apply {
+            requestMethod = method
+            connectTimeout = 12_000
+            readTimeout = 15_000
+            instanceFollowRedirects = false
+            setRequestProperty("Accept", "application/json, text/plain, */*")
+            setRequestProperty("Cache-Control", "no-cache")
+            setRequestProperty("Accept-Language", "ru-RU,ru;q=0.9,en;q=0.8")
+            setRequestProperty("User-Agent", "Jacket-Android/2.6")
+            setRequestProperty("Referer", referer)
+            setRequestProperty("X-Requested-With", "XMLHttpRequest")
+            setRequestProperty("Origin", originOf(url))
+            cookies.get(uri, emptyMap()).forEach { (name, values) ->
+                if (name.equals("Cookie", true)) setRequestProperty(name, values.joinToString("; "))
+            }
+            if (body != null) {
+                doOutput = true
+                setRequestProperty("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8")
+            }
+        }
+        try {
+            if (body != null) {
+                connection.outputStream.use { it.write(body.toByteArray(Charsets.UTF_8)) }
+            }
+            val status = connection.responseCode
+            val responseHeaders = connection.headerFields.entries
+                .filter { it.key != null }
+                .associate { it.key!! to it.value.orEmpty() }
+            cookies.put(uri, responseHeaders)
+            // Redirect and mirror-bootstrap bodies are not needed to resolve the
+            // active host. Skipping them avoids buffering the full HDRezka homepage.
+            val shouldReadBody = captureBody && status !in REDIRECT_CODES
+            val stream = if (status in 200..299) connection.inputStream else connection.errorStream
+            val bytes = if (!shouldReadBody) {
+                ByteArray(0)
+            } else {
+                stream?.use { input ->
+                    if (previewOnly) {
+                        readResponsePreview(input, MAX_RESPONSE_PREVIEW_BYTES)
+                    } else {
+                        readResponseBody(input, MAX_RESPONSE_BYTES)
+                    }
+                } ?: ByteArray(0)
+            }
+            return HttpResult(
+                status = status,
+                finalUrl = connection.url.toString(),
+                body = bytes.toString(Charsets.UTF_8),
+                location = connection.getHeaderField("Location")
+            )
+        } finally {
+            connection.disconnect()
+        }
+    }
+
+    internal fun readResponsePreview(input: java.io.InputStream, maxBytes: Int): ByteArray {
+        require(maxBytes > 0)
+        val output = ByteArrayOutputStream()
+        val buffer = ByteArray(8_192)
+        while (output.size() < maxBytes) {
+            val count = input.read(buffer, 0, minOf(buffer.size, maxBytes - output.size()))
+            if (count < 0) break
+            if (count > 0) output.write(buffer, 0, count)
+        }
+        return output.toByteArray()
+    }
+
+    private fun readResponseBody(input: java.io.InputStream, maxBytes: Int): ByteArray {
+        input.use { source ->
+            val output = ByteArrayOutputStream()
+            val buffer = ByteArray(8_192)
+            while (true) {
+                val count = source.read(buffer)
+                if (count < 0) break
+                if (output.size() + count > maxBytes) throw IOException("Ответ HDRezka слишком большой")
+                output.write(buffer, 0, count)
+            }
+            return output.toByteArray()
+        }
+    }
+
+    private fun resolveRedirect(baseUrl: String, location: String): String {
+        val resolved = URL(URL(baseUrl), location).toString()
+        validateMirror(originOf(resolved))
+        return resolved
+    }
+
+    private fun originOf(value: String): String {
+        val uri = URI(value)
+        return "${uri.scheme}://${uri.rawAuthority}"
+    }
+
+    private fun encode(value: String): String =
+        URLEncoder.encode(value, Charsets.UTF_8.name()).replace("+", "%20")
+}
+
+END FILE: app/src/main/java/app/jacket/mobile/data/HdRezkaLoginClient.kt
+
+
+========================================================================================
+FILE: app/src/main/java/app/jacket/mobile/data/IndexerErrorSanitizer.kt
+========================================================================================
+
+package app.jacket.mobile.data
+
+import java.net.URI
+
+/**
+ * Sanitizes diagnostics before they reach toasts, status labels or logs.
+ * Credentials configured for a provider are redacted even if they occur in
+ * path segments or an unusual query parameter name.
+ */
+internal object IndexerErrorSanitizer {
+    private val sensitiveParameter = Regex(
+        "(?i)(apikey|api[_-]?key|jackett[_-]?apikey|access[_-]?token|token|password|passwd|pwd|secret|cookie|authorization|auth)=([^&\\s#]+)"
+    )
+    private val sensitiveHeader = Regex("(?i)\\b(authorization|cookie|x-api-key)\\s*:\\s*[^\\r\\n]*")
+    private val basicCredentials = Regex("(?i)\\bBasic\\s+[A-Za-z0-9+/=]+")
+    private val bearerCredentials = Regex("(?i)\\bBearer\\s+[A-Za-z0-9._~+/-]+=*")
+    private val url = Regex("""(?i)https?://[^\s<>"']+""")
+    private val whitespace = Regex("[\\r\\n\\t]+")
+
+    fun sanitize(error: Throwable, configuredSecrets: Collection<String> = emptyList()): String {
+        val messages = generateSequence(error) { it.cause }
+            .take(8)
+            .mapNotNull { it.message }
+            .toList()
+        return sanitize(messages.joinToString(": ").ifBlank { error.javaClass.simpleName }, configuredSecrets)
+    }
+
+    fun sanitize(rawMessage: String, configuredSecrets: Collection<String> = emptyList()): String {
+        var safe = rawMessage
+        configuredSecrets.asSequence()
+            .filter { it.isNotBlank() && it.length >= 3 }
+            .distinct()
+            .sortedByDescending(String::length)
+            .forEach { secret -> safe = safe.replace(secret, "[redacted]") }
+
+        safe = sensitiveParameter.replace(safe) { "${it.groupValues[1]}=[redacted]" }
+        safe = sensitiveHeader.replace(safe) { "${it.groupValues[1]}: [redacted]" }
+        safe = basicCredentials.replace(safe, "Basic [redacted]")
+        safe = bearerCredentials.replace(safe, "Bearer [redacted]")
+        safe = url.replace(safe) { match ->
+            val candidate = match.value.trimEnd('.', ',', ')', ']', ';')
+            val suffix = match.value.substring(candidate.length)
+            val authority = runCatching {
+                // Parse only scheme + authority. The path may already contain
+                // [redacted] markers, which are not legal URI path characters.
+                val parts = Regex("(?i)^(https?)://([^/?#]+)").find(candidate)
+                    ?: return@runCatching "[URL]"
+                val scheme = parts.groupValues[1].lowercase()
+                val rawAuthority = parts.groupValues[2].substringAfterLast('@')
+                val uri = URI("$scheme://$rawAuthority")
+                val host = uri.host ?: return@runCatching "[URL]"
+                val port = if (uri.port >= 0) ":${uri.port}" else ""
+                val queryMarker = if (candidate.contains('?')) "/?[redacted]" else ""
+                "$scheme://$host$port$queryMarker"
+            }.getOrDefault("[URL]")
+            authority + suffix
+        }
+        return safe.replace(whitespace, " ").trim().take(180)
+    }
+}
+
+END FILE: app/src/main/java/app/jacket/mobile/data/IndexerErrorSanitizer.kt
+
+
+========================================================================================
+FILE: app/src/main/java/app/jacket/mobile/data/IndexerRegistry.kt
+========================================================================================
+
+package app.jacket.mobile.data
+
+import org.xmlpull.v1.XmlPullParserFactory
+import org.xmlpull.v1.XmlPullParser
+import java.io.ByteArrayOutputStream
+import java.io.IOException
+import java.net.HttpURLConnection
+import java.net.URL
+import java.util.concurrent.Callable
+import java.util.concurrent.Executors
+import java.util.concurrent.Future
+import java.util.concurrent.TimeUnit
+
+/**
+ * Pluggable direct indexer federation. Supports user-configured RSS/Atom and Torznab/Newznab
+ * endpoints without running a separate Jackett service. Credentials are supplied only over HTTPS.
+ */
+class IndexerRegistry(
+    private val catalog: MediaCatalogClient = MediaCatalogClient()
+) {
+    private data class SearchTask(
+        val indexerId: String,
+        val indexerName: String,
+        val config: IndexerConfig?,
+        val future: Future<Result<List<SourceResult>>>
+    )
+
+    fun search(
+        query: String,
+        customIndexers: List<IndexerConfig>,
+        includeArchive: Boolean = true
+    ): List<SourceResult> = searchDetailed(query, customIndexers, includeArchive).results
+
+    /** Runs no more than four source requests concurrently; one failed provider never cancels peers. */
+    fun searchDetailed(
+        query: String,
+        customIndexers: List<IndexerConfig>,
+        includeArchive: Boolean = true
+    ): IndexerSearchOutcome {
+        val active = customIndexers.asSequence()
+            .filter { it.enabled }
+            .take(MAX_INDEXERS)
+            .toList()
+        val executor = Executors.newFixedThreadPool(MAX_PARALLEL_REQUESTS)
+        try {
+            val tasks = buildList {
+                if (includeArchive) {
+                    add(
+                        SearchTask(
+                            indexerId = "archive",
+                            indexerName = "Internet Archive",
+                            config = null,
+                            future = executor.submit(Callable {
+                                runCatching { catalog.archiveSources(query) }
+                            })
+                        )
+                    )
+                }
+                active.forEach { config ->
+                    add(
+                        SearchTask(
+                            indexerId = config.id,
+                            indexerName = config.name,
+                            config = config,
+                            future = executor.submit(Callable {
+                                runCatching { searchFeed(config, query) }
+                            })
+                        )
+                    )
+                }
+            }
+
+            val results = ArrayList<SourceResult>()
+            val failures = ArrayList<IndexerFailure>()
+            tasks.forEach { task ->
+                try {
+                    val result = task.future.get()
+                    result.onSuccess(results::addAll).onFailure { error ->
+                        failures += IndexerFailure(
+                            indexerId = task.indexerId,
+                            indexerName = task.indexerName,
+                            message = safeError(error, task.config)
+                        )
+                    }
+                } catch (error: Exception) {
+                    failures += IndexerFailure(
+                        task.indexerId,
+                        task.indexerName,
+                        safeError(error, task.config)
+                    )
+                }
+            }
+
+            return IndexerSearchOutcome(orderResults(results), failures)
+        } finally {
+            executor.shutdownNow()
+            runCatching { executor.awaitTermination(250, TimeUnit.MILLISECONDS) }
+        }
+    }
+
+    fun searchOne(config: IndexerConfig, query: String): List<SourceResult> {
+        require(config.enabled) { "Индексатор отключён" }
+        require(query.isNotBlank()) { "Введите поисковый запрос" }
+        return try {
+            searchFeed(config, query.trim())
+        } catch (error: Exception) {
+            throw IOException(safeError(error, config))
+        }
+    }
+
+    /** A valid empty response still means that the authenticated indexer is reachable. */
+    fun test(config: IndexerConfig): Int {
+        val probeConfig = if (config.protocol == IndexerProtocol.JACKETT) {
+            val parsed = JackettUrl.parseTemplate(config.searchUrlTemplate)
+                ?: throw IOException("Некорректный URL Jackett")
+            config.copy(searchUrlTemplate = JackettUrl.capabilitiesTemplate(parsed.baseUrl, parsed.indexer))
+        } else config
+        return try {
+            searchFeed(probeConfig, "jacket-connectivity-test").size
+        } catch (error: Exception) {
+            throw IOException(safeError(error, config))
+        }
+    }
+
+    fun testAll(configs: List<IndexerConfig>): List<IndexerFailure> {
+        val executor = Executors.newFixedThreadPool(MAX_PARALLEL_REQUESTS)
+        try {
+            val futures = configs.filter { it.enabled }.take(MAX_INDEXERS).map { config ->
+                config to executor.submit(Callable { runCatching { test(config) } })
+            }
+            return futures.mapNotNull { (config, future) ->
+                val result = runCatching { future.get() }.getOrElse {
+                    Result.failure(it)
+                }
+                result.exceptionOrNull()?.let { IndexerFailure(config.id, config.name, safeError(it, config)) }
+            }
+        } finally {
+            executor.shutdownNow()
+            runCatching { executor.awaitTermination(250, TimeUnit.MILLISECONDS) }
+        }
+    }
+
+    internal fun parseFeedXml(xml: String, config: IndexerConfig): List<SourceResult> =
+        parseFeed(xml.toByteArray(Charsets.UTF_8), config, newXmlParser())
+
+    /** Parser injection keeps RSS/Torznab fixtures testable without Android framework classes. */
+    internal fun parseFeedXml(xml: String, config: IndexerConfig, parser: XmlPullParser): List<SourceResult> =
+        parseFeed(xml.toByteArray(Charsets.UTF_8), config, parser)
+
+    internal fun orderResults(results: List<SourceResult>): List<SourceResult> =
+        results
+            .distinctBy { it.magnetUri ?: it.downloadUrl ?: it.streamUrl ?: it.id }
+            .sortedWith(compareByDescending<SourceResult> { it.seeders ?: -1 }.thenBy { it.title.lowercase() })
+            .take(MAX_TOTAL_RESULTS)
+
+    private fun searchFeed(config: IndexerConfig, query: String): List<SourceResult> {
+        val requestUrl = buildRequestUrl(config, query)
+        val uri = runCatching { java.net.URI(requestUrl) }.getOrElse { throw IOException("Некорректный URL индексатора", it) }
+        if (!LocalNetwork.isAllowedUrl(requestUrl)) {
+            throw IOException("Источник «${config.name}» должен использовать HTTPS или локальный HTTP без логина в URL")
+        }
+
+        val connection = (URL(requestUrl).openConnection() as HttpURLConnection).apply {
+            requestMethod = "GET"
+            connectTimeout = CONNECT_TIMEOUT_MS
+            readTimeout = READ_TIMEOUT_MS
+            instanceFollowRedirects = false
+            setRequestProperty("Accept", "application/rss+xml, application/atom+xml, application/xml, text/xml")
+            setRequestProperty("User-Agent", USER_AGENT)
+            if (config.username.isNotBlank() || config.password.isNotBlank()) {
+                val credentials = "${config.username}:${config.password}"
+                val encoded = java.util.Base64.getEncoder().encodeToString(credentials.toByteArray(Charsets.UTF_8))
+                setRequestProperty("Authorization", "Basic $encoded")
+            }
+            if (config.cookie.isNotBlank()) setRequestProperty("Cookie", config.cookie.take(4096))
+            if (config.apiKey.isNotBlank()) setRequestProperty("X-Api-Key", config.apiKey.take(512))
+        }
+        val body = try {
+            val status = connection.responseCode
+            if (status !in 200..299) throw IOException("HTTP $status от ${config.name}")
+            connection.inputStream.use { input ->
+                val output = ByteArrayOutputStream()
+                val buffer = ByteArray(8192)
+                var total = 0
+                while (true) {
+                    val count = input.read(buffer)
+                    if (count < 0) break
+                    total += count
+                    if (total > MAX_FEED_BYTES) throw IOException("Ответ ${config.name} слишком большой")
+                    output.write(buffer, 0, count)
+                }
+                output.toByteArray()
+            }
+        } finally {
+            connection.disconnect()
+        }
+        return parseFeed(body, config)
+    }
+
+    private fun buildRequestUrl(config: IndexerConfig, query: String): String {
+        val template = config.searchUrlTemplate
+        val substituted = template
+            .replace("{query}", urlEncode(query))
+            .replace("{apikey}", urlEncode(config.apiKey))
+        val uri = runCatching { java.net.URI(substituted) }
+            .getOrElse { throw IOException("Некорректный URL индексатора", it) }
+        if (!LocalNetwork.isAllowedUrl(substituted)) {
+            throw IOException("Индексатор должен использовать HTTPS или локальный HTTP без логина в URL")
+        }
+
+        val queryParts = uri.rawQuery.orEmpty().split('&').filter(String::isNotBlank).toMutableList()
+        val existingNames = queryParts.mapTo(HashSet()) { part ->
+            runCatching { java.net.URLDecoder.decode(part.substringBefore('='), Charsets.UTF_8.name()) }
+                .getOrDefault(part.substringBefore('='))
+                .lowercase()
+        }
+        fun appendIfMissing(key: String, value: String?) {
+            if (!value.isNullOrBlank() && key.lowercase() !in existingNames) {
+                queryParts += "${urlEncode(key)}=${urlEncode(value)}"
+                existingNames += key.lowercase()
+            }
+        }
+
+        appendIfMissing("apikey", config.apiKey.takeIf { it.isNotBlank() && "{apikey}" !in template })
+        if (config.protocol == IndexerProtocol.TORZNAB || config.protocol == IndexerProtocol.JACKETT) {
+            appendIfMissing("t", "search")
+            appendIfMissing("cat", config.categories)
+            appendIfMissing("tag", config.tags)
+            appendIfMissing("sort", config.sortBy)
+            appendIfMissing("order", config.sortOrder)
+            if (config.freeleechOnly) appendIfMissing("freeleech", "1")
+        }
+        return buildString {
+            append(uri.scheme).append("://").append(uri.rawAuthority)
+            if (!uri.rawPath.isNullOrEmpty()) append(uri.rawPath)
+            if (queryParts.isNotEmpty()) append('?').append(queryParts.joinToString("&"))
+            if (!uri.rawFragment.isNullOrEmpty()) append('#').append(uri.rawFragment)
+        }
+    }
+
+    private fun urlEncode(value: String): String =
+        java.net.URLEncoder.encode(value, Charsets.UTF_8.name()).replace("+", "%20")
+
+    private fun newXmlParser(): XmlPullParser =
+        XmlPullParserFactory.newInstance().newPullParser()
+
+    private fun parseFeed(xml: ByteArray, config: IndexerConfig): List<SourceResult> =
+        parseFeed(xml, config, newXmlParser())
+
+    private fun parseFeed(xml: ByteArray, config: IndexerConfig, parser: XmlPullParser): List<SourceResult> {
+        parser.setFeature(XmlPullParser.FEATURE_PROCESS_NAMESPACES, false)
+        runCatching { parser.setFeature(XmlPullParser.FEATURE_PROCESS_DOCDECL, false) }
+        parser.setInput(xml.inputStream(), "UTF-8")
+
+        val result = mutableListOf<SourceResult>()
+        var inEntry = false
+        var title = ""
+        var pageUrl: String? = null
+        var detailsUrl: String? = null
+        var magnet: String? = null
+        var torrentUrl: String? = null
+        var streamUrl: String? = null
+        var tracker: String? = null
+        var size: Long? = null
+        var seeders: Int? = null
+        var leechers: Int? = null
+        var peers: Int? = null
+        var category: String? = null
+        var publishedDate: String? = null
+
+        fun reset() {
+            title = ""
+            pageUrl = null
+            detailsUrl = null
+            magnet = null
+            torrentUrl = null
+            streamUrl = null
+            tracker = null
+            size = null
+            seeders = null
+            leechers = null
+            peers = null
+            category = null
+            publishedDate = null
+        }
+
+        var event = parser.eventType
+        while (event != XmlPullParser.END_DOCUMENT && result.size < MAX_FEED_RESULTS) {
+            when (event) {
+                XmlPullParser.START_TAG -> {
+                    val name = parser.name.substringAfter(':').lowercase()
+                    when (name) {
+                        "error" -> if (!inEntry) {
+                            val code = parser.getAttributeValue(null, "code").orEmpty()
+                            val description = parser.getAttributeValue(null, "description").orEmpty()
+                            throw IOException(
+                                config.name + ": " + description.ifBlank { "ошибка индексатора" } +
+                                    if (code.isBlank()) "" else " (код " + code + ")"
+                            )
+                        }
+                        "item", "entry" -> {
+                            inEntry = true
+                            reset()
+                        }
+                        "title" -> if (inEntry) title = parser.nextText().trim()
+                        "jackettindexer", "prowlarrindexer" -> if (inEntry) {
+                            tracker = parser.nextText().trim().takeIf(String::isNotBlank)
+                        }
+                        "comments" -> if (inEntry) {
+                            detailsUrl = parser.nextText().trim().takeIf(String::isNotBlank)
+                        }
+                        "size" -> if (inEntry) {
+                            size = parser.nextText().trim().toLongOrNull()?.takeIf { it >= 0L }
+                        }
+                        "pubdate", "published", "publishedat", "date" -> if (inEntry) {
+                            publishedDate = parser.nextText().trim().takeIf(String::isNotBlank)?.take(120)
+                        }
+                        "link" -> if (inEntry) {
+                            val href = parser.getAttributeValue(null, "href")
+                            val rel = parser.getAttributeValue(null, "rel")
+                            val value = href?.takeIf(String::isNotBlank) ?: parser.nextText().trim()
+                            val contentType = parser.getAttributeValue(null, "type").orEmpty()
+                            when {
+                                value.startsWith("magnet:", true) -> magnet = value
+                                rel.equals("enclosure", true) &&
+                                    (value.endsWith(".torrent", true) || contentType.contains("bittorrent", true)) ->
+                                    torrentUrl = value
+                                isPlayableVideoUrl(value, contentType) -> streamUrl = value
+                                value.isNotBlank() && pageUrl == null -> pageUrl = value
+                            }
+                        }
+                        "enclosure" -> if (inEntry) {
+                            val value = parser.getAttributeValue(null, "url").orEmpty()
+                            val type = parser.getAttributeValue(null, "type").orEmpty()
+                            when {
+                                value.startsWith("magnet:", true) -> magnet = value
+                                value.endsWith(".torrent", true) || type.contains("bittorrent", true) -> torrentUrl = value
+                                isPlayableVideoUrl(value, type) -> streamUrl = value
+                                value.startsWith("https://") && pageUrl == null -> pageUrl = value
+                            }
+                        }
+                        "content" -> if (inEntry) {
+                            val value = parser.getAttributeValue(null, "url").orEmpty()
+                            val type = parser.getAttributeValue(null, "type").orEmpty()
+                            val medium = parser.getAttributeValue(null, "medium").orEmpty()
+                            if (isPlayableVideoUrl(value, type) || medium.equals("video", ignoreCase = true)) {
+                                if (isHttps(value)) streamUrl = value
+                            }
+                            val fileSize = parser.getAttributeValue(null, "fileSize")?.toLongOrNull()?.takeIf { it >= 0L }
+                            if (size == null) size = fileSize
+                        }
+                        "guid", "id" -> if (inEntry && pageUrl == null) pageUrl = parser.nextText().trim()
+                        "category" -> if (inEntry) {
+                            val value = parser.getAttributeValue(null, "id")
+                                ?: parser.getAttributeValue(null, "term")
+                                ?: parser.nextText()
+                            category = value.trim().takeIf(String::isNotBlank)
+                        }
+                        "attr" -> if (inEntry) {
+                            val attr = parser.getAttributeValue(null, "name")?.lowercase().orEmpty()
+                            val value = parser.getAttributeValue(null, "value")
+                            when (attr) {
+                                "magneturl" -> if (!value.isNullOrBlank()) magnet = value
+                                "seeders" -> seeders = value?.toIntOrNull()?.takeIf { it >= 0 }
+                                "peers" -> peers = value?.toIntOrNull()?.takeIf { it >= 0 }
+                                "leechers" -> leechers = value?.toIntOrNull()?.takeIf { it >= 0 }
+                                "size", "length" -> {
+                                    val parsed = value?.toLongOrNull()?.takeIf { it >= 0L }
+                                    if (parsed != null) size = parsed
+                                }
+                                "category", "categoryid" -> if (!value.isNullOrBlank()) category = value
+                                "pubdate", "publishdate", "published" -> if (!value.isNullOrBlank()) publishedDate = value.take(120)
+                            }
+                        }
+                    }
+                }
+                XmlPullParser.DOCDECL -> throw IOException("XML document type declarations are not supported")
+                XmlPullParser.END_TAG -> {
+                    val name = parser.name.substringAfter(':').lowercase()
+                    if (inEntry && name in setOf("item", "entry")) {
+                        val safeMagnet = magnet?.takeIf { it.startsWith("magnet:", true) }
+                        val safeTorrent = torrentUrl?.takeIf(LocalNetwork::isAllowedUrl)
+                        val safeStream = streamUrl?.takeIf(LocalNetwork::isAllowedUrl)
+                        val safePage = (detailsUrl ?: pageUrl)?.takeIf(LocalNetwork::isAllowedUrl)
+                        if (title.isNotBlank() &&
+                            (safeMagnet != null || safeTorrent != null || safeStream != null || safePage != null)
+                        ) {
+                            result += SourceResult(
+                                id = "${config.id}:${result.size}:${title.hashCode()}",
+                                title = title,
+                                providerName = config.name,
+                                magnetUri = safeMagnet,
+                                downloadUrl = safeTorrent,
+                                streamUrl = safeStream,
+                                sizeBytes = size,
+                                seeders = seeders,
+                                leechers = leechers ?: peers?.let { (it - (seeders ?: 0)).coerceAtLeast(0) },
+                                pageUrl = safePage,
+                                category = category,
+                                indexerId = config.id,
+                                tracker = tracker,
+                                publishedDate = publishedDate
+                            )
+                        }
+                        inEntry = false
+                    }
+                }
+            }
+            event = parser.next()
+        }
+        return result
+    }
+
+    private fun isPlayableVideoUrl(value: String, contentType: String): Boolean {
+        if (!LocalNetwork.isAllowedUrl(value)) return false
+        val mime = contentType.substringBefore(';').trim().lowercase()
+        if (mime.startsWith("video/") || mime in PLAYLIST_MIME_TYPES) return true
+        val path = runCatching { java.net.URI(value).rawPath.orEmpty().lowercase() }.getOrDefault("")
+        return VIDEO_EXTENSIONS.any { extension -> path.endsWith(extension) }
+    }
+
+    private fun isHttps(value: String): Boolean = runCatching {
+        val uri = java.net.URI(value)
+        uri.scheme.equals("https", true) && !uri.host.isNullOrBlank() && uri.rawUserInfo == null
+    }.getOrDefault(false)
+
+    private fun safeError(error: Throwable, config: IndexerConfig? = null): String =
+        IndexerErrorSanitizer.sanitize(
+            error,
+            listOfNotNull(config?.apiKey, config?.cookie, config?.username, config?.password)
+        )
+
+    private companion object {
+        const val MAX_INDEXERS = 100
+        const val MAX_PARALLEL_REQUESTS = 4
+        const val MAX_TOTAL_RESULTS = 200
+        const val MAX_FEED_RESULTS = 100
+        const val MAX_FEED_BYTES = 4 * 1024 * 1024
+        val PLAYLIST_MIME_TYPES = setOf(
+            "application/vnd.apple.mpegurl",
+            "application/x-mpegurl",
+            "application/dash+xml"
+        )
+        val VIDEO_EXTENSIONS = setOf(
+            ".m3u8", ".mpd", ".mp4", ".m4v", ".mov", ".webm", ".mkv", ".ogv"
+        )
+        const val CONNECT_TIMEOUT_MS = 10_000
+        const val READ_TIMEOUT_MS = 25_000
+        const val USER_AGENT = "JacketAndroid/2.1 (direct indexer federation)"
+    }
+}
+
+END FILE: app/src/main/java/app/jacket/mobile/data/IndexerRegistry.kt
