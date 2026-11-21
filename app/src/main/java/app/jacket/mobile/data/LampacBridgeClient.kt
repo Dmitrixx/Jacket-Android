@@ -33,11 +33,14 @@ object LampacBridgeClient {
         require(supplied.isNotBlank()) { "Укажите адрес своего Lampac-сервера" }
         val uri = runCatching { URI(supplied) }
             .getOrElse { throw IllegalArgumentException("Некорректный URL Lampac", it) }
-        require(uri.scheme.equals("https", true) || uri.scheme.equals("http", true)) {
-            "Lampac должен использовать HTTPS или HTTP в локальной сети"
-        }
         require(!uri.host.isNullOrBlank() && uri.rawUserInfo == null) {
             "Укажите адрес сервера без логина и пароля в URL"
+        }
+        val isHttps = uri.scheme.equals("https", true)
+        val isLoopbackHttp = uri.scheme.equals("http", true) &&
+            uri.host.equals("127.0.0.1", true)
+        require(isHttps || isLoopbackHttp) {
+            "Для удалённого Lampac нужен HTTPS. HTTP разрешён только для 127.0.0.1."
         }
         require(uri.rawQuery.isNullOrBlank() && uri.rawFragment.isNullOrBlank() &&
             (uri.rawPath.isNullOrBlank() || uri.rawPath == "/")
