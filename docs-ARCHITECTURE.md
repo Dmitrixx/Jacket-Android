@@ -1,4 +1,4 @@
-# Jacket 2.6.0 — architecture
+# Jacket 2.7.0 — architecture
 
 ## Runtime layout
 
@@ -91,7 +91,7 @@ The registry intentionally does not include tracker-specific HTML parsers or sol
 
 ### Queue and recovery
 
-- Queue serialization uses `TorrentQueueCodec`, independent from the native library. Older JSON queue records are migrated.
+- Queue serialization uses `TorrentQueueCodec`, independent from the native library. V2 decoding skips malformed individual rows instead of losing the whole queue; legacy JSON migration is bounded, derives magnet IDs from their URI, validates metainfo paths, and deduplicates canonical IDs before writing V2. Encoded queue data is capped at 8 MiB.
 - Queue metadata includes ID, title, magnet or private `.torrent` path, and selected file index. Queue and pause-state mutations use synchronous SharedPreferences commits on the service IO dispatcher before native session mutations are acknowledged.
 - Native fast-resume data is written under `filesDir/torrent-resume` using `AtomicFile`. Restore uses `AtomicFile.openRead()` (not direct `File.readBytes()`) so an interrupted write rolls back to the last committed backup. Checkpoint reads, writes and deletes are serialized on the engine monitor; oversized or invalid snapshots are removed together with stale backups, then the durable queue falls back to the saved metainfo or magnet URI.
 - Resume data is requested periodically (about every 30 seconds) and after pause; queue entries provide a re-add fallback if resume data is not yet present.
