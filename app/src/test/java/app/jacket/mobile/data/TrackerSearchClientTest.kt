@@ -134,4 +134,61 @@ class TrackerSearchClientTest {
         assertTrue(message.contains("браузерную проверку"))
         assertTrue(message.contains("обход защиты не выполняется"))
     }
+
+    @Test
+    fun trackerAdapterRejectsLocalNonPublicAndUnsafeUrls() {
+        listOf(
+            "https://rutracker.org/forum/tracker.php",
+            "https://8.8.8.8/search",
+            "https://[2001:4860:4860::8888]/search",
+            "https://[::1]/search",
+            "https://[fe80::1]/search",
+            "https://[fc00::1]/search",
+            "https://[fd12:3456::1]/search",
+            "https://[ff02::1]/search",
+            "https://[2001:db8::1]/search"
+        ).forEach { assertTrue("Expected public HTTPS URL to be allowed: $it", TrackerSearchClient.isSafeTrackerRequestUrl(it)) }
+
+        listOf(
+            "http://rutracker.org/search",
+            "https://localhost/search",
+            "https://127.0.0.1/search",
+            "https://127.1/search",
+            "https://2130706433/search",
+            "https://192.168.1.10/search",
+            "https://10.0.0.2/search",
+            "https://172.16.1.2/search",
+            "https://169.254.169.254/search",
+            "https://100.64.0.1/search",
+            "https://224.0.0.1/search",
+            "https://192.0.2.1/search",
+            "https://198.18.0.1/search",
+            "https://[::1]/search",
+            "https://[fc00::1]/search",
+            "https://[fe80::1]/search",
+            "https://[::ffff:127.0.0.1]/search",
+            "https://[2001:db8::1]/search",
+            "https://tracker.local/search",
+            "https://server.internal/search",
+            "https://nas/search",
+            "https://user:pass@rutracker.org/search",
+            "https://rutracker.org/search#results"
+        ).forEach { assertFalse("Expected unsafe URL to be rejected: $it", TrackerSearchClient.isSafeTrackerRequestUrl(it)) }
+    }
+
+
+    @Test
+    fun listingDoesNotExposePrivateTorrentDownloadLinks() {
+        val html = """
+            <html><body><table><tr><td>
+                <a href="https://192.168.1.20/download.torrent">private download</a>
+            </td></tr></table></body></html>
+        """.trimIndent()
+        val results = TrackerSearchClient.parseListing(
+            html,
+            "https://rutracker.org/forum/tracker.php?nm=film",
+            "tracker-rutracker"
+        )
+        assertTrue(results.isEmpty())
+    }
 }
