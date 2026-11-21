@@ -424,7 +424,10 @@ object TrackerSearchClient {
         if (host.contains(':') && (
                 host == "::" || host == "::1" ||
                 host.startsWith("::ffff:") ||
-                host.startsWith("fe80", ignoreCase = true) ||
+                host.startsWith("fe8", ignoreCase = true) ||
+                host.startsWith("fe9", ignoreCase = true) ||
+                host.startsWith("fea", ignoreCase = true) ||
+                host.startsWith("feb", ignoreCase = true) ||
                 host.startsWith("fc", ignoreCase = true) ||
                 host.startsWith("fd", ignoreCase = true) ||
                 host.startsWith("2001:db8", ignoreCase = true) ||

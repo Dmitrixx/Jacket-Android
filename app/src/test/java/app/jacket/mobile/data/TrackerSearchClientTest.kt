@@ -140,13 +140,7 @@ class TrackerSearchClientTest {
         listOf(
             "https://rutracker.org/forum/tracker.php",
             "https://8.8.8.8/search",
-            "https://[2001:4860:4860::8888]/search",
-            "https://[::1]/search",
-            "https://[fe80::1]/search",
-            "https://[fc00::1]/search",
-            "https://[fd12:3456::1]/search",
-            "https://[ff02::1]/search",
-            "https://[2001:db8::1]/search"
+            "https://[2001:4860:4860::8888]/search"
         ).forEach { assertTrue("Expected public HTTPS URL to be allowed: $it", TrackerSearchClient.isSafeTrackerRequestUrl(it)) }
 
         listOf(
@@ -168,6 +162,10 @@ class TrackerSearchClientTest {
             "https://[fe80::1]/search",
             "https://[::ffff:127.0.0.1]/search",
             "https://[2001:db8::1]/search",
+            "https://[fd12:3456::1]/search",
+            "https://[ff02::1]/search",
+            "https://[fe90::1]/search",
+            "https://[febf::1]/search",
             "https://tracker.local/search",
             "https://server.internal/search",
             "https://nas/search",
