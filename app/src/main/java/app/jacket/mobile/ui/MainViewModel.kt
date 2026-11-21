@@ -785,6 +785,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     it.id == current.id &&
                         it.protocol == app.jacket.mobile.data.IndexerProtocol.JACKETT
                 } ?: throw IOException("Настройки Jackett изменились во время входа. Повторите попытку.")
+                val latestBase = JackettUrl.parseTemplate(latest.searchUrlTemplate)?.baseUrl
+                if (latestBase != base) {
+                    throw IOException("Адрес Jackett изменился во время входа. Cookie не сохранён.")
+                }
                 settings.saveIndexer(latest.copy(cookie = cookie))
                 _customIndexers.value = settings.indexers()
                 _jackettLoginStatus.value = "Вход подтверждён. Сессионный Cookie сохранён в зашифрованном виде."
