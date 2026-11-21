@@ -2203,6 +2203,9 @@ private fun SettingsScreen(
     var hdMirror by remember(hdRezkaSettings.mirror) {
         mutableStateOf(hdRezkaSettings.mirror)
     }
+    var hdAllowCustomMirror by remember(hdRezkaSettings.allowCustomMirror) {
+        mutableStateOf(hdRezkaSettings.allowCustomMirror)
+    }
     var hdLogin by remember(hdRezkaSettings.login) { mutableStateOf(hdRezkaSettings.login) }
     var hdPassword by remember(hdRezkaSettings.password) { mutableStateOf(hdRezkaSettings.password) }
     var hdCookie by remember(hdRezkaSettings.cookie) { mutableStateOf(hdRezkaSettings.cookie) }
@@ -2701,6 +2704,23 @@ private fun SettingsScreen(
                                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
                                 singleLine = true
                             )
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Checkbox(
+                                    checked = hdAllowCustomMirror,
+                                    onCheckedChange = { hdAllowCustomMirror = it }
+                                )
+                                Column(Modifier.weight(1f)) {
+                                    Text("Доверяю собственному HTTPS-зеркалу")
+                                    Text(
+                                        "Включайте только для домена, которым вы управляете. Пароль и Cookie отправляются только на этот домен; перенаправления на другие домены блокируются.",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
                             OutlinedTextField(
                                 value = hdLogin,
                                 onValueChange = { hdLogin = it },
@@ -2724,7 +2744,8 @@ private fun SettingsScreen(
                                         HdRezkaSettings(
                                             mirror = hdMirror,
                                             login = hdLogin,
-                                            password = hdPassword
+                                            password = hdPassword,
+                                            allowCustomMirror = hdAllowCustomMirror
                                         )
                                     )
                                 },
@@ -2776,7 +2797,8 @@ private fun SettingsScreen(
                                             mirror = hdMirror,
                                             login = hdLogin,
                                             password = hdPassword,
-                                            cookie = hdCookie
+                                            cookie = hdCookie,
+                                            allowCustomMirror = hdAllowCustomMirror
                                         )
                                     )
                                 },
@@ -2794,7 +2816,7 @@ private fun SettingsScreen(
                                 OutlinedButton(
                                     onClick = {
                                         runCatching {
-                                            openExternal(context, HdRezkaLoginClient.validateMirror(hdMirror))
+                                            openExternal(context, HdRezkaLoginClient.validateMirror(hdMirror, hdAllowCustomMirror))
                                         }.onFailure {
                                             Toast.makeText(context, it.message ?: "Некорректное зеркало", Toast.LENGTH_LONG).show()
                                         }
@@ -2803,7 +2825,7 @@ private fun SettingsScreen(
                                 ) { Text("Открыть зеркало") }
                             }
                             OutlinedButton(
-                                onClick = { viewModel.checkHdRezkaMirror(hdMirror) },
+                                onClick = { viewModel.checkHdRezkaMirror(hdMirror, hdAllowCustomMirror) },
                                 modifier = Modifier.fillMaxWidth(),
                                 enabled = !isHdRezkaBusy && hdMirror.isNotBlank()
                             ) {
