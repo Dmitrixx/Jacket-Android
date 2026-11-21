@@ -42,7 +42,7 @@ class ReleaseHeuristicsTest {
     @Test
     fun detectsScreenCopiesHdrVariantsFreeleechAndRussianDubs() {
         val release = ReleaseHeuristics.classify(
-            "Film.1080p.TS.HDR10+.HLG.10-bit.Freeleech.RHS.Kubik.v.Kube"
+            "Film.1080p.TS.HDR10+.HLG.10-bit.Freeleech.RHS.Кубик в кубе"
         )
         assertTrue(release.sourceTags.contains("TeleSync"))
         assertTrue(release.sourceTags.contains("HDR10+"))
