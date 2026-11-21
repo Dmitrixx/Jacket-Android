@@ -61,11 +61,11 @@ class JackettIndexerClientTest {
                 val body = input.readNBytes(bodySize).toString(Charsets.UTF_8)
                 capturedRequest.add(requestLine to body)
                 val response = (
-                    "HTTP/1.1 302 Found\\r\\n" +
-                        "Set-Cookie: OtherCookie=ignored; Path=/\\r\\n" +
-                        "Set-Cookie: Jackett=session-123; Path=/; HttpOnly\\r\\n" +
-                        "Location: /reverse/Jackett/UI/Dashboard\\r\\n" +
-                        "Content-Length: 0\\r\\nConnection: close\\r\\n\\r\\n"
+                    "HTTP/1.1 302 Found\r\n" +
+                        "Set-Cookie: OtherCookie=ignored; Path=/\r\n" +
+                        "Set-Cookie: Jackett=session-123; Path=/; HttpOnly\r\n" +
+                        "Location: /reverse/Jackett/UI/Dashboard\r\n" +
+                        "Content-Length: 0\r\nConnection: close\r\n\r\n"
                     ).toByteArray(Charsets.ISO_8859_1)
                 socket.getOutputStream().use { output ->
                     output.write(response)
@@ -101,10 +101,10 @@ class JackettIndexerClientTest {
                 val input = BufferedInputStream(socket.getInputStream())
                 while (readHttpLine(input).isNotEmpty()) Unit
                 val response = (
-                    "HTTP/1.1 302 Found\\r\\n" +
-                        "Set-Cookie: OtherCookie=ignored; Path=/\\r\\n" +
-                        "Location: /Jackett/UI/Dashboard\\r\\n" +
-                        "Content-Length: 0\\r\\nConnection: close\\r\\n\\r\\n"
+                    "HTTP/1.1 302 Found\r\n" +
+                        "Set-Cookie: OtherCookie=ignored; Path=/\r\n" +
+                        "Location: /Jackett/UI/Dashboard\r\n" +
+                        "Content-Length: 0\r\nConnection: close\r\n\r\n"
                     ).toByteArray(Charsets.ISO_8859_1)
                 socket.getOutputStream().use { output ->
                     output.write(response)
