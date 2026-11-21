@@ -79,7 +79,9 @@ object TorrentEngine {
     @Volatile private var appContext: Context? = null
     @Volatile private var alertListener: AlertListener? = null
 
-    private data class ActiveStreamWindow(val fileIndex: Int, val firstPiece: Int, val lastPiece: Int)
+    // Identity matters: when a seek replaces the piece window, in-flight Range workers
+    // must detect that their original request has become stale.
+    private class ActiveStreamWindow(val fileIndex: Int, val firstPiece: Int, val lastPiece: Int)
 
     private val pieceCompletionSignal = PieceCompletionSignal()
     private val errors = ConcurrentHashMap<String, String>()
@@ -280,7 +282,7 @@ object TorrentEngine {
         fileIndex: Int,
         start: Long,
         length: Long
-    ) {
+    ): ActiveStreamWindow {
         val fileSize = storage.fileSize(fileIndex)
         val plan = StreamPiecePlanner.plan(
             fileOffset = storage.fileOffset(fileIndex),
@@ -292,9 +294,14 @@ object TorrentEngine {
             lastFilePiece = storage.lastPieceIndexAtFile(fileIndex),
             includeTailPiece = start == 0L
         )
-        val window = ActiveStreamWindow(fileIndex, plan.firstPiece, plan.lastPiece)
-        if (activeStreamWindows[id] == window) return
+        val current = activeStreamWindows[id]
+        if (current != null &&
+            current.fileIndex == fileIndex &&
+            current.firstPiece == plan.firstPiece &&
+            current.lastPiece == plan.lastPiece
+        ) return current
 
+        val window = ActiveStreamWindow(fileIndex, plan.firstPiece, plan.lastPiece)
         handle.clearPieceDeadlines()
         plan.deadlines.forEach { deadline ->
             if (!handle.havePiece(deadline.pieceIndex)) {
@@ -302,13 +309,17 @@ object TorrentEngine {
             }
         }
         activeStreamWindows[id] = window
+        // Wake older Range workers so they can fail fast rather than waiting for
+        // pieces that belong to a seek which has already been superseded.
+        pieceCompletionSignal.signal()
+        return window
     }
 
     /** Clear playback-only deadlines when streaming stops or the task is paused. */
     @Synchronized
     fun clearStreamPriorities(id: String) {
-        pieceCompletionSignal.signal()
         activeStreamWindows.remove(id)
+        pieceCompletionSignal.signal()
         findHandle(id)?.let { handle ->
             runCatching { handle.clearPieceDeadlines() }
         }
@@ -557,8 +568,10 @@ object TorrentEngine {
         val firstPiece = (absoluteStart / pieceLength).toInt()
         val lastPiece = (absoluteEnd / pieceLength).toInt()
 
-        if (selected == fileIndex) {
+        val requestWindow = if (selected == fileIndex) {
             prioritizeStreamRange(id, handle, storage, fileIndex, start, length)
+        } else {
+            null // Fully downloaded subtitle sidecar: no playback priority window.
         }
 
         val queueStore = TorrentQueueStore(appContext!!)
@@ -567,6 +580,11 @@ object TorrentEngine {
             val timeoutNanos = TimeUnit.MILLISECONDS.toNanos(timeoutPerPieceMs.coerceAtLeast(1L))
             while (true) {
                 check(!stopping) { "Торрент-сессия завершает работу" }
+                if (requestWindow != null && activeStreamWindows[id] !== requestWindow) {
+                    throw java.io.InterruptedIOException(
+                        "Запрос диапазона отменён после новой перемотки"
+                    )
+                }
                 if (!handle.isValid) throw IllegalStateException("Торрент больше не активен")
                 if (handle.havePiece(piece)) break
                 if (queueStore.isPaused(id)) throw IllegalStateException("Загрузка приостановлена")
@@ -580,8 +598,16 @@ object TorrentEngine {
                 // with the wait cannot be lost between havePiece() and awaitChange().
                 if (handle.havePiece(piece)) break
                 if (queueStore.isPaused(id)) throw IllegalStateException("Загрузка приостановлена")
+                if (requestWindow != null && activeStreamWindows[id] !== requestWindow) {
+                    throw java.io.InterruptedIOException(
+                        "Запрос диапазона отменён после новой перемотки"
+                    )
+                }
                 pieceCompletionSignal.awaitChange(generation, remainingNanos)
             }
+        }
+        if (requestWindow != null && activeStreamWindows[id] !== requestWindow) {
+            throw java.io.InterruptedIOException("Запрос диапазона отменён после новой перемотки")
         }
         val root = File(handle.savePath()).canonicalFile
         val file = File(storage.filePath(fileIndex, root.absolutePath)).canonicalFile
