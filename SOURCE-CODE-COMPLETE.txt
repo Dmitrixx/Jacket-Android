@@ -15090,3 +15090,432 @@ class HdRezkaCatalogClientTest {
 }
 
 END FILE: app/src/test/java/app/jacket/mobile/data/HdRezkaCatalogClientTest.kt
+
+
+========================================================================================
+FILE: app/src/test/java/app/jacket/mobile/data/HdRezkaLoginClientTest.kt
+========================================================================================
+
+package app.jacket.mobile.data
+
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
+import org.junit.Test
+import java.io.ByteArrayInputStream
+
+class HdRezkaLoginClientTest {
+    @Test
+    fun normalizesSecureMirror() {
+        assertEquals("https://hdrezka.example", HdRezkaLoginClient.validateMirror("https://hdrezka.example/"))
+    }
+
+    @Test
+    fun acceptsRezkaZipAndAllowlistedUkraineAlternateMirror() {
+        assertEquals("https://rezka.zip", HdRezkaLoginClient.validateMirror("https://rezka.zip"))
+        assertEquals("https://rezkify.com", HdRezkaLoginClient.validateMirror("https://rezkify.com"))
+    }
+
+    @Test
+    fun recognizesOnlyACompleteDleAuthenticationCookiePair() {
+        assertTrue(HdRezkaLoginClient.hasAuthenticatedCookie(
+            "dle_user_id=12345; dle_password=secret-value; other=value"
+        ))
+        assertTrue(HdRezkaLoginClient.hasAuthenticatedCookie(
+            "DLE_USER_ID=42; DLE_PASSWORD=abc123"
+        ))
+        assertFalse(HdRezkaLoginClient.hasAuthenticatedCookie("session=opaque-token"))
+        assertFalse(HdRezkaLoginClient.hasAuthenticatedCookie("dle_user_id=123; dle_password="))
+        assertFalse(HdRezkaLoginClient.hasAuthenticatedCookie("dle_user_id=0; dle_password=secret"))
+        assertFalse(HdRezkaLoginClient.hasAuthenticatedCookie("dle_user_id=1; dle_password=x\r\nInjected: yes"))
+    }
+
+    @Test
+    fun identifiesAnubisBrowserChallenge() {
+        val html = """
+            <html><head><title>О нет!</title></head>
+            <body>Доступ запрещён: код ошибки. Защищено Anubis.</body></html>
+        """.trimIndent()
+        assertEquals(true, HdRezkaLoginClient.containsBrowserChallenge(html))
+    }
+
+    @Test(expected = IllegalArgumentException::class)
+    fun requiresAnExplicitSourceAddress() {
+        HdRezkaLoginClient.validateMirror("")
+    }
+
+    @Test(expected = IllegalArgumentException::class)
+    fun rejectsInsecureMirror() {
+        HdRezkaLoginClient.validateMirror("http://hdrezka.example")
+    }
+
+    @Test
+    fun usesSafeMethodForPostRedirects() {
+        assertEquals("GET", HdRezkaLoginClient.loginRedirectMethod(301))
+        assertEquals("GET", HdRezkaLoginClient.loginRedirectMethod(302))
+        assertEquals("GET", HdRezkaLoginClient.loginRedirectMethod(303))
+        assertEquals(null, HdRezkaLoginClient.loginRedirectMethod(307))
+        assertEquals(null, HdRezkaLoginClient.loginRedirectMethod(308))
+        assertEquals("", HdRezkaLoginClient.loginRedirectMethod(200))
+    }
+
+    @Test
+    fun largeLandingPageCanBeInspectedWithoutBufferingTheWholeResponse() {
+        val page = ByteArray(512 * 1024) { (it % 251).toByte() }
+        val preview = HdRezkaLoginClient.readResponsePreview(ByteArrayInputStream(page), 64 * 1024)
+        assertEquals(64 * 1024, preview.size)
+        assertTrue(preview.contentEquals(page.copyOf(64 * 1024)))
+    }
+
+    @Test
+    fun mirrorPreviewHandlesSmallResponsesWithoutPadding() {
+        val bytes = "<html><title>OK</title></html>".toByteArray()
+        val preview = HdRezkaLoginClient.readResponsePreview(ByteArrayInputStream(bytes), 64 * 1024)
+        assertTrue(preview.contentEquals(bytes))
+    }
+
+    @Test(expected = IllegalArgumentException::class)
+    fun rejectsUnrelatedHost() {
+        HdRezkaLoginClient.validateMirror("https://example.com")
+    }
+}
+
+END FILE: app/src/test/java/app/jacket/mobile/data/HdRezkaLoginClientTest.kt
+
+
+========================================================================================
+FILE: app/src/test/java/app/jacket/mobile/data/IndexerErrorSanitizerTest.kt
+========================================================================================
+
+package app.jacket.mobile.data
+
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+class IndexerErrorSanitizerTest {
+    @Test
+    fun redactsConfiguredSecretsAndCommonCredentialParameters() {
+        val apiKey = "super-secret-api-key-93017"
+        val cookie = "session-cookie-value-482"
+        val raw = IllegalStateException(
+            "Request failed: https://indexer.example/api?t=search&apikey=$apiKey&token=another-token " +
+                "Cookie: $cookie Authorization: Basic QWxhZGRpbjpvcGVuIHNlc2FtZQ=="
+        )
+
+        val safe = IndexerErrorSanitizer.sanitize(raw, listOf(apiKey, cookie, "indexer-password-11"))
+
+        assertFalse(safe.contains(apiKey))
+        assertFalse(safe.contains(cookie))
+        assertFalse(safe.contains("another-token"))
+        assertFalse(safe.contains("QWxhZGRpbjpvcGVuIHNlc2FtZQ=="))
+        assertTrue(safe.contains("indexer.example"))
+        assertTrue(safe.length <= 180)
+    }
+
+    @Test
+    fun redactsUnknownQueryParametersAndURLPathSecrets() {
+        val secretInPath = "private-api-path-secret-991"
+        val safe = IndexerErrorSanitizer.sanitize(
+            "Failed at https://indexer.example/$secretInPath/search?privateField=do-not-leak&mode=search",
+            listOf(secretInPath)
+        )
+        assertFalse(safe.contains(secretInPath))
+        assertFalse(safe.contains("do-not-leak"))
+        assertFalse(safe.contains("privateField"))
+        assertTrue(safe.contains("indexer.example"))
+    }
+
+    @Test
+    fun redactsBearerAndConfiguredCredentialsInNestedCause() {
+        val apiKey = "this-is-an-api-key"
+        val error = IllegalStateException(
+            "Connection failed",
+            IllegalArgumentException("Authorization: Bearer bearer-token-123 $apiKey")
+        )
+        val safe = IndexerErrorSanitizer.sanitize(error, listOf(apiKey))
+        assertFalse(safe.contains("bearer-token-123"))
+        assertFalse(safe.contains(apiKey))
+        assertTrue(safe.contains("[redacted]"))
+    }
+}
+
+END FILE: app/src/test/java/app/jacket/mobile/data/IndexerErrorSanitizerTest.kt
+
+
+========================================================================================
+FILE: app/src/test/java/app/jacket/mobile/data/IndexerRegistryTest.kt
+========================================================================================
+
+package app.jacket.mobile.data
+
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
+import org.junit.Test
+import org.kxml2.io.KXmlParser
+
+class IndexerRegistryTest {
+    private val registry = IndexerRegistry()
+    private val config = IndexerConfig(
+        id = "test-indexer",
+        name = "Test indexer",
+        searchUrlTemplate = "https://indexer.example/api?t=search&q={query}",
+        protocol = IndexerProtocol.TORZNAB
+    )
+
+    @Test
+    fun parsesTorznabMagnetTorrentStatsAndCategory() {
+        val xml = """
+            <rss xmlns:torznab="http://torznab.com/schemas/2015/feed">
+              <channel>
+                <item>
+                  <title>Film.1080p.WEB-DL</title>
+                  <guid>https://indexer.example/details/1</guid>
+                  <enclosure url="https://indexer.example/download/1.torrent" type="application/x-bittorrent" />
+                  <torznab:attr name="seeders" value="37" />
+                  <torznab:attr name="peers" value="42" />
+                  <torznab:attr name="size" value="9876543" />
+                  <torznab:attr name="category" value="2000" />
+                </item>
+                <item>
+                  <title>Film.Magnet.Release</title>
+                  <link>magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567&amp;dn=Film</link>
+                  <torznab:attr name="seeders" value="9" />
+                  <torznab:attr name="length" value="12345" />
+                </item>
+              </channel>
+            </rss>
+        """.trimIndent()
+
+        val results = registry.parseFeedXml(xml, config, KXmlParser())
+
+        assertEquals(2, results.size)
+        val torrent = results.first { it.downloadUrl != null }
+        assertEquals(37, torrent.seeders)
+        assertEquals(5, torrent.leechers)
+        assertEquals(9_876_543L, torrent.sizeBytes)
+        assertEquals("2000", torrent.category)
+        assertEquals("test-indexer", torrent.indexerId)
+        assertEquals("https://indexer.example/details/1", torrent.pageUrl)
+
+        val magnet = results.first { it.magnetUri != null }
+        assertTrue(magnet.magnetUri!!.startsWith("magnet:?"))
+        assertEquals(9, magnet.seeders)
+        assertEquals(12_345L, magnet.sizeBytes)
+    }
+
+    @Test
+    fun parsesAtomMagnetEnclosure() {
+        val xml = """
+            <feed xmlns="http://www.w3.org/2005/Atom">
+              <entry>
+                <title>Episode.S01E02.720p</title>
+                <link rel="alternate" href="https://indexer.example/details/episode" />
+                <link rel="enclosure" type="application/x-bittorrent" href="magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567" />
+              </entry>
+            </feed>
+        """.trimIndent()
+
+        val results = registry.parseFeedXml(xml, config, KXmlParser())
+
+        assertEquals(1, results.size)
+        assertTrue(results.single().magnetUri!!.startsWith("magnet:?"))
+        assertEquals("test-indexer", results.single().indexerId)
+        assertEquals("https://indexer.example/details/episode", results.single().pageUrl)
+    }
+
+    @Test
+    fun parsesDirectVideoEnclosuresAndCommonMediaRss() {
+        val xml = """
+            <rss xmlns:media="http://search.yahoo.com/mrss/">
+              <channel>
+                <item>
+                  <title>Licensed HLS stream</title>
+                  <enclosure url="https://media.example/master.m3u8" type="application/vnd.apple.mpegurl" />
+                </item>
+                <item>
+                  <title>Licensed DASH stream</title>
+                  <link rel="enclosure" type="application/dash+xml" href="https://media.example/manifest.mpd" />
+                </item>
+                <item>
+                  <title>Licensed MP4 file</title>
+                  <media:content url="https://media.example/movie.mp4" type="video/mp4" medium="video" fileSize="123456" />
+                </item>
+                <item>
+                  <title>Insecure video</title>
+                  <enclosure url="http://media.example/movie.mp4" type="video/mp4" />
+                </item>
+              </channel>
+            </rss>
+        """.trimIndent()
+
+        val results = registry.parseFeedXml(xml, config, KXmlParser())
+
+        assertEquals(3, results.size)
+        assertEquals(
+            setOf(
+                "https://media.example/master.m3u8",
+                "https://media.example/manifest.mpd",
+                "https://media.example/movie.mp4"
+            ),
+            results.mapNotNull { it.streamUrl }.toSet()
+        )
+        assertEquals(123_456L, results.single { it.title == "Licensed MP4 file" }.sizeBytes)
+        assertTrue(results.all { it.downloadUrl == null && it.magnetUri == null })
+    }
+
+    @Test
+    fun rejectsInsecureOnlyLinks() {
+        val xml = """
+            <rss><channel>
+              <item><title>Insecure</title><link>http://indexer.example/release/1</link></item>
+            </channel></rss>
+        """.trimIndent()
+
+        assertTrue(registry.parseFeedXml(xml, config, KXmlParser()).isEmpty())
+    }
+
+    @Test
+    fun extractsPublicationDateForNativeReleaseCards() {
+        val xml = """
+            <rss><channel><item>
+              <title>Film.1080p.WEB-DL</title>
+              <guid>https://tracker.example/release/1</guid>
+              <pubDate>Fri, 20 Nov 2026 10:15:00 +0000</pubDate>
+              <enclosure url="https://tracker.example/release/1.torrent" type="application/x-bittorrent" />
+            </item></channel></rss>
+        """.trimIndent()
+
+        val result = registry.parseFeedXml(xml, config, KXmlParser()).single()
+        assertEquals("Fri, 20 Nov 2026 10:15:00 +0000", result.publishedDate)
+    }
+
+    @Test
+    fun orderDeduplicatesByMagnetAndSortsBySeeders() {
+        val duplicate = SourceResult(
+            id = "one",
+            title = "Z release",
+            providerName = "A",
+            magnetUri = "magnet:?xt=urn:btih:abc"
+        )
+        val sameMagnet = duplicate.copy(id = "two", title = "Duplicate", providerName = "B")
+        val high = SourceResult(
+            id = "three",
+            title = "A release",
+            providerName = "C",
+            downloadUrl = "https://indexer.example/3.torrent",
+            seeders = 50
+        )
+        val low = SourceResult(
+            id = "four",
+            title = "B release",
+            providerName = "D",
+            downloadUrl = "https://indexer.example/4.torrent",
+            seeders = 2
+        )
+
+        val ordered = registry.orderResults(listOf(duplicate, sameMagnet, low, high))
+
+        assertEquals(listOf("three", "four", "one"), ordered.map { it.id })
+    }
+}
+
+END FILE: app/src/test/java/app/jacket/mobile/data/IndexerRegistryTest.kt
+
+
+========================================================================================
+FILE: app/src/test/java/app/jacket/mobile/data/JackettFeedParserTest.kt
+========================================================================================
+
+package app.jacket.mobile.data
+
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
+import org.junit.Assert.fail
+import org.junit.Test
+import org.kxml2.io.KXmlParser
+import java.io.IOException
+
+class JackettFeedParserTest {
+    private val registry = IndexerRegistry()
+    private val config = IndexerConfig(
+        id = "jackett-lan",
+        name = "Jackett",
+        searchUrlTemplate = "http://192.168.1.50:9117/api/v2.0/indexers/all/results/torznab/api?t=search&q={query}",
+        protocol = IndexerProtocol.JACKETT
+    )
+
+    @Test
+    fun parsesJackettTrackerTorrentLinkAndPeers() {
+        val xml = """
+            <rss xmlns:torznab="http://torznab.com/schemas/2015/feed">
+              <channel>
+                <item>
+                  <title>Movie.2160p.WEB-DL</title>
+                  <guid>https://tracker.example/details/1</guid>
+                  <comments>https://tracker.example/details/1</comments>
+                  <jackettindexer id="sample">SampleTracker</jackettindexer>
+                  <enclosure url="http://192.168.1.50:9117/dl/sample/?jackett_apikey=secret" type="application/x-bittorrent" />
+                  <size>987654321</size>
+                  <torznab:attr name="seeders" value="42" />
+                  <torznab:attr name="peers" value="47" />
+                </item>
+                <item>
+                  <title>Magnet result</title>
+                  <link>magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567</link>
+                  <jackettindexer id="other">OtherTracker</jackettindexer>
+                  <torznab:attr name="seeders" value="7" />
+                  <torznab:attr name="leechers" value="2" />
+                </item>
+              </channel>
+            </rss>
+        """.trimIndent()
+        val results = registry.parseFeedXml(xml, config, KXmlParser())
+        assertEquals(2, results.size)
+        val torrent = results.first { it.downloadUrl != null }
+        assertEquals("SampleTracker", torrent.tracker)
+        assertEquals("http://192.168.1.50:9117/dl/sample/?jackett_apikey=secret", torrent.downloadUrl)
+        assertEquals(987_654_321L, torrent.sizeBytes)
+        assertEquals(42, torrent.seeders)
+        assertEquals(5, torrent.leechers)
+        assertEquals("https://tracker.example/details/1", torrent.pageUrl)
+
+        val magnet = results.first { it.magnetUri != null }
+        assertEquals("OtherTracker", magnet.tracker)
+        assertTrue(magnet.magnetUri!!.startsWith("magnet:?"))
+        assertEquals(2, magnet.leechers)
+    }
+
+    @Test
+    fun invalidApiKeyXmlIsReportedAsAnIndexerError() {
+        try {
+            registry.parseFeedXml("""<error code="100" description="Invalid API Key" />""", config, KXmlParser())
+            fail("Expected an indexer error")
+        } catch (error: IOException) {
+            assertEquals("Jackett: Invalid API Key (код 100)", error.message)
+        }
+    }
+
+    @Test
+    fun capabilitiesResponseIsAValidEmptyResult() {
+        val xml = """<caps><server title="Jackett" /><searching><search available="yes" supportedParams="q" /></searching></caps>"""
+        assertTrue(registry.parseFeedXml(xml, config, KXmlParser()).isEmpty())
+    }
+
+    @Test
+    fun rejectsPublicHttpDownloadLinksButAllowsLocalJackettDownloads() {
+        val xml = """<rss><channel>
+            <item><title>Public HTTP</title>
+                <enclosure url="http://tracker.example.org/item.torrent" type="application/x-bittorrent" />
+            </item>
+            <item><title>Local Jackett</title>
+                <enclosure url="http://192.168.1.50:9117/dl/1" type="application/x-bittorrent" />
+            </item>
+        </channel></rss>"""
+        val results = registry.parseFeedXml(xml, config, KXmlParser())
+        assertEquals(1, results.size)
+        assertEquals("Local Jackett", results.single().title)
+    }
+}
+
+END FILE: app/src/test/java/app/jacket/mobile/data/JackettFeedParserTest.kt
