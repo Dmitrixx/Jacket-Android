@@ -1,5 +1,12 @@
 # Changelog
 
+## Next
+
+- Match the Android 12+ display refresh rate to the active video frame rate on SurfaceView playback; clear the request when the surface is detached and leave older Android versions unchanged.
+- Replace torrent piece polling with a condition signal driven by libtorrent piece-finished alerts; pause/removal also wake waiting stream workers.
+- Add a tail-piece deadline to the initial torrent byte-range plan, after the bounded forward window, and lower the global peer-connection ceiling on low-RAM Android devices.
+- Shrink release resources and produce ABI-specific APKs for arm64-v8a, armeabi-v7a, x86 and x86_64 while retaining a universal APK.
+
 ## 2.8.0
 
 - Consolidated native Filmix and HDRezka search/player adapters, encrypted account state, provider diagnostics and the unified detail-card source picker.
