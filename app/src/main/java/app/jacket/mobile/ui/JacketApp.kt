@@ -87,6 +87,7 @@ import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -153,6 +154,7 @@ fun JacketApp(viewModel: MainViewModel) {
     var isTorrentPlayback by rememberSaveable { mutableStateOf(false) }
 
     val context = LocalContext.current
+    val screenStateHolder = rememberSaveableStateHolder()
     val torrentPlayback by TorrentPlaybackBus.active.collectAsState()
     val details by viewModel.selectedDetails.collectAsState()
     val isTv = (LocalConfiguration.current.uiMode and android.content.res.Configuration.UI_MODE_TYPE_MASK) == android.content.res.Configuration.UI_MODE_TYPE_TELEVISION
@@ -255,7 +257,8 @@ fun JacketApp(viewModel: MainViewModel) {
         }
     }
 
-    Scaffold(
+    screenStateHolder.SaveableStateProvider("main") {
+        Scaffold(
         topBar = {
             TopAppBar(
                 title = {
@@ -336,6 +339,7 @@ fun JacketApp(viewModel: MainViewModel) {
                 onDownloads = { showDownloads = true }
             )
         }
+        }
     }
 }
 
@@ -389,40 +393,43 @@ private fun MainTabContent(
     onDownloads: () -> Unit
 ) {
     val loading by viewModel.isLoading.collectAsState()
-    when (selectedTab) {
-        TAB_HOME -> HomeScreen(
-            viewModel = viewModel,
-            modifier = modifier,
-            onOpen = viewModel::openItem,
-            onShowMovies = onShowMovies
-        )
-        TAB_MOVIES -> CatalogGridScreen(
-            title = "Фильмы",
-            items = viewModel.items.collectAsState().value,
-            loading = loading,
-            message = viewModel.message.collectAsState().value,
-            modifier = modifier,
-            onOpen = viewModel::openItem
-        )
-        TAB_SERIES -> CatalogGridScreen(
-            title = "Сериалы",
-            items = viewModel.items.collectAsState().value,
-            loading = loading,
-            message = viewModel.message.collectAsState().value,
-            modifier = modifier,
-            onOpen = viewModel::openItem
-        )
-        TAB_SEARCH -> SearchScreen(
-            viewModel = viewModel,
-            modifier = modifier,
-            onOpen = viewModel::openItem
-        )
-        else -> LibraryScreen(
-            viewModel = viewModel,
-            modifier = modifier,
-            onOpen = viewModel::openItem,
-            onDownloads = onDownloads
-        )
+    val tabStateHolder = rememberSaveableStateHolder()
+    tabStateHolder.SaveableStateProvider("tab-$selectedTab") {
+        when (selectedTab) {
+            TAB_HOME -> HomeScreen(
+                viewModel = viewModel,
+                modifier = modifier,
+                onOpen = viewModel::openItem,
+                onShowMovies = onShowMovies
+            )
+            TAB_MOVIES -> CatalogGridScreen(
+                title = "Фильмы",
+                items = viewModel.items.collectAsState().value,
+                loading = loading,
+                message = viewModel.message.collectAsState().value,
+                modifier = modifier,
+                onOpen = viewModel::openItem
+            )
+            TAB_SERIES -> CatalogGridScreen(
+                title = "Сериалы",
+                items = viewModel.items.collectAsState().value,
+                loading = loading,
+                message = viewModel.message.collectAsState().value,
+                modifier = modifier,
+                onOpen = viewModel::openItem
+            )
+            TAB_SEARCH -> SearchScreen(
+                viewModel = viewModel,
+                modifier = modifier,
+                onOpen = viewModel::openItem
+            )
+            else -> LibraryScreen(
+                viewModel = viewModel,
+                modifier = modifier,
+                onOpen = viewModel::openItem,
+                onDownloads = onDownloads
+            )
+        }
     }
 }
 
@@ -876,18 +883,20 @@ private fun SearchScreen(
         if (message != null) {
             MessageCard(message.orEmpty(), isError, Modifier.padding(horizontal = 16.dp, vertical = 8.dp))
         }
-        when {
-            searchingTrackers -> {
-                Row(
-                    Modifier.fillMaxWidth().padding(16.dp),
-                    horizontalArrangement = Arrangement.Center,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
-                    Spacer(Modifier.width(10.dp))
-                    Text("Загружаем и разбираем раздачи…")
-                }
+        if (searchingTrackers) {
+            Row(
+                Modifier.fillMaxWidth().padding(16.dp),
+                horizontalArrangement = Arrangement.Center,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+                Spacer(Modifier.width(10.dp))
+                Text(
+                    if (trackerResults.isEmpty()) "Ищем на трекерах…" else "Результаты уже поступают…"
+                )
             }
+        }
+        when {
             trackerResults.isNotEmpty() -> LazyColumn(
                 modifier = Modifier.weight(1f),
                 contentPadding = PaddingValues(16.dp),
@@ -916,6 +925,7 @@ private fun SearchScreen(
                     )
                 }
             }
+            searchingTrackers -> Unit
             loading && items.isEmpty() -> LoadingState()
             items.isNotEmpty() -> LazyVerticalGrid(
                 columns = if (isTv) GridCells.Adaptive(minSize = 190.dp) else GridCells.Fixed(2),
