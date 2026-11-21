@@ -23,6 +23,16 @@ import app.jacket.mobile.ui.MainViewModel
 import app.jacket.mobile.ui.theme.JacketTheme
 
 class MainActivity : ComponentActivity() {
+    var pipModeListener: ((Boolean) -> Unit)? = null
+
+    override fun onPictureInPictureModeChanged(
+        isInPictureInPictureMode: Boolean,
+        newConfig: android.content.res.Configuration
+    ) {
+        super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
+        pipModeListener?.invoke(isInPictureInPictureMode)
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         requestNotificationPermissionIfNeeded()

@@ -7,8 +7,6 @@ import android.content.Intent
 import android.net.Uri
 import android.util.Rational
 import android.view.WindowManager
-import androidx.activity.ComponentActivity
-import androidx.activity.PictureInPictureModeChangedInfo
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -60,7 +58,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.focus.focusable
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.Key
@@ -73,7 +70,6 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
-import androidx.core.util.Consumer
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
@@ -88,6 +84,7 @@ import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import androidx.media3.ui.TrackSelectionDialogBuilder
+import app.jacket.mobile.MainActivity
 import app.jacket.mobile.torrent.PlaybackProgressStore
 import app.jacket.mobile.torrent.PlaybackSubtitle
 import kotlinx.coroutines.delay
@@ -170,19 +167,18 @@ fun JacketPlayerScreen(
     }
 
     DisposableEffect(activity, player) {
-        val host = activity as? ComponentActivity
-        val listener = Consumer<PictureInPictureModeChangedInfo> { info ->
-            inPip = info.isInPictureInPictureMode
-            if (info.isInPictureInPictureMode && playWhenReady) player.play()
+        val host = activity as? MainActivity
+        host?.pipModeListener = { pip ->
+            inPip = pip
+            if (pip && playWhenReady) player.play()
         }
-        host?.addOnPictureInPictureModeChangedListener(listener)
         val window = activity?.window
         val insets = window?.let { WindowCompat.getInsetsController(it, it.decorView) }
         insets?.hide(WindowInsetsCompat.Type.systemBars())
         insets?.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
         activity?.window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         onDispose {
-            host?.removeOnPictureInPictureModeChangedListener(listener)
+            host?.pipModeListener = null
             insets?.show(WindowInsetsCompat.Type.systemBars())
             activity?.window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         }
@@ -314,7 +310,6 @@ fun JacketPlayerScreen(
                         .weight(1f)
                         .fillMaxSize()
                         .focusRequester(hiddenFocus)
-                        .focusable()
                         .clickable { seekBy(-PlaybackChrome.SEEK_STEP_MS) }
                 )
                 Box(

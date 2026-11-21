@@ -9,6 +9,7 @@
 - Seek bar, elapsed time and remaining time in the overlay. Tap the left or right side of a hidden player to jump 10 seconds.
 - Continue watching now shows the remaining time from the saved position.
 - Includes the previously unreleased fixes already on main: bounded HDRezka page preview, Filmix device-authorization diagnostics, and explicit in-app torrent search on movie and episode cards.
+- Picture-in-picture state is observed through the activity callback, so the build does not depend on an ActivityX type missing from this SDK line.
 
 ## 2.6.0
 
