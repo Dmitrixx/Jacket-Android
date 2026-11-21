@@ -61,6 +61,44 @@ class StreamPiecePlannerTest {
         assertTrue(plan.deadlines.zipWithNext().all { (a, b) -> a.deadlineMs < b.deadlineMs })
     }
 
+
+    @Test
+    fun schedulesTailPieceAfterTheInitialForwardWindow() {
+        val plan = StreamPiecePlanner.plan(
+            fileOffset = 0L,
+            fileSize = 100L * 1_024L,
+            pieceLength = 1_024L,
+            requestStart = 0L,
+            requestLength = 1_024L,
+            firstFilePiece = 0,
+            lastFilePiece = 99,
+            prefetchBytes = 1_024L,
+            maxPieces = 2,
+            includeTailPiece = true
+        )
+
+        assertEquals(listOf(0, 1, 99), plan.deadlines.map { it.pieceIndex })
+        assertEquals(listOf(0, 350, 1_400), plan.deadlines.map { it.deadlineMs })
+        assertEquals(1, plan.lastPiece)
+    }
+
+    @Test
+    fun doesNotDuplicateTailPieceWhenItIsAlreadyInForwardWindow() {
+        val plan = StreamPiecePlanner.plan(
+            fileOffset = 0L,
+            fileSize = 2_048L,
+            pieceLength = 1_024L,
+            requestStart = 0L,
+            requestLength = 2_048L,
+            firstFilePiece = 0,
+            lastFilePiece = 1,
+            prefetchBytes = 0L,
+            includeTailPiece = true
+        )
+
+        assertEquals(listOf(0, 1), plan.deadlines.map { it.pieceIndex })
+    }
+
     @Test(expected = IllegalArgumentException::class)
     fun rejectsRangeOutsideFile() {
         StreamPiecePlanner.plan(
