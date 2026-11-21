@@ -326,6 +326,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun runCombinedSourceSearch(query: String, item: CatalogItem, episode: MediaEpisode?) {
+        // Torrent releases need the episode code, but streaming catalogues
+        // search the series by its title and resolve the episode separately.
+        val catalogueQuery = listOfNotNull(
+            item.title,
+            item.year.takeIf { it.matches(Regex("\\d{4}")) }
+        ).joinToString(" ")
         sourcesJob?.cancel()
         sourcesJob = viewModelScope.launch {
             _isSearchingSources.value = true
@@ -360,14 +366,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                             .onSuccess { outcome ->
                                 results += outcome.results
                                 failures.addAll(
-                                outcome.failures.mapIndexed { index, message ->
-                                    IndexerFailure(
-                                        indexerId = "built-in-tracker-$index",
-                                        indexerName = "Встроенные трекеры",
-                                        message = message
-                                    )
-                                }
-                            )
+                                    outcome.failures.mapIndexed { index, message ->
+                                        IndexerFailure(
+                                            indexerId = "built-in-tracker-$index",
+                                            indexerName = "Встроенные трекеры",
+                                            message = message
+                                        )
+                                    }
+                                )
                             }
                             .onFailure { error ->
                                 failures += IndexerFailure("built-in-trackers", "Встроенные трекеры", safeProviderMessage(error))
@@ -380,7 +386,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                                 apiBase = filmixApiValue,
                                 deviceId = filmixDeviceValue,
                                 token = filmixTokenValue,
-                                query = query,
+                                query = catalogueQuery,
                                 kind = item.kind,
                                 episodeCode = episode?.releaseCode
                             )
@@ -396,7 +402,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         runCatching {
                             HdRezkaCatalogClient.searchSources(
                                 settings = rezkaSettings,
-                                query = query,
+                                query = catalogueQuery,
                                 kind = item.kind,
                                 episodeCode = episode?.releaseCode
                             )
