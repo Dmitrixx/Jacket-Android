@@ -524,7 +524,6 @@ private fun PlayerChip(
 }
 
 @androidx.annotation.OptIn(markerClass = [androidx.media3.common.util.UnstableApi::class])
-@androidx.annotation.OptIn(markerClass = [androidx.media3.common.util.UnstableApi::class])
 private fun buildPlayer(
     context: Context,
     streamUrl: String,
