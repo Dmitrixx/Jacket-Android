@@ -3606,6 +3606,7 @@ private fun SettingsScreen(
                             Text("Jacket не извлекает медиапотоки с произвольных страниц и не обходит ограничения сайта.",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            FfmpegLicensesCard()
                         }
                     }
                 }
