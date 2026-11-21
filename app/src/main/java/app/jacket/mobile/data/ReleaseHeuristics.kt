@@ -30,7 +30,7 @@ object ReleaseHeuristics {
         "HLG" to Regex("""(?i)(?<![a-z0-9])hlg(?![a-z0-9])"""),
         "HDR10+" to Regex("""(?i)(?<![a-z0-9])hdr10\+(?![a-z0-9])"""),
         "HDR" to Regex("""(?i)(?<![a-z0-9])hdr(?:10)?(?![a-z0-9])"""),
-        "DV" to Regex("""(?i)(?<![a-z0-9])(?:dolby[ ._-]?vision|dv)(?![a-z0-9)""")
+        "DV" to Regex("""(?i)(?<![a-z0-9])(?:dolby[ ._-]?vision|dv)(?![a-z0-9])""")
     )
 
     private val dimensionPattern = Regex(
@@ -72,7 +72,11 @@ object ReleaseHeuristics {
         }
         val audio = audioPatterns.filter { it.second.containsMatchIn(title) }.map { it.first }
         val source = sourcePatterns.filter { it.second.containsMatchIn(title) }.map { it.first } +
-            listOf("DUB", "MVO", "AVO", "VO", "LE", "LostFilm", "NewStudio").filter {
+            listOf(
+                "DUB", "MVO", "AVO", "VO", "LE", "LostFilm", "NewStudio",
+                "RHS", "Red Head Sound", "HDRezka", "Кубик в кубе", "Jaskier",
+                "TVShows", "AlexFilm", "AniLibria", "Дубляж", "ДБ", "ПМ", "ЛМ", "ПД"
+            ).filter {
                 Regex("""(?i)(?<![a-z0-9])${Regex.escape(it)}(?![a-z0-9])""").containsMatchIn(title)
             }
         val dimensions = dimensionPattern.find(title)?.let { "${it.groupValues[1]}x${it.groupValues[2]}" }
