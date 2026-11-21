@@ -45,7 +45,7 @@ object LampacBridgeClient {
         require(uri.rawQuery.isNullOrBlank() && uri.rawFragment.isNullOrBlank() &&
             (uri.rawPath.isNullOrBlank() || uri.rawPath == "/")
         ) { "Укажите только адрес сервера, без пути, запроса и фрагмента" }
-        val normalized = "\${uri.scheme.lowercase()}://\${uri.rawAuthority}".trimEnd('/')
+        val normalized = "${uri.scheme.lowercase()}://${uri.rawAuthority}".trimEnd('/')
         require(LocalNetwork.isAllowedUrl(normalized)) {
             "HTTP разрешён только для локального сервера. Для удалённого сервера используйте HTTPS."
         }
@@ -141,7 +141,7 @@ object LampacBridgeClient {
                     // Lampac's online array contains every completed source check, including
                     // providers which did not return playable content. Use its length as seen.
                     seen = online.length()
-                    if (update.optBoolean("ready", false) || update.optInt("tasks", 0) == 0) break
+                    if (update.optBoolean("ready", false) || update.optInt("tasks", -1) == 0) break
                     val elapsedMs = (System.nanoTime() - startedAt) / 1_000_000L
                     val remaining = MIN_POLL_DELAY_MS - elapsedMs
                     if (remaining > 0) Thread.sleep(remaining)
@@ -315,7 +315,7 @@ object LampacBridgeClient {
         if (additions.isEmpty()) return url
         val separator = if (url.contains('?')) '&' else '?'
         return url + separator + additions.entries.joinToString("&") { (key, value) ->
-            "\${encode(key)}=\${encode(value)}"
+            "${encode(key)}=${encode(value)}"
         }
     }
 
@@ -357,8 +357,8 @@ object LampacBridgeClient {
         for (redirect in 0..MAX_REDIRECTS) {
             if (Thread.currentThread().isInterrupted) throw IOException("Запрос Lampac отменён")
             val connection = (URL(currentUrl).openConnection() as HttpURLConnection).apply {
-                connectTimeout = 8_000
-                readTimeout = 8_000
+                connectTimeout = 5_000
+                readTimeout = 5_000
                 instanceFollowRedirects = false
                 requestMethod = "GET"
                 setRequestProperty("Accept", "application/json, text/plain, */*")
