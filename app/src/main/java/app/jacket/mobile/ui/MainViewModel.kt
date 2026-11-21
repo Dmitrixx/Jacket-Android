@@ -10,6 +10,8 @@ import app.jacket.mobile.data.FilmixPendingDevice
 import app.jacket.mobile.data.HdRezkaCatalogClient
 import app.jacket.mobile.data.HdRezkaLoginClient
 import app.jacket.mobile.data.HdRezkaSettings
+import app.jacket.mobile.data.LampacBridgeClient
+import app.jacket.mobile.data.LampacSettings
 import app.jacket.mobile.data.IndexerConfig
 import app.jacket.mobile.data.IndexerFailure
 import app.jacket.mobile.data.IndexerRegistry
@@ -90,6 +92,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _isHdRezkaBusy = MutableStateFlow(false)
     val isHdRezkaBusy: StateFlow<Boolean> = _isHdRezkaBusy.asStateFlow()
+
+    private val _lampacSettings = MutableStateFlow(settings.lampacSettings())
+    val lampacSettings: StateFlow<LampacSettings> = _lampacSettings.asStateFlow()
+
+    private val _lampacStatus = MutableStateFlow(
+        if (_lampacSettings.value.enabled) "Lampac сохранён; проверка соединения не выполнялась" else "Lampac не подключён"
+    )
+    val lampacStatus: StateFlow<String> = _lampacStatus.asStateFlow()
+
+    private val _isLampacBusy = MutableStateFlow(false)
+    val isLampacBusy: StateFlow<Boolean> = _isLampacBusy.asStateFlow()
 
     private val _indexerStatuses = MutableStateFlow<Map<String, String>>(emptyMap())
     val indexerStatuses: StateFlow<Map<String, String>> = _indexerStatuses.asStateFlow()
@@ -368,6 +381,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 val filmixApiValue = settings.filmixApiBase()
                 val filmixDeviceValue = settings.filmixDeviceId()
                 val rezkaSettings = settings.hdRezkaSettings()
+                val lampacConfig = settings.lampacSettings()
 
                 val combined = runInterruptible(Dispatchers.IO) {
                     val results = ArrayList<SourceResult>()
@@ -472,12 +486,31 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                             }
                     }
 
+                    if (lampacConfig.enabled && lampacConfig.baseUrl.isNotBlank()) {
+                        runCatching {
+                            LampacBridgeClient.searchSources(
+                                settings = lampacConfig,
+                                item = item,
+                                episodeCode = episode?.releaseCode
+                            )
+                        }.onSuccess { results += it }
+                            .onFailure { error ->
+                                if (error is CancellationException || Thread.currentThread().isInterrupted) {
+                                    throw CancellationException("Поиск источников отменён")
+                                }
+                                failures += IndexerFailure(
+                                    "lampac", "Lampac", safeProviderMessage(error)
+                                )
+                            }
+                    }
+
                     val orderedResults = results.distinctBy { it.id }.sortedBy { source ->
                         when (source.sourceType) {
                             app.jacket.mobile.data.MediaSourceType.HDREZKA -> 0
-                            app.jacket.mobile.data.MediaSourceType.FILMIX -> 1
-                            app.jacket.mobile.data.MediaSourceType.TORRENT -> 2
-                            app.jacket.mobile.data.MediaSourceType.LICENSED_DIRECT -> 3
+                            app.jacket.mobile.data.MediaSourceType.LAMPAC -> 1
+                            app.jacket.mobile.data.MediaSourceType.FILMIX -> 2
+                            app.jacket.mobile.data.MediaSourceType.TORRENT -> 3
+                            app.jacket.mobile.data.MediaSourceType.LICENSED_DIRECT -> 4
                         }
                     }.take(160)
                     orderedResults to failures.distinctBy { it.indexerId }
@@ -1144,6 +1177,42 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         settings.disconnectHdRezka()
         _hdRezkaSettings.value = settings.hdRezkaSettings()
         _hdRezkaStatus.value = "Сессия удалена"
+    }
+
+    fun saveLampacSettings(config: LampacSettings) {
+        try {
+            val saved = settings.saveLampacSettings(config)
+            _lampacSettings.value = saved
+            _lampacStatus.value = if (saved.enabled) {
+                "Настройки Lampac сохранены. Проверьте соединение."
+            } else {
+                "Настройки сохранены; Lampac отключён от общего поиска."
+            }
+        } catch (error: Exception) {
+            _lampacStatus.value = error.message ?: "Не удалось сохранить настройки Lampac"
+        }
+    }
+
+    fun testLampacConnection(config: LampacSettings) {
+        if (_isLampacBusy.value) return
+        viewModelScope.launch {
+            _isLampacBusy.value = true
+            _lampacStatus.value = "Проверяем Lampac…"
+            try {
+                val message = withContext(Dispatchers.IO) {
+                    LampacBridgeClient.testConnection(config)
+                }
+                val saved = settings.saveLampacSettings(config)
+                _lampacSettings.value = saved
+                _lampacStatus.value = message
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                _lampacStatus.value = error.message ?: "Не удалось подключиться к Lampac"
+            } finally {
+                _isLampacBusy.value = false
+            }
+        }
     }
 
     fun restoreDefaultTrackerShortcuts() {
