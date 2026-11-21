@@ -19,7 +19,7 @@ The project is under active development. CI verifies JVM unit tests and APK asse
 
 ## Video source catalogue
 
-The in-app source registry preserves the requested priority order for HDRezka, Filmix, ColdFilm, Baskino, Kinogo, VideoCDN, Collaps, Kinobase, CDNMovies and Lordfilm. HDRezka currently has source URL/Cookie settings and Filmix has device-code authorization, but neither has a complete catalogue/stream adapter yet. The remaining providers are unconnected. The UI distinguishes available auth settings from a working media adapter; no undocumented endpoints or pretend integrations are added.
+The in-app source registry preserves the requested priority order for HDRezka, Filmix, ColdFilm, Baskino, Kinogo, VideoCDN, Collaps, Kinobase, CDNMovies and Lordfilm. Filmix and HDRezka have direct search/player adapters; the other eight descriptors remain unconnected until a compatible adapter is verified. Connector status is shown explicitly in the UI.
 
 ## Filmix and HDRezka accounts
 
@@ -27,7 +27,7 @@ The in-app source registry preserves the requested priority order for HDRezka, F
 - **HDRezka** has an explicit HTTPS source field, email/login, password and manual Cookie-session fields. Login responses are inspected through a bounded preview so large HTML pages do not cause a false oversized-response error. The app does not choose or rotate mirrors automatically, and it stops on CAPTCHA, Cloudflare or interactive challenges.
 - Credentials and cookies stay on the device and are not included in diagnostics or tracker exports.
 
-These account screens manage authentication state. They do not claim universal playback support for arbitrary protected HTML player pages; direct media playback continues to require a source-published direct URL or a supported feed.
+The Filmix and HDRezka adapters resolve only the providers' known search/player responses into HTTPS media URLs. This is not universal HTML player extraction: unknown or changed stream formats fail closed, and Jacket does not bypass DRM, paywalls, CAPTCHA/Anubis or regional restrictions.
 
 ## Built-in tracker shortcuts
 
@@ -71,7 +71,7 @@ Example template shape:
 https://your-authorized-site.example/search?q={query}
 ```
 
-Website shortcuts remain link-based and open the site in the browser. Structured in-app playback is supported when a source explicitly publishes a direct HTTPS media URL in an RSS/Atom enclosure or Media RSS `media:content`. Jacket does not scrape arbitrary HTML pages, unpack obfuscated player scripts, automate private logins or CAPTCHA, extract hidden streams, bypass DRM, or circumvent regional access restrictions. Use only services and media you are authorized to access. For a licensed provider, prefer its documented API or feed.
+Website shortcuts remain link-based and open the site in the browser. In-app playback is provided by supported RSS/Atom media enclosures and the explicit Filmix/HDRezka adapters. HDRezka supports its known `#h` playlist payload format; unknown or rotated encodings are rejected. Jacket does not scrape arbitrary pages, unpack arbitrary obfuscated scripts, automate CAPTCHA, bypass DRM or paywalls, or circumvent regional access restrictions. Use only services and media you are authorized to access.
 
 ## Torrent engine and local stream server
 

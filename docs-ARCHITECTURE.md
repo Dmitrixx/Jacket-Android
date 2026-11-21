@@ -41,7 +41,7 @@ No external Jackett or TorrServer process is started or packaged.
 
 - `MediaCatalogClient` reads Internet Archive catalog metadata directly.
 - Optional TMDB bearer token supplies movie/series metadata, artwork, season lists and episode lists. TMDB is a metadata provider, not a video source.
-- For an episode, the query builder combines the series title, the `SxxExx` code and episode title.
+- Torrent indexer searches include the `SxxExx` code and episode title. Filmix and HDRezka search the series title/year, then resolve the selected season/episode through the provider's own catalogue/player response.
 - Internet Archive media playback/download actions are offered only when item metadata carries a recognized Creative Commons / public-domain license URL. This is a conservative gate, not a full license audit.
 - `PosterDiskCache` keeps bounded public artwork in memory and app cache; cache files contain no credentials.
 

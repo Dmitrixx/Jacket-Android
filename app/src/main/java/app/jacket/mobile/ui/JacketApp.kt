@@ -1225,11 +1225,7 @@ private fun DetailScreen(
                                                         onClick = {
                                                             selectedEpisodeForSources = episode
                                                             showSourcesSheet = true
-                                                            if (activeInAppTrackers.isNotEmpty()) {
-                                                                viewModel.findSources(item, episode)
-                                                            } else {
-                                                                viewModel.findSources(item, episode)
-                                                            }
+                                                            viewModel.findSources(item, episode)
                                                         },
                                                         enabled = !searchingSources
                                                     ) {
@@ -1283,11 +1279,7 @@ private fun DetailScreen(
                         onClick = {
                             selectedEpisodeForSources = null
                             showSourcesSheet = true
-                            if (activeInAppTrackers.isNotEmpty()) {
-                                viewModel.findSources(item)
-                            } else {
-                                viewModel.findSources(item)
-                            }
+                            viewModel.findSources(item)
                         },
                         enabled = !searchingSources,
                         modifier = Modifier.fillMaxWidth()
@@ -1446,11 +1438,7 @@ private fun DetailScreen(
                     IconButton(
                         onClick = {
                             details?.item?.let {
-                                if (activeInAppTrackers.isNotEmpty()) {
-                                    viewModel.findSources(it, selectedEpisodeForSources)
-                                } else {
-                                    viewModel.findSources(it, selectedEpisodeForSources)
-                                }
+                                viewModel.findSources(it, selectedEpisodeForSources)
                             }
                         },
                         enabled = !searchingSources
@@ -1467,8 +1455,8 @@ private fun DetailScreen(
                     (if (hdRezkaConfigured) 1 else 0)
                 Text(
                     "Индексаторы: ${customIndexers.count { it.enabled }} • трекеры: ${activeInAppTrackers.size} • " +
-                        "Filmix: ${if (filmixConfigured) "подключён" else "не настроен"} • " +
-                        "HDRezka: ${if (hdRezkaConfigured) "настроена" else "не настроена"}",
+                        "Filmix: ${if (filmixConfigured) "устройство привязано" else "не настроен"} • " +
+                        "HDRezka: ${if (hdRezkaConfigured) "адрес задан" else "не настроена"}",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -1483,7 +1471,7 @@ private fun DetailScreen(
                 }
                 if (configuredSources == 0) {
                     MessageCard(
-                        "Источники ещё не настроены. Добавьте торрент-индексатор или настройте Filmix / HDRezka.",
+                        "Внешние источники ещё не настроены. Интернет-архив доступен автоматически; добавьте RSS/Torznab или подключите Filmix / HDRezka.",
                         false
                     )
                 }
@@ -1515,7 +1503,7 @@ private fun DetailScreen(
 
                 if (sources.isEmpty() && !searchingSources && configuredSources > 0) {
                     MessageCard(
-                        "Пока нет результатов. Добавьте RSS/Atom или Torznab-источники либо повторите поиск на встроенных трекерах.",
+                        "Пока нет результатов. Интернет-архив уже проверен автоматически. Проверьте привязку Filmix, доступность зеркала HDRezka и настройки индексаторов; попробуйте оригинальное название.",
                         false
                     )
                 }
