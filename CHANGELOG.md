@@ -4,7 +4,7 @@
 
 - Enable Lampac's built-in JacRed module in local Jackett-compatible mode; existing installations are migrated by removing only the JacRed exclusion and adding defaults only when the corresponding settings are absent.
 - Add `/api/v2.0/indexers/all/results` search to Jacket's unified source pipeline so Lampac's configured Rutor/Kinozal/NNMClub/RuTracker/Toloka and other JacRed adapters contribute magnets or same-origin direct `.torrent` download links.
-- Keep JacRed failures isolated from VOD results; validate resolver links against the configured Lampac origin and reject malformed magnets or foreign resolver URLs.
+- Keep JacRed failures isolated from VOD results; validate direct `.torrent` links against the configured Lampac origin, reject malformed magnets and never invoke upstream `parseMagnet` credential-resolution routes automatically.
 - Add config-migration and JacRed response-parser tests.
 
 ## 2.8.6
