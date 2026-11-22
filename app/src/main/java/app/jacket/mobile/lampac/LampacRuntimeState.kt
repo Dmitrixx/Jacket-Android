@@ -32,14 +32,14 @@ object LampacRuntimeState {
     ) {
         mutable.value = mutable.value.copy(
             phase = phase,
-            message = message.replace(Regex("[\\r\\n\\t]+"), " ").take(240),
+            message = LampacLogSanitizer.sanitize(message).take(240),
             progress = progress
         )
     }
 
     @Synchronized
     fun appendLog(value: String) {
-        val clean = value.replace(Regex("[\\r\\n\\t]+"), " ").trim().take(500)
+        val clean = LampacLogSanitizer.sanitize(value).take(500)
         if (clean.isBlank()) return
         val rows = (mutable.value.logs + clean).takeLast(MAX_LOG_ROWS)
         mutable.value = mutable.value.copy(logs = rows)

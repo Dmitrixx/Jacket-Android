@@ -309,7 +309,7 @@ class LampacRuntimeService : Service() {
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_jacket)
             .setContentTitle("Jacket • Lampac")
-            .setContentText(status.take(140))
+            .setContentText(LampacLogSanitizer.sanitize(status).take(140))
             .setContentIntent(openPending)
             .setOngoing(serverSession != null || operationJob?.isActive == true)
             .setOnlyAlertOnce(true)
@@ -332,9 +332,8 @@ class LampacRuntimeService : Service() {
     }
 
     private fun safeMessage(error: Throwable): String =
-        error.message?.replace(Regex("[\\r\\n\\t]+"), " ")?.take(200)
-            ?.ifBlank { error.javaClass.simpleName }
-            ?: error.javaClass.simpleName
+        LampacLogSanitizer.sanitize(error.message.orEmpty()).take(200)
+            .ifBlank { error.javaClass.simpleName }
 
     override fun onBind(intent: Intent?): IBinder? = null
 

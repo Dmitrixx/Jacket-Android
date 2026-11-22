@@ -21,6 +21,10 @@ The embedded server must listen on **127.0.0.1:9118 only**. Remote Lampac remain
 - Keep the remote Lampac address and account settings as a fallback.
 - Disable public APK uploads and public GitHub Release publishing in this personal-use workflow.
 
+## Runtime diagnostics and credential handling
+
+Lampac provider diagnostics can contain request URLs, account identifiers, cookies or authorization headers. Jacket redacts common token, password, API-key, cookie, bearer and account-identifier fields before writing runtime logs, status text or foreground notifications. Keep this sanitization in the shared logging path; do not add a raw-output UI or diagnostic export. The redactor is a best-effort safety boundary, not a reason to write credentials to upstream logs deliberately.
+
 ## Runtime versions and storage
 
 The pinned Lampac 1.90.2 archive is 480,375,787 bytes before extraction. The installer also downloads the ASP.NET Core 10.0.15 ARM64 runtime. The preflight requires at least 1.5 GB free before downloading; after the archive is downloaded, the ZIP installer calculates the uncompressed size and checks that additional free space is available before extracting. A real device may need more than the preflight minimum, depending on the release archive and Debian package state.
