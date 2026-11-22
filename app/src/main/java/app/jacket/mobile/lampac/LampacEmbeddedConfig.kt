@@ -22,7 +22,6 @@ object LampacEmbeddedConfig {
         "Catalog",
         "DLNA",
         "GStreamer",
-        "JacRed",
         "Sync",
         "TimeCode",
         "TorrServer",
@@ -47,6 +46,18 @@ object LampacEmbeddedConfig {
         )
         .put("chromium", JSONObject().put("enable", false))
         .put("openstat", JSONObject().put("enable", false))
+        .put(
+            "JacRed",
+            JSONObject()
+                .put("typesearch", "jackett")
+                .put("disableJackett", false)
+                .put(
+                    "Jackett",
+                    JSONObject()
+                        .put("search_lang", "query")
+                        .put("timeoutSeconds", 8)
+                )
+        )
         .put(
             "online",
             JSONObject()
@@ -84,12 +95,63 @@ object LampacEmbeddedConfig {
         } catch (error: Exception) {
             throw IOException("Не удалось прочитать init.conf Lampac", error)
         }
-        if (!ensureGStreamerSkipped(config)) return target
+        if (!ensureAndroidModules(config)) return target
         writeConfigAtomically(target, config.toString(2))
         return target
     }
 
-    /** Adds only the module exclusion; unrelated existing server settings are retained. */
+    /** Adds only Android-specific module exclusions and required local JacRed defaults. */
+    internal fun ensureAndroidModules(config: JSONObject): Boolean {
+        var changed = ensureGStreamerSkipped(config)
+        if (ensureJacRedConfigured(config)) changed = true
+        return changed
+    }
+
+    internal fun ensureJacRedConfigured(config: JSONObject): Boolean {
+        var changed = false
+        val baseModule = config.optJSONObject("BaseModule") ?: JSONObject().also {
+            config.put("BaseModule", it)
+            changed = true
+        }
+        val skipped = baseModule.optJSONArray("SkipModules") ?: JSONArray().also {
+            baseModule.put("SkipModules", it)
+            changed = true
+        }
+        for (index in skipped.length() - 1 downTo 0) {
+            if (skipped.optString(index).equals("JacRed", ignoreCase = true)) {
+                skipped.remove(index)
+                changed = true
+            }
+        }
+
+        val jacRed = config.optJSONObject("JacRed") ?: JSONObject().also {
+            config.put("JacRed", it)
+            changed = true
+        }
+        if (jacRed.optString("typesearch").isBlank()) {
+            jacRed.put("typesearch", "jackett")
+            changed = true
+        }
+        if (!jacRed.has("disableJackett")) {
+            jacRed.put("disableJackett", false)
+            changed = true
+        }
+        val jackett = jacRed.optJSONObject("Jackett") ?: JSONObject().also {
+            jacRed.put("Jackett", it)
+            changed = true
+        }
+        if (jackett.optString("search_lang").isBlank()) {
+            jackett.put("search_lang", "query")
+            changed = true
+        }
+        if (!jackett.has("timeoutSeconds")) {
+            jackett.put("timeoutSeconds", 8)
+            changed = true
+        }
+        return changed
+    }
+
+    /** Adds the native GStreamer exclusion; Android uses its own Media3 playback engine. */
     internal fun ensureGStreamerSkipped(config: JSONObject): Boolean {
         val baseModule = config.optJSONObject("BaseModule") ?: JSONObject().also {
             config.put("BaseModule", it)
