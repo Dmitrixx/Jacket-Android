@@ -292,20 +292,22 @@ private object LampacZipInstaller {
                         }
                         zip.getInputStream(entry).use { input ->
                             FileOutputStream(output).use { file ->
-                                written = Math.addExact(
-                                    written,
-                                    copyArchiveEntryBounded(
-                                        input = input,
-                                        output = file,
-                                        declaredSize = entry.size,
-                                        maxBytes = MAX_ENTRY_BYTES
-                                    ) { copied ->
-                                        val aggregate = Math.addExact(written, copied)
-                                        if (aggregate % (512 * 1024L) < copied) {
-                                            onProgress(aggregate, totalBytes)
-                                        }
+                                var lastReportedEntryBytes = 0L
+                                val copied = copyArchiveEntryBounded(
+                                    input = input,
+                                    output = file,
+                                    declaredSize = entry.size,
+                                    maxBytes = MAX_ENTRY_BYTES
+                                ) { entryBytes ->
+                                    val aggregate = Math.addExact(written, entryBytes)
+                                    if (entryBytes - lastReportedEntryBytes >= 512 * 1024L ||
+                                        entryBytes == entry.size
+                                    ) {
+                                        lastReportedEntryBytes = entryBytes
+                                        onProgress(aggregate, totalBytes)
                                     }
-                                )
+                                }
+                                written = Math.addExact(written, copied)
                                 require(written <= totalBytes) {
                                     "Фактический объём архива превышает объявленный размер"
                                 }

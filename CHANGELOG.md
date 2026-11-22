@@ -2,6 +2,8 @@
 
 ## 2.8.0
 
+- Bound actual bytes written while extracting each Lampac ZIP entry; abort on entry expansion mismatch or truncated payload instead of trusting central-directory sizes alone.
+
 - Redact tokens, passwords, cookies, API keys, account identifiers and bearer credentials from embedded Lampac status text, runtime logs and foreground notifications.
 - Consolidated native Filmix and HDRezka search/player adapters, encrypted account state, provider diagnostics and the unified detail-card source picker.
 - Filmix AUTO mode checks the explicitly saved custom HTTPS API first (when present), then the official primary and reserve hosts; activation polling and catalog requests stay pinned to the host that issued the device code.
