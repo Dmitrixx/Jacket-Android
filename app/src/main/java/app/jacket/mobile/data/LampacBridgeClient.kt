@@ -156,18 +156,21 @@ object LampacBridgeClient {
             if (title.isBlank()) continue
 
             val magnet = safeJacRedMagnet(entry.optString("MagnetUri"))
-            val parseLink = entry.optString("Link").takeIf(String::isNotBlank)?.let { candidate ->
-                runCatching { validateSameOriginUrl(candidate, base) }.getOrNull()
+            // Never invoke Lampac parseMagnet routes automatically: some upstream
+            // adapters may try saved or hard-coded tracker credentials. A direct
+            // same-origin .torrent URL is safe to hand to Jacket's torrent engine.
+            val directTorrent = entry.optString("Link").takeIf(String::isNotBlank)?.let { candidate ->
+                safeSameOriginTorrentUrl(candidate, base)
             }
-            if (magnet == null && parseLink == null) continue
+            val details = safeExternalDetailsUrl(entry.optString("Details"))
+            if (magnet == null && directTorrent == null && details == null) continue
 
             val tracker = entry.optString("Tracker").trim().take(100).ifBlank { "Lampac JacRed" }
-            val identity = magnet ?: parseLink.orEmpty()
+            val identity = magnet ?: directTorrent ?: details.orEmpty()
             val trackerId = tracker.lowercase()
                 .filter { it.isLetterOrDigit() || it in "-_." }
                 .take(64)
                 .ifBlank { "tracker" }
-            val details = safeExternalDetailsUrl(entry.optString("Details"))
             val size = entry.optLong("Size", -1L).takeIf { it > 0L }
             val seeders = entry.optInt("Seeders", -1).takeIf { it >= 0 }
             val peers = entry.optInt("Peers", -1).takeIf { it >= 0 }
@@ -176,7 +179,7 @@ object LampacBridgeClient {
                 title = title,
                 providerName = "Lampac JacRed",
                 magnetUri = magnet,
-                downloadUrl = if (magnet == null) parseLink else null,
+                downloadUrl = if (magnet == null) directTorrent else null,
                 sizeBytes = size,
                 seeders = seeders,
                 leechers = peers,
@@ -208,6 +211,13 @@ object LampacBridgeClient {
         }
         return magnet.takeIf { hasInfoHash }
     }
+
+    private fun safeSameOriginTorrentUrl(value: String, baseUrl: String): String? = runCatching {
+        val safe = validateSameOriginUrl(value, baseUrl)
+        val path = URI(safe).rawPath.orEmpty()
+        require(path.endsWith(".torrent", ignoreCase = true))
+        safe
+    }.getOrNull()
 
     private fun safeExternalDetailsUrl(value: String): String? = runCatching {
         val uri = URI(value.trim())
