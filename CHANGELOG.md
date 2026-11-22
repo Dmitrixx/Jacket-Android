@@ -2,6 +2,8 @@
 
 ## 2.8.3
 
+- Recover up to 300 unique valid torrent queue entries after corrupt or duplicate records in V2 and legacy queue formats; damaged rows no longer consume the recovery limit.
+
 - Expand the embedded Lampac diagnostic panel to show the last 24 sanitized process-output lines in a scrollable log. This preserves the original .NET exception and inner socket/host error, which were hidden when only the last four stack frames were shown.
 - Keep diagnostic output in the app's existing redacted log buffer; credentials and cookies remain sanitized.
 

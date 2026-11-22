@@ -34,6 +34,25 @@ class TorrentQueueCodecTest {
     }
 
     @Test
+    fun corruptAndDuplicateRowsDoNotConsumeValidEntryLimit() {
+        val items = (0 until 300).map { index ->
+            val hash = index.toString(16).padStart(40, '0')
+            QueuedTorrent(
+                id = hash,
+                title = "Queue item $index",
+                magnetUri = "magnet:?xt=urn:btih:$hash"
+            )
+        }
+        val encoded = TorrentQueueCodec.encode(items)
+        val lines = encoded.lines().toMutableList()
+        val firstValidRecord = lines[1]
+        lines.add(1, "corrupted-row")
+        lines.add(2, firstValidRecord)
+
+        assertEquals(items, TorrentQueueCodec.decode(lines.joinToString("\n")))
+    }
+
+    @Test
     fun rejectsOversizedQueueBeforeEncoding() {
         val oversizedMagnet = "magnet:?" + "🦄".repeat(8_000)
         val items = (0 until 300).map { index ->
@@ -71,6 +90,24 @@ class TorrentQueueCodecTest {
 
         assertEquals(listOf(TorrentQueueStore.idFor(magnet)), migrated.map { it.id })
         assertEquals("Торрент ${hash.take(10)}", migrated.single().title)
+    }
+
+    @Test
+    fun corruptAndDuplicateLegacyRowsDoNotConsumeValidEntryLimit() {
+        val array = JSONArray().put(JSONObject())
+        val items = (0 until 300).map { index ->
+            val hash = index.toString(16).padStart(40, '0')
+            val magnet = "magnet:?xt=urn:btih:$hash"
+            val item = JSONObject()
+                .put("id", hash)
+                .put("title", "Legacy queue item $index")
+                .put("magnet", magnet)
+            array.put(item)
+            if (index == 0) array.put(item)
+            QueuedTorrent(id = hash, title = "Legacy queue item $index", magnetUri = magnet)
+        }
+
+        assertEquals(items, TorrentQueueCodec.decodeLegacy(array.toString()))
     }
 
     @Test
