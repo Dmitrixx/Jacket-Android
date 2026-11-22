@@ -141,6 +141,8 @@ class LampacEmbeddedConfigTest {
         val imported = """
             {
               "listen":{"ip":"0.0.0.0","port":80,"scheme":"http"},
+              "chromium":{"enable":true},
+              "openstat":{"enable":true},
               "BaseModule":{"SkipModules":["JacRed","GStreamer"]},
               "Filmix":{"token":"filmix-private","priority":7},
               "Rezka":{"premium":true,"token":"rezka-private"},
@@ -155,6 +157,8 @@ class LampacEmbeddedConfigTest {
         assertEquals("127.0.0.1", listen.getString("localhost"))
         assertEquals(9118, listen.getInt("port"))
         assertEquals("http", listen.getString("scheme"))
+        assertFalse(saved.getJSONObject("chromium").getBoolean("enable"))
+        assertFalse(saved.getJSONObject("openstat").getBoolean("enable"))
         assertEquals("filmix-private", saved.getJSONObject("Filmix").getString("token"))
         assertEquals(7, saved.getJSONObject("Filmix").getInt("priority"))
         assertTrue(saved.getJSONObject("Rezka").getBoolean("premium"))
