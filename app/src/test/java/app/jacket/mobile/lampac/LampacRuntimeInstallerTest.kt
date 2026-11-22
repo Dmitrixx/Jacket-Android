@@ -31,7 +31,7 @@ class LampacRuntimeInstallerTest {
         val root = java.nio.file.Files.createTempDirectory("jacket-debian-ready").toFile()
         try {
             File(root, "etc").mkdirs()
-            File(root, "etc/os-release").writeText("NAME=Debian\\nID=debian\\n")
+            File(root, "etc/os-release").writeText("ID=debian")
             File(root, "bin").mkdirs()
             val shell = File(root, "bin/sh").apply { writeText("placeholder") }
             File(root, "usr/bin").mkdirs()
@@ -49,7 +49,7 @@ class LampacRuntimeInstallerTest {
         val root = java.nio.file.Files.createTempDirectory("jacket-debian-tools").toFile()
         try {
             File(root, "etc").mkdirs()
-            val osRelease = File(root, "etc/os-release").apply { writeText("ID=ubuntu\\n") }
+            val osRelease = File(root, "etc/os-release").apply { writeText("ID=ubuntu") }
             File(root, "bin").mkdirs()
             val shell = File(root, "bin/sh").apply { writeText("placeholder") }
             File(root, "usr/bin").mkdirs()
@@ -58,7 +58,7 @@ class LampacRuntimeInstallerTest {
             assertTrue(apt.setExecutable(true))
 
             assertFalse(isDebianRootfsReady(root))
-            osRelease.writeText("ID=debian\\n")
+            osRelease.writeText("ID=debian")
             assertTrue(shell.setExecutable(false))
             assertFalse(isDebianRootfsReady(root))
             assertTrue(shell.setExecutable(true))
