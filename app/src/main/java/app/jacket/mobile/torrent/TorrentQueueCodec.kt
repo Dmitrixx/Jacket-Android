@@ -49,7 +49,7 @@ object TorrentQueueCodec {
         require(value.length <= MAX_ENCODED_BYTES) { "Файл очереди слишком большой" }
         val lines = value.lineSequence().toList()
         require(lines.firstOrNull() == HEADER) { "Неизвестный формат очереди" }
-        return lines.drop(1).filter(String::isNotBlank).take(MAX_QUEUE_ITEMS).mapNotNull { line ->
+        return lines.drop(1).asSequence().filter(String::isNotBlank).mapNotNull { line ->
             runCatching {
                 val fields = line.split(SEPARATOR)
                 require(fields.size == 5) { "Повреждена запись очереди" }
@@ -72,7 +72,7 @@ object TorrentQueueCodec {
                     selectedFileIndex = index
                 )
             }.getOrNull()
-        }.distinctBy { it.id.lowercase() }
+        }.distinctBy { it.id.lowercase() }.take(MAX_QUEUE_ITEMS).toList()
     }
 
     /**
