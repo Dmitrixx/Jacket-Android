@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.8.10
+
+- Fixed embedded Lampac provider requests by forwarding TMDB title, year, media type and identifiers to each discovered `/lite/{provider}` route.
+- Resolve IMDb and Kinopoisk IDs through Lampac's cached `/externalids` endpoint and pass the selected season/episode to series providers.
+- Added regression tests for provider request context and external-ID lookup.
+
 ## 2.8.9
 
 - Load all installed Lampac provider modules whose own manifests enable them by defaulting `BaseModule.LoadModules` to `[".*"]`; keep Android-incompatible native, network-listener and transcoding modules excluded.

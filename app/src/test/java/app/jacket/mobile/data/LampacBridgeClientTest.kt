@@ -77,6 +77,80 @@ class LampacBridgeClientTest {
     }
 
     @Test
+    fun buildsExternalIdsLookupForMovieAndSeries() {
+        val movieUrl = LampacBridgeClient.buildExternalIdsUrl("http://127.0.0.1:9118", movie)
+        assertTrue(movieUrl.startsWith("http://127.0.0.1:9118/externalids?"))
+        assertTrue(movieUrl.contains("id=550"))
+        assertTrue(movieUrl.contains("serial=0"))
+
+        val seriesUrl = LampacBridgeClient.buildExternalIdsUrl("http://127.0.0.1:9118", series)
+        assertTrue(seriesUrl.contains("id=1399"))
+        assertTrue(seriesUrl.contains("serial=1"))
+    }
+
+    @Test
+    fun parsesLampacExternalIdsAndIgnoresEmptyValues() {
+        val ids = LampacBridgeClient.parseExternalIds(
+            """{"imdb_id":"tt0133093","kinopoisk_id":"301"}"""
+        )
+        assertEquals("tt0133093", ids.imdbId)
+        assertEquals("301", ids.kinopoiskId)
+
+        val empty = LampacBridgeClient.parseExternalIds(
+            """{"imdb_id":"","kinopoisk_id":"0"}"""
+        )
+        assertEquals("", empty.imdbId)
+        assertEquals("", empty.kinopoiskId)
+    }
+
+    @Test
+    fun providerRequestsCarryTheMediaContextAndPreserveRouteParameters() {
+        val settings = LampacSettings(
+            baseUrl = "http://127.0.0.1:9118",
+            accountEmail = "user@example.com",
+            uid = "device-1",
+            token = "private-token",
+            enabled = true
+        )
+        val url = LampacBridgeClient.buildProviderRequestUrl(
+            providerUrl = "http://127.0.0.1:9118/lite/gencit?playlist=17",
+            settings = settings,
+            item = movie,
+            externalIds = LampacExternalIds("tt0133093", "301")
+        )
+
+        assertTrue(url.contains("playlist=17"))
+        assertTrue(url.contains("id=550"))
+        assertTrue(url.contains("tmdb_id=550"))
+        assertTrue(url.contains("imdb_id=tt0133093"))
+        assertTrue(url.contains("kinopoisk_id=301"))
+        assertTrue(url.contains("title=%D0%91%D0%BE%D0%B9%D1%86%D0%BE%D0%B2%D1%81%D0%BA%D0%B8%D0%B9%20%D0%BA%D0%BB%D1%83%D0%B1"))
+        assertTrue(url.contains("original_title="))
+        assertTrue(url.contains("source=tmdb"))
+        assertTrue(url.contains("year=1999"))
+        assertTrue(url.contains("serial=0"))
+        assertTrue(url.contains("rjson=true"))
+        assertTrue(url.contains("account_email=user%40example.com"))
+        assertTrue(url.contains("uid=device-1"))
+        assertTrue(url.contains("token=private-token"))
+    }
+
+    @Test
+    fun providerRequestsCarryTheSelectedSeriesEpisode() {
+        val url = LampacBridgeClient.buildProviderRequestUrl(
+            providerUrl = "http://127.0.0.1:9118/lite/series",
+            settings = LampacSettings(baseUrl = "http://127.0.0.1:9118", enabled = true),
+            item = series,
+            externalIds = LampacExternalIds("tt0944947", "464963"),
+            targetSeason = 2,
+            targetEpisode = 3
+        )
+        assertTrue(url.contains("serial=1"))
+        assertTrue(url.contains("s=2"))
+        assertTrue(url.contains("e=3"))
+    }
+
+    @Test
     fun buildsJacRedUrlWithMovieOrSeriesCategoryAndYear() {
         val movieUrl = LampacBridgeClient.buildJacRedSearchUrl(
             LampacSettings(baseUrl = "http://127.0.0.1:9118", enabled = true),

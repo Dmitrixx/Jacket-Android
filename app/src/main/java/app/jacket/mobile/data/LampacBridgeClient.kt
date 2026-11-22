@@ -33,6 +33,11 @@ internal data class LampacJacRedOutcome(
     val checkedResults: Int
 )
 
+internal data class LampacExternalIds(
+    val imdbId: String = "",
+    val kinopoiskId: String = ""
+)
+
 /** Dynamic Lampac federation; provider routes are discovered from the configured server. */
 object LampacBridgeClient {
     private const val MAX_REDIRECTS = 3
@@ -95,6 +100,73 @@ object LampacBridgeClient {
         )
         addAccountParams(params, settings)
         return appendQuery("$base/lite/events", params)
+    }
+
+    /** Builds Lampac's external-ID lookup for a TMDB movie or series. */
+    internal fun buildExternalIdsUrl(baseUrl: String, item: CatalogItem): String {
+        val base = normalizeBaseUrl(baseUrl)
+        require(item.providerId == "tmdb") { "Lampac bridge пока поддерживает карточки TMDB" }
+        val tmdbId = item.providerItemId.toLongOrNull()?.takeIf { it > 0L }
+            ?: throw IllegalArgumentException("У карточки отсутствует корректный TMDB ID")
+        return appendQuery(
+            "$base/externalids",
+            linkedMapOf(
+                "id" to tmdbId.toString(),
+                "serial" to if (item.kind == MediaKind.SERIES) "1" else "0"
+            )
+        )
+    }
+
+    internal fun parseExternalIds(body: String): LampacExternalIds {
+        val root = runCatching { JSONObject(body) }
+            .getOrElse { throw IOException("Lampac externalids вернул некорректный JSON", it) }
+        fun readId(key: String): String {
+            val value = root.opt(key)
+            if (value == null || value == JSONObject.NULL) return ""
+            return value.toString().trim().takeIf {
+                it.isNotBlank() && !it.equals("null", true) && it != "0"
+            }.orEmpty()
+        }
+        return LampacExternalIds(
+            imdbId = readId("imdb_id"),
+            kinopoiskId = readId("kinopoisk_id")
+        )
+    }
+
+    /**
+     * /lite/events and /lifeevents return provider route templates. The subsequent
+     * /lite/{provider} request must receive the media identifiers used by Lampac's
+     * own checksearch request or many provider controllers cannot resolve the title.
+     */
+    internal fun buildProviderRequestUrl(
+        providerUrl: String,
+        settings: LampacSettings,
+        item: CatalogItem,
+        externalIds: LampacExternalIds = LampacExternalIds(),
+        targetSeason: Int? = null,
+        targetEpisode: Int? = null
+    ): String {
+        val base = normalizeBaseUrl(settings.baseUrl)
+        require(item.providerId == "tmdb") { "Lampac bridge пока поддерживает карточки TMDB" }
+        val tmdbId = item.providerItemId.toLongOrNull()?.takeIf { it > 0L }
+            ?: throw IllegalArgumentException("У карточки отсутствует корректный TMDB ID")
+        val safe = validateSameOriginUrl(providerUrl, base)
+        val params = linkedMapOf(
+            "id" to tmdbId.toString(),
+            "tmdb_id" to tmdbId.toString(),
+            "imdb_id" to externalIds.imdbId,
+            "kinopoisk_id" to externalIds.kinopoiskId,
+            "title" to item.title,
+            "original_title" to item.title,
+            "source" to "tmdb",
+            "year" to item.year.takeIf { it.matches(Regex("""\d{4}""")) }.orEmpty().ifBlank { "0" },
+            "serial" to if (item.kind == MediaKind.SERIES) "1" else "0"
+        )
+        targetSeason?.takeIf { it > 0 }?.let { params["s"] = it.toString() }
+        targetEpisode?.takeIf { it > 0 }?.let { params["e"] = it.toString() }
+        if (!hasQueryParam(safe, "rjson")) params["rjson"] = "true"
+        addAccountParams(params, settings)
+        return appendQuery(safe, params)
     }
 
     /** Builds a same-origin request for Lampac's built-in JacRed/Jackett-compatible API. */
@@ -317,6 +389,13 @@ object LampacBridgeClient {
         }
 
         if (routes.isEmpty()) return LampacSearchOutcome(emptyList(), emptyList(), 0, 0)
+
+        // /lite/events has already resolved external IDs for its own provider checks.
+        // Read the cached mapping once, then forward those IDs to each provider route.
+        val externalIds = runCatching {
+            parseExternalIds(requestText(buildExternalIdsUrl(base, item), base))
+        }.getOrDefault(LampacExternalIds())
+
         val episode = episodePattern.find(episodeCode.orEmpty())
         val targetSeason = episode?.groupValues?.getOrNull(1)?.toIntOrNull()
         val targetEpisode = episode?.groupValues?.getOrNull(2)?.toIntOrNull()
@@ -335,6 +414,7 @@ object LampacBridgeClient {
                             settings = settings,
                             base = base,
                             item = item,
+                            externalIds = externalIds,
                             targetSeason = targetSeason,
                             targetEpisode = targetEpisode
                         )
@@ -386,13 +466,16 @@ object LampacBridgeClient {
         settings: LampacSettings,
         base: String,
         item: CatalogItem,
+        externalIds: LampacExternalIds,
         targetSeason: Int?,
         targetEpisode: Int?
     ): List<SourceResult> {
         if (Thread.currentThread().isInterrupted) throw IOException("Поиск Lampac отменён")
         val providerId = providerRouteId(route)
         val safePageUrl = stripSensitiveQueryParams(route.url, base)
-        val providerUrl = appendJsonModeAndAuth(route.url, settings, base)
+        val providerUrl = buildProviderRequestUrl(
+            route.url, settings, item, externalIds, targetSeason, targetEpisode
+        )
         val payload = JSONObject(requestText(providerUrl, base))
         return when (payload.optString("type").lowercase()) {
             "movie" -> if (item.kind == MediaKind.MOVIE) {
@@ -407,7 +490,9 @@ object LampacBridgeClient {
                 } else {
                     val seasonUrl = selectSeasonUrl(payload.optJSONArray("data"), targetSeason)
                         ?: return emptyList()
-                    val episodeRequestUrl = appendJsonModeAndAuth(seasonUrl, settings, base)
+                    val episodeRequestUrl = buildProviderRequestUrl(
+                        seasonUrl, settings, item, externalIds, targetSeason, targetEpisode
+                    )
                     val episodePayload = JSONObject(requestText(episodeRequestUrl, base))
                     if (episodePayload.optString("type").equals("episode", true)) {
                         parsePlayableEntries(
@@ -572,14 +657,6 @@ object LampacBridgeClient {
             append(uri.scheme).append("://").append(uri.rawAuthority).append(path)
             if (query.isNotBlank()) append('?').append(query)
         }
-    }
-
-    private fun appendJsonModeAndAuth(url: String, settings: LampacSettings, baseUrl: String): String {
-        val safe = validateSameOriginUrl(url, baseUrl)
-        val params = linkedMapOf<String, String>()
-        if (!hasQueryParam(safe, "rjson")) params["rjson"] = "true"
-        addAccountParams(params, settings)
-        return appendQuery(safe, params)
     }
 
     private fun addAccountParams(target: LinkedHashMap<String, String>, settings: LampacSettings) {
