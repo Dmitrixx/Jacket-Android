@@ -53,6 +53,9 @@ object HdRezkaLoginClient {
         val uri = runCatching { URI(clean) }
             .getOrElse { throw IllegalArgumentException("Некорректный адрес зеркала HDRezka", it) }
         require(uri.scheme.equals("https", true)) { "Зеркало должно использовать HTTPS" }
+        require(uri.port == -1 || uri.port == 443) {
+            "Зеркало должно использовать стандартный HTTPS-порт 443"
+        }
         require(!uri.host.isNullOrBlank() && uri.rawUserInfo == null) {
             "Укажите HTTPS-домен зеркала без логина и пароля в URL"
         }
@@ -66,17 +69,42 @@ object HdRezkaLoginClient {
         return clean.trimEnd('/')
     }
 
+    private val knownRezkaMirrorHosts = setOf(
+        "hdrezka.cm",
+        "hdrezka.la",
+        "standby-rezka.tv",
+        "hdrezka.tv",
+        "hdrezka.ink",
+        "hdrezka.buzz",
+        "hdrezka.loan",
+        "hdrezka.rest",
+        "hdrezka.center",
+        "hdrezka.fyi",
+        "hdrezka.run",
+        "hdrezka.today",
+        "hdrezka.win",
+        "hdrezka.tips",
+        "hdrezka.solutions",
+        "hdrezka.co",
+        "hdrezka-home.tv",
+        "rezka.ag",
+        "hdrezka.club",
+        "hdrezka.me",
+        "hdrezka.city",
+        "hdrezka.vip",
+        "rezka-ua.net",
+        "rezka.zip",
+        "rezkify.com"
+    )
+
     internal fun isKnownRezkaMirror(rawHost: String): Boolean {
-        val host = rawHost.lowercase().removePrefix("www.")
-        return host == "rezkify.com" ||
-            host.startsWith("hdrezka.") || host.startsWith("hdrezka-") ||
-            host.startsWith("rezka.") || host.startsWith("rezka-") ||
-            host.startsWith("standby-rezka.")
+        val host = rawHost.trim().lowercase().removePrefix("www.")
+        return host in knownRezkaMirrorHosts
     }
 
     /**
      * A user-owned custom mirror is pinned to its configured origin.
-     * Known Rezka host patterns retain the existing allowlisted mirror redirects.
+     * Known mirrors may redirect only to another exact host in the maintained allowlist.
      */
     internal fun validateRedirectTarget(
         value: String,
