@@ -6,7 +6,7 @@ plugins {
 
 android {
     namespace = "app.jacket.mobile"
-    compileSdk = 37
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "app.jacket.mobile"
@@ -65,7 +65,7 @@ dependencies {
     // The PRoot execution engine is ARM64-only in embedded mode; remote Lampac remains available elsewhere.
     implementation(project(":proot-engine"))
 
-    // Compose 2026.06 stays pinned; API 37 is required by the embedded PRoot engine module.
+    // Compose 2026.06 remains pinned to the app's stable compile SDK (API 36).
     val composeBom = platform("androidx.compose:compose-bom:2026.06.00")
     implementation(composeBom)
 
