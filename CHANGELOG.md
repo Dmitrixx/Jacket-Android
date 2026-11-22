@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.8.7
+
+- Enable Lampac's built-in JacRed module in local Jackett-compatible mode; existing installations are migrated by removing only the JacRed exclusion and adding defaults only when the corresponding settings are absent.
+- Add `/api/v2.0/indexers/all/results` search to Jacket's unified source pipeline so Lampac's configured Rutor/Kinozal/NNMClub/RuTracker/Toloka and other JacRed adapters contribute magnets or same-origin torrent-resolver links.
+- Keep JacRed failures isolated from VOD results; validate resolver links against the configured Lampac origin and reject malformed magnets or foreign resolver URLs.
+- Add config-migration and JacRed response-parser tests.
+
 ## 2.8.6
 
 - Fix the local Lampac auto-connect retry state: an earlier startup error can no longer cancel a new pending connection before the Android service has entered INSTALLING/STARTING.
