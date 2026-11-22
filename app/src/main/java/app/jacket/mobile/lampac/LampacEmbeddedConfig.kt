@@ -119,6 +119,7 @@ object LampacEmbeddedConfig {
         if (ensureAllModulesLoadedWhenUnspecified(config)) changed = true
         if (ensureGStreamerSkipped(config)) changed = true
         if (ensureUpstreamDefaultExclusions(config)) changed = true
+        if (ensureAndroidOptionalModulesSkipped(config)) changed = true
         if (ensureJacRedConfigured(config)) changed = true
         return changed
     }
@@ -168,6 +169,24 @@ object LampacEmbeddedConfig {
         )
         var changed = false
         required.forEach { module ->
+            if ((0 until skipped.length()).none { skipped.optString(it).equals(module, true) }) {
+                skipped.put(module)
+                changed = true
+            }
+        }
+        return changed
+    }
+
+    /** Keep modules that rely on native services, privileged networking or extra ports off on Android. */
+    internal fun ensureAndroidOptionalModulesSkipped(config: JSONObject): Boolean {
+        val baseModule = config.optJSONObject("BaseModule") ?: JSONObject().also {
+            config.put("BaseModule", it)
+        }
+        val skipped = baseModule.optJSONArray("SkipModules") ?: JSONArray().also {
+            baseModule.put("SkipModules", it)
+        }
+        var changed = false
+        skippedModules.forEach { module ->
             if ((0 until skipped.length()).none { skipped.optString(it).equals(module, true) }) {
                 skipped.put(module)
                 changed = true
