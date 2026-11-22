@@ -2950,7 +2950,10 @@ private fun SettingsScreen(
                                         fontWeight = FontWeight.SemiBold
                                     )
                                     Text(
-                                        lampacRuntime.message,
+                                        if (localLampacInstalled &&
+                                            lampacRuntime.phase == app.jacket.mobile.lampac.LampacRuntimePhase.IDLE
+                                        ) "Lampac установлен. Сервер остановлен."
+                                        else lampacRuntime.message,
                                         style = MaterialTheme.typography.bodySmall,
                                         color = if (lampacRuntime.phase == app.jacket.mobile.lampac.LampacRuntimePhase.ERROR)
                                             MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant
@@ -3003,7 +3006,7 @@ private fun SettingsScreen(
                                         onClick = {
                                             lampacBaseUrl = app.jacket.mobile.lampac.LampacEmbeddedConfig.BASE_URL
                                             lampacEnabled = true
-                                            viewModel.saveLampacSettings(
+                                            viewModel.testLampacConnection(
                                                 LampacSettings(
                                                     baseUrl = app.jacket.mobile.lampac.LampacEmbeddedConfig.BASE_URL,
                                                     accountEmail = lampacAccountEmail,
@@ -3013,12 +3016,14 @@ private fun SettingsScreen(
                                                 )
                                             )
                                         },
-                                        enabled = localLampacInstalled,
+                                        enabled = localLampacInstalled &&
+                                            lampacRuntime.phase == app.jacket.mobile.lampac.LampacRuntimePhase.RUNNING &&
+                                            !isLampacBusy && !lampacRuntimeBusy,
                                         modifier = Modifier.fillMaxWidth()
                                     ) {
                                         Icon(Icons.Default.OpenInNew, contentDescription = null)
                                         Spacer(Modifier.width(8.dp))
-                                        Text("Подключить localhost к общему поиску")
+                                        Text("Проверить соединение и подключить")
                                     }
                                     if (lampacRuntime.logs.isNotEmpty()) {
                                         Text(
