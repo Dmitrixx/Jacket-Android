@@ -111,4 +111,26 @@ class LampacRuntimeInstallerTest {
         assertTrue(rejected)
     }
 
+    @Test
+    fun boundedArchiveCopyPropagatesCancellationFromProgressCallback() {
+        var checks = 0
+        var cancelled = false
+        try {
+            copyArchiveEntryBounded(
+                input = ByteArrayInputStream(ByteArray(128 * 1024)),
+                output = ByteArrayOutputStream(),
+                declaredSize = 128L * 1024L,
+                maxBytes = 256L * 1024L
+            ) {
+                checks++
+                throw kotlinx.coroutines.CancellationException("cancel extraction")
+            }
+        } catch (_: kotlinx.coroutines.CancellationException) {
+            cancelled = true
+        }
+
+        assertTrue(cancelled)
+        assertTrue(checks == 1)
+    }
+
 }

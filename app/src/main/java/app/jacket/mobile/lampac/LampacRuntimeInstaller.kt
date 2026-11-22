@@ -299,6 +299,7 @@ private object LampacZipInstaller {
                                     declaredSize = entry.size,
                                     maxBytes = MAX_ENTRY_BYTES
                                 ) { entryBytes ->
+                                    context.ensureActive()
                                     val aggregate = Math.addExact(written, entryBytes)
                                     if (entryBytes - lastReportedEntryBytes >= 512 * 1024L ||
                                         entryBytes == entry.size

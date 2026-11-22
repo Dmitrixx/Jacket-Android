@@ -2,7 +2,7 @@
 
 ## 2.8.0
 
-- Bound actual bytes written while extracting each Lampac ZIP entry; abort on entry expansion mismatch or truncated payload instead of trusting central-directory sizes alone.
+- Bound actual bytes written while extracting each Lampac ZIP entry; abort on entry expansion mismatch or truncated payload, and check coroutine cancellation between chunks instead of trusting central-directory sizes alone.
 
 - Redact tokens, passwords, cookies, API keys, account identifiers and bearer credentials from embedded Lampac status text, runtime logs and foreground notifications.
 - Consolidated native Filmix and HDRezka search/player adapters, encrypted account state, provider diagnostics and the unified detail-card source picker.
