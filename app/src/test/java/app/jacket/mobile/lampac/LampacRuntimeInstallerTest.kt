@@ -163,7 +163,7 @@ class LampacRuntimeInstallerTest {
 
         var nullByteRejected = false
         try {
-            buildDotnetInstallCommand("runtime\\u0000.tar.gz")
+            buildDotnetInstallCommand("runtime\u0000.tar.gz")
         } catch (_: IllegalArgumentException) {
             nullByteRejected = true
         }
