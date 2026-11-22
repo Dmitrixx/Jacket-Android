@@ -148,6 +148,7 @@ private const val TAB_MOVIES = 1
 private const val TAB_SERIES = 2
 private const val TAB_SEARCH = 3
 private const val TAB_LIBRARY = 4
+private const val TAB_LAMPA = 5
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -194,13 +195,29 @@ fun JacketApp(viewModel: MainViewModel) {
         isTorrentPlayback = false
     }
 
+    fun openLampaPlayer(title: String, url: String, headers: Map<String, String>) {
+        playerTitle = title
+        playerUrl = url
+        playerProgressKey = PlaybackProgressStore.urlKey(url)
+        playerInitialPosition = PlaybackProgressStore(context).position(playerProgressKey!!)
+        playerSubtitles = emptyList()
+        playerHeaders = headers.filterKeys {
+            it.equals("Referer", true) || it.equals("User-Agent", true)
+        }
+        isTorrentPlayback = false
+    }
+
     // Android TV remotes dispatch Back through the system dispatcher; unwind the current screen first.
-    BackHandler(enabled = playerUrl != null || showSettings || showDownloads || details != null) {
+    BackHandler(
+        enabled = playerUrl != null || showSettings || showDownloads ||
+            details != null || selectedTab == TAB_LAMPA
+    ) {
         when {
             playerUrl != null -> closePlayer()
             showSettings -> showSettings = false
             showDownloads -> showDownloads = false
             details != null -> viewModel.closeDetails()
+            selectedTab == TAB_LAMPA -> selectedTab = TAB_HOME
         }
     }
 
@@ -312,6 +329,13 @@ fun JacketApp(viewModel: MainViewModel) {
         Scaffold(
         topBar = {
             TopAppBar(
+                navigationIcon = {
+                    if (selectedTab == TAB_LAMPA) {
+                        IconButton(onClick = { selectedTab = TAB_HOME }) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Назад в Jacket")
+                        }
+                    }
+                },
                 title = {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
@@ -335,9 +359,14 @@ fun JacketApp(viewModel: MainViewModel) {
                                 fontWeight = FontWeight.Black, color = Color(0xFF17120D))
                         }
                         Column(verticalArrangement = Arrangement.spacedBy(1.dp)) {
-                            Text("JACKET", style = MaterialTheme.typography.titleLarge,
-                                fontWeight = FontWeight.Black, letterSpacing = 1.4.sp)
-                            Text("КИНО  •  СЕРИАЛЫ  •  ТОРРЕНТЫ",
+                            Text(
+                                if (selectedTab == TAB_LAMPA) "LAMPA" else "JACKET",
+                                style = MaterialTheme.typography.titleLarge,
+                                fontWeight = FontWeight.Black,
+                                letterSpacing = 1.4.sp
+                            )
+                            Text(
+                                if (selectedTab == TAB_LAMPA) "ВСТРОЕННЫЙ ИНТЕРФЕЙС" else "КИНО  •  СЕРИАЛЫ  •  ТОРРЕНТЫ",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant, letterSpacing = 0.6.sp)
                         }
@@ -359,7 +388,7 @@ fun JacketApp(viewModel: MainViewModel) {
             )
         },
         bottomBar = {
-            if (!isTv) {
+            if (!isTv && selectedTab != TAB_LAMPA) {
                 MainNavigationBar(
                     selectedTab = selectedTab,
                     onSelect = { selectedTab = it }
@@ -378,7 +407,9 @@ fun JacketApp(viewModel: MainViewModel) {
                     viewModel = viewModel,
                     modifier = Modifier.weight(1f).fillMaxSize(),
                     onShowMovies = { selectedTab = TAB_MOVIES },
-                    onDownloads = { showDownloads = true }
+                    onDownloads = { showDownloads = true },
+                    onLampaBack = { selectedTab = TAB_HOME },
+                    onLampaPlay = ::openLampaPlayer
                 )
             }
         } else {
@@ -387,7 +418,9 @@ fun JacketApp(viewModel: MainViewModel) {
                 viewModel = viewModel,
                 modifier = Modifier.padding(padding),
                 onShowMovies = { selectedTab = TAB_MOVIES },
-                onDownloads = { showDownloads = true }
+                onDownloads = { showDownloads = true },
+                onLampaBack = { selectedTab = TAB_HOME },
+                onLampaPlay = ::openLampaPlayer
             )
         }
         }
@@ -431,6 +464,12 @@ private fun MainNavigationRail(
                 icon = { Icon(Icons.Default.Favorite, contentDescription = null) },
                 label = { Text("Моё") }
             )
+            NavigationRailItem(
+                selected = selectedTab == TAB_LAMPA,
+                onClick = { onSelect(TAB_LAMPA) },
+                icon = { Icon(Icons.Default.PlayArrow, contentDescription = null) },
+                label = { Text("Lampa") }
+            )
         }
     }
 }
@@ -441,7 +480,9 @@ private fun MainTabContent(
     viewModel: MainViewModel,
     modifier: Modifier,
     onShowMovies: () -> Unit,
-    onDownloads: () -> Unit
+    onDownloads: () -> Unit,
+    onLampaBack: () -> Unit,
+    onLampaPlay: (title: String, url: String, headers: Map<String, String>) -> Unit
 ) {
     val loading by viewModel.isLoading.collectAsState()
     val tabStateHolder = rememberSaveableStateHolder()
@@ -473,6 +514,11 @@ private fun MainTabContent(
                 viewModel = viewModel,
                 modifier = modifier,
                 onOpen = viewModel::openItem
+            )
+            TAB_LAMPA -> LampaWebViewScreen(
+                modifier = modifier,
+                onBack = onLampaBack,
+                onPlay = onLampaPlay
             )
             else -> LibraryScreen(
                 viewModel = viewModel,
@@ -526,6 +572,12 @@ private fun MainNavigationBar(
             onClick = { onSelect(TAB_LIBRARY) },
             icon = { Icon(Icons.Default.Favorite, contentDescription = null) },
             label = { Text("Моё") }
+        )
+        NavigationBarItem(
+            selected = selectedTab == TAB_LAMPA,
+            onClick = { onSelect(TAB_LAMPA) },
+            icon = { Icon(Icons.Default.PlayArrow, contentDescription = null) },
+            label = { Text("Lampa") }
         )
         }
     }

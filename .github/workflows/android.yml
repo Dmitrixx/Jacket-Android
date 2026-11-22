@@ -30,6 +30,15 @@ jobs:
           distribution: temurin
           java-version: '17'
 
+      - name: Set up Node.js for Lampa assets
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install Lampa web build dependencies
+        working-directory: third_party/lampa-source
+        run: npm install --no-package-lock --no-audit --no-fund
+
       - name: Set up Android command-line tools
         uses: android-actions/setup-android@v4
         with:
