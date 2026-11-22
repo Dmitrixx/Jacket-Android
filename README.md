@@ -1,4 +1,4 @@
-# Jacket — Android media center 2.8.5
+# Jacket — Android media center 2.8.6
 
 ## Latest APK from main
 

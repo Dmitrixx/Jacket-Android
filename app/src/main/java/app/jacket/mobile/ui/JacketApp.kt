@@ -2254,13 +2254,22 @@ private fun SettingsScreen(
     var lampacToken by remember(lampacSettings.token) { mutableStateOf(lampacSettings.token) }
     var lampacEnabled by remember(lampacSettings.enabled) { mutableStateOf(lampacSettings.enabled) }
     var localLampacAutoConnectPending by rememberSaveable { mutableStateOf(false) }
+    var localLampacStartupObserved by rememberSaveable { mutableStateOf(false) }
 
     LaunchedEffect(lampacRuntime.phase, localLampacAutoConnectPending, isLampacBusy) {
         when {
             localLampacAutoConnectPending &&
+                lampacRuntime.phase in setOf(
+                    app.jacket.mobile.lampac.LampacRuntimePhase.INSTALLING,
+                    app.jacket.mobile.lampac.LampacRuntimePhase.STARTING
+                ) -> {
+                localLampacStartupObserved = true
+            }
+            localLampacAutoConnectPending &&
                 lampacRuntime.phase == app.jacket.mobile.lampac.LampacRuntimePhase.RUNNING &&
                 !isLampacBusy -> {
                 localLampacAutoConnectPending = false
+                localLampacStartupObserved = false
                 val localSettings = LampacSettings(
                     baseUrl = app.jacket.mobile.lampac.LampacEmbeddedConfig.BASE_URL,
                     accountEmail = lampacAccountEmail,
@@ -2272,9 +2281,10 @@ private fun SettingsScreen(
                 lampacEnabled = true
                 viewModel.testLampacConnection(localSettings)
             }
-            localLampacAutoConnectPending &&
+            localLampacAutoConnectPending && localLampacStartupObserved &&
                 lampacRuntime.phase == app.jacket.mobile.lampac.LampacRuntimePhase.ERROR -> {
                 localLampacAutoConnectPending = false
+                localLampacStartupObserved = false
             }
         }
     }
@@ -3050,6 +3060,7 @@ private fun SettingsScreen(
                                                 // Connect the local endpoint to combined search only
                                                 // after the server health probe reports RUNNING.
                                                 localLampacAutoConnectPending = true
+                                                localLampacStartupObserved = false
                                                 if (localLampacInstalled) {
                                                     app.jacket.mobile.lampac.LampacRuntimeService.start(context)
                                                 } else {

@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.8.6
+
+- Fix the local Lampac auto-connect retry state: an earlier startup error can no longer cancel a new pending connection before the Android service has entered INSTALLING/STARTING.
+- Clear the pending connection only after the current startup attempt reaches RUNNING or fails after startup has been observed.
+
 ## 2.8.5
 
 - Automatically connect the embedded loopback Lampac server to Jacket's unified source search after its health check succeeds; persist the local address and enable the Lampac search provider without a separate manual step.
