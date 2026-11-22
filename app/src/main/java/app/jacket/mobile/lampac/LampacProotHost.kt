@@ -126,7 +126,7 @@ object LampacProotBootstrap {
         if (Files.isSymbolicLink(link.toPath())) {
             val current = runCatching { Files.readSymbolicLink(link.toPath()).toString() }.getOrNull()
             if (current == target.absolutePath) return
-            Os.unlink(link.absolutePath)
+            Files.deleteIfExists(link.toPath())
         } else if (link.exists()) {
             if (!link.delete()) throw IOException("Не удалось заменить ${link.absolutePath}")
         }
