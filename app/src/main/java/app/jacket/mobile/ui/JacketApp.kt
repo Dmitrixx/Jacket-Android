@@ -2999,6 +2999,7 @@ private fun SettingsScreen(
                                         when {
                                             !embeddedLampacSupported -> "Встроенный режим требует ARM64. На этом устройстве используйте удалённый Lampac по HTTPS."
                                             lampacRuntime.phase == app.jacket.mobile.lampac.LampacRuntimePhase.RUNNING -> "Сервер запущен: http://127.0.0.1:9118"
+                                            lampacRuntime.phase == app.jacket.mobile.lampac.LampacRuntimePhase.STARTING -> "Lampac запускается. Первая компиляция модулей может занять до 5 минут."
                                             localLampacInstalled -> "Lampac и .NET установлены. Сервер сейчас остановлен."
                                             else -> "Ещё не установлено. Загрузка архива Lampac около 480 МБ и дополнительного .NET Runtime."
                                         },
@@ -3090,7 +3091,7 @@ private fun SettingsScreen(
                                         )
                                     }
                                     Text(
-                                        "Перед установкой требуется около 1,5 ГБ свободной памяти. Сервер доступен только на 127.0.0.1:9118; браузерная автоматизация и тяжёлое транскодирование отключены. Установка выполняется по нажатию, автоматического запуска после перезагрузки нет.",
+                                        "Перед установкой требуется около 1,5 ГБ свободной памяти. При первом запуске .NET компилирует модули провайдеров — это может занять до 5 минут; пока в журнале появляются строки compilation, не закрывайте Jacket и не нажимайте «Остановить». Сервер доступен только на 127.0.0.1:9118; браузерная автоматизация и тяжёлое транскодирование отключены. Автоматического запуска после перезагрузки нет.",
                                         style = MaterialTheme.typography.labelSmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )

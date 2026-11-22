@@ -127,7 +127,10 @@ class LampacRuntimeService : Service() {
         }
 
         isStopping.set(false)
-        LampacRuntimeState.update(LampacRuntimePhase.STARTING, "Запускаем Lampac на 127.0.0.1:9118…")
+        LampacRuntimeState.update(
+            LampacRuntimePhase.STARTING,
+            "Запускаем Lampac. Первый запуск может занять до 5 минут: .NET компилирует модули…"
+        )
         updateNotification("Запускаем Lampac…")
         try {
             val host = JacketProotHost(applicationContext)
@@ -172,7 +175,12 @@ class LampacRuntimeService : Service() {
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (error: Exception) {
+            // Stop the monitor before our intentional Ctrl+C cleanup so the
+            // expected signal exit (130) cannot replace the actual startup error.
+            isStopping.set(true)
             stopSession()
+            monitorJob?.cancel()
+            serverSession = null
             fail("Не удалось запустить Lampac: ${safeMessage(error)}")
         }
     }
@@ -219,25 +227,32 @@ class LampacRuntimeService : Service() {
     }
 
     private suspend fun waitForServerReady(session: ProotLauncher.Session) {
-        repeat(40) {
+        val startedAtMs = android.os.SystemClock.elapsedRealtime()
+        while (true) {
             if (isStopping.get()) throw CancellationException("Lampac остановлен пользователем")
-            if (session.exitCode != null) {
-                throw IOException("Процесс Lampac завершился с кодом ${session.exitCode}")
+            session.exitCode?.let { exitCode ->
+                throw IOException("Процесс Lampac завершился с кодом ${exitCode} до готовности")
             }
             if (withContext(Dispatchers.IO) { probeLoopback() }) return
-            delay(500)
+            val nowMs = android.os.SystemClock.elapsedRealtime()
+            if (LampacStartupPolicy.hasTimedOut(startedAtMs, nowMs)) {
+                throw IOException(
+                    "Lampac не ответил за 5 минут. При первом запуске .NET компилирует модули; " +
+                        "проверьте журнал и свободную память."
+                )
+            }
+            delay(LampacStartupPolicy.PROBE_INTERVAL_MS)
         }
-        throw IOException("Lampac не ответил на http://127.0.0.1:9118/online.js за 20 секунд")
     }
 
     private fun probeLoopback(): Boolean {
         val connection = runCatching {
-            (URL("http://127.0.0.1:9118/online.js").openConnection() as HttpURLConnection).apply {
+            (URL("http://127.0.0.1:9118/version?type=hash").openConnection() as HttpURLConnection).apply {
                 connectTimeout = 900
                 readTimeout = 1_200
                 requestMethod = "GET"
                 instanceFollowRedirects = false
-                setRequestProperty("User-Agent", "Jacket-Android/2.8")
+                setRequestProperty("User-Agent", "Jacket-Android/2.8.2")
             }
         }.getOrNull() ?: return false
         return try {

@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.8.2
+
+- Fix embedded Lampac cold startup on Android: allow five minutes for .NET provider-module compilation instead of interrupting it after 20 seconds with Ctrl+C / exit code 130.
+- Probe the documented local Lampac health endpoint `/version?type=hash`; retain the actual startup error instead of replacing it with the intentional shutdown signal.
+- Show the first-start compilation window in Lampac settings and add monotonic timeout policy tests.
+
 ## 2.8.1
 
 - Add a one-time upgrade migration that re-enables existing built-in tracker/site profiles. User-edited names, encrypted Cookies and custom sites are preserved; later manual enable/disable choices remain respected.
