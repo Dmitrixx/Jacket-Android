@@ -186,7 +186,7 @@ class LampacRuntimeService : Service() {
             if (session.exitCode != null) {
                 throw IOException("Процесс Lampac завершился с кодом ${session.exitCode}")
             }
-            if (probeLoopback()) return
+            if (withContext(Dispatchers.IO) { probeLoopback() }) return
             delay(500)
         }
         throw IOException("Lampac не ответил на http://127.0.0.1:9118/online.js за 20 секунд")
