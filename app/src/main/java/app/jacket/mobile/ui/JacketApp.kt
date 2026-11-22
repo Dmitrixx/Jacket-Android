@@ -3185,7 +3185,8 @@ private fun SettingsScreen(
                                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                         OutlinedButton(
                                             onClick = { importLampacConfig.launch(arrayOf("application/json", "text/plain")) },
-                                            enabled = localLampacInstalled && !lampacRuntimeBusy,
+                                            enabled = localLampacInstalled && !lampacRuntimeBusy &&
+                                                lampacRuntime.phase != app.jacket.mobile.lampac.LampacRuntimePhase.RUNNING,
                                             modifier = Modifier.weight(1f)
                                         ) {
                                             Icon(Icons.Default.Download, contentDescription = null)
@@ -3203,7 +3204,7 @@ private fun SettingsScreen(
                                         }
                                     }
                                     Text(
-                                        "Импорт переносит настройки источников Lampac: Filmix/Rezka и других модулей, приоритеты, параметры JacRed и пользовательские секции. Встроенный сервер принудительно остаётся на 127.0.0.1:9118; Android-несовместимые модули отключены. Экспорт может содержать токены и пароли — храните файл конфиденциально.",
+                                        "Остановите Lampac перед импортом. Импорт переносит настройки источников, приоритеты, параметры JacRed и пользовательские секции; включённые модули загружаются автоматически. Встроенный сервер остаётся на 127.0.0.1:9118, неподдерживаемые Android-модули отключены. Экспорт может содержать токены и пароли — храните файл конфиденциально.",
                                         style = MaterialTheme.typography.labelSmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
