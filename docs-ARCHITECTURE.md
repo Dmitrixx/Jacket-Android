@@ -1,4 +1,4 @@
-# Jacket 2.8.0 — architecture
+# Jacket 2.8.1 — architecture
 
 ## Runtime layout
 
@@ -81,7 +81,7 @@ No external Jackett or TorrServer process is started or packaged.
 - `.torrent` download actions from the indexer cabinet enqueue the file in Jacket's foreground torrent service. Release results remain native `SourceCard` items and do not navigate to the browser to display the list.
 - JSON import/export includes non-secret configuration only. Credentials must be entered again after import.
 
-The direct RSS/Torznab indexer registry intentionally remains separate from the six built-in HTML tracker profiles (RuTracker, NNM-Club, Rutor, Kinozal, 1337x and The Pirate Bay). The first settings read seeds missing default profiles once, preserving existing user-defined sites, disabled preset states and encrypted Cookies. A deliberate restore action can add missing defaults and re-enable built-in presets. Built-in profiles can be enabled, disabled, edited and tested from Settings; a test runs the real parser and reports provider-specific errors. The optional Jackett catalogue remains the scalable path for a wider set of public/private providers and dynamically exposes each indexer's own configuration fields. The registry does not solve CAPTCHA, anti-bot checks or interactive 2FA. A user may supply a session cookie if the indexer's rules allow it.
+The direct RSS/Torznab indexer registry intentionally remains separate from the six built-in HTML tracker profiles (RuTracker, NNM-Club, Rutor, Kinozal, 1337x and The Pirate Bay). The first settings read seeds missing default profiles once. This update also performs a one-time migration that enables existing built-in profiles without changing their names or encrypted Cookies, and without re-adding profiles the user previously deleted. User-added sites and their enabled states are preserved. Once the migration flag is stored, subsequent user toggles are respected. A deliberate restore action can add missing defaults and re-enable built-in presets. Built-in profiles can be enabled, disabled, edited and tested from Settings; a test runs the real parser and reports provider-specific errors. The optional Jackett catalogue remains the scalable path for a wider set of public/private providers and dynamically exposes each indexer's own configuration fields. The registry does not solve CAPTCHA, anti-bot checks or interactive 2FA. A user may supply a session cookie if the indexer's rules allow it.
 
 ## Torrent engine
 

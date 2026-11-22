@@ -43,3 +43,29 @@ jobs:
         uses: gradle/actions/setup-gradle@v6
       - name: Run lint, unit tests and debug/release builds
         run: ./gradlew --no-daemon --stacktrace lint testDebugUnitTest assembleDebug assembleRelease
+
+      - name: Prepare universal APK and checksum
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        shell: bash
+        run: |
+          set -euo pipefail
+          apk="$(find app/build/outputs/apk/debug -type f -iname '*universal*.apk' -print -quit)"
+          if [[ -z "$apk" ]]; then
+            echo "Universal debug APK not found. Available APK files:" >&2
+            find app/build/outputs/apk -type f -name '*.apk' -print >&2 || true
+            exit 1
+          fi
+          mkdir -p dist
+          output="dist/Jacket-2.8.1-main-${GITHUB_SHA:0:7}-universal-debug.apk"
+          cp "$apk" "$output"
+          sha256sum "$output" > "$output.sha256"
+
+      - name: Upload universal APK artifact
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: Jacket-main-apk
+          path: dist/Jacket-*.apk*
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0

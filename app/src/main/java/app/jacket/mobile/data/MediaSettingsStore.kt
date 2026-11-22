@@ -34,9 +34,9 @@ internal fun mergeTrackerShortcuts(
 }
 
 /**
- * Seeds built-in shortcuts once without overwriting an existing user's edits,
- * disabled state or encrypted Cookie. A later explicit restore is handled
- * separately by [mergeTrackerShortcuts].
+ * Seeds built-in shortcuts once without overwriting an existing user's edits
+ * or encrypted Cookie. A separate one-time upgrade migration enables existing
+ * built-in profiles; future user toggles are left untouched.
  */
 internal fun seedTrackerShortcutsOnce(
     current: List<WebSearchProvider>,
@@ -46,6 +46,21 @@ internal fun seedTrackerShortcutsOnce(
 ): List<WebSearchProvider> {
     if (alreadySeeded) return current.take(limit)
     return (current + defaults).distinctBy { it.id }.take(limit)
+}
+
+/**
+ * One-time upgrade policy: enable only built-in profiles already present.
+ * Do not re-add deleted profiles or modify user-added sites, names or Cookies.
+ */
+internal fun reEnableExistingBuiltInTrackerShortcutsOnce(
+    current: List<WebSearchProvider>,
+    defaults: List<WebSearchProvider>,
+    limit: Int
+): List<WebSearchProvider> {
+    val defaultIds = defaults.mapTo(hashSetOf()) { it.id }
+    return current.map { provider ->
+        if (provider.id in defaultIds) provider.copy(enabled = true) else provider
+    }.take(limit)
 }
 
 class MediaSettingsStore(context: Context) {
@@ -337,22 +352,34 @@ class MediaSettingsStore(context: Context) {
     }
 
     /**
-     * Adds missing built-in sites on first launch / one-time migration. Existing
-     * user settings win, including a deliberately disabled preset and its Cookie.
+     * Seeds missing built-ins once and, for this update only, re-enables built-in
+     * profiles that were previously disabled. User-added sites and Cookies are
+     * preserved; after the migration, user enable/disable choices remain intact.
      */
     @Synchronized
     fun webSearchProviders(): List<WebSearchProvider> {
         val current = readWebSearchProviders()
         val alreadySeeded = preferences.getBoolean(KEY_TRACKER_PRESETS_SEEDED, false)
-        val providers = seedTrackerShortcutsOnce(
+        val alreadyReEnabled = preferences.getBoolean(KEY_TRACKER_PRESETS_REENABLED, false)
+        val seeded = seedTrackerShortcutsOnce(
             current,
             DEFAULT_TRACKER_SHORTCUTS,
             MAX_WEB_SEARCH_PROVIDERS,
             alreadySeeded
         )
-        if (!alreadySeeded) {
+        val providers = if (alreadyReEnabled) seeded else {
+            reEnableExistingBuiltInTrackerShortcutsOnce(
+                seeded,
+                DEFAULT_TRACKER_SHORTCUTS,
+                MAX_WEB_SEARCH_PROVIDERS
+            )
+        }
+        if (!alreadySeeded || !alreadyReEnabled) {
             saveWebSearchProviders(providers)
-            preferences.edit { putBoolean(KEY_TRACKER_PRESETS_SEEDED, true) }
+            preferences.edit {
+                putBoolean(KEY_TRACKER_PRESETS_SEEDED, true)
+                putBoolean(KEY_TRACKER_PRESETS_REENABLED, true)
+            }
             return readWebSearchProviders()
         }
         return providers
@@ -590,6 +617,7 @@ class MediaSettingsStore(context: Context) {
         const val KEY_INDEXERS = "rss_indexers"
         const val KEY_WEB_SEARCH_PROVIDERS = "web_search_providers"
         const val KEY_TRACKER_PRESETS_SEEDED = "tracker_presets_seeded"
+        const val KEY_TRACKER_PRESETS_REENABLED = "tracker_presets_reenabled_v1"
         const val KEY_FAVORITES = "catalog_favorites"
         const val KEY_HISTORY = "catalog_history"
         const val MAX_INDEXERS = 100

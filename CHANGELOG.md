@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.8.1
+
+- Add a one-time upgrade migration that re-enables existing built-in tracker/site profiles. User-edited names, encrypted Cookies and custom sites are preserved; later manual enable/disable choices remain respected.
+- Add a universal debug-signed APK artifact to each successful main-branch CI build, with a 14-day retention period and a download link from the repository README.
+
 ## 2.8.0
 
 - Seed the built-in tracker/site list on first launch and one-time migration. Existing custom entries, disabled presets and encrypted Cookie sessions are preserved; manual restore remains explicit and re-enables built-in presets.

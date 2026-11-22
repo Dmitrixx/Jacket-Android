@@ -77,6 +77,66 @@ class TrackerPresetPolicyTest {
     }
 
     @Test
+    fun oneTimeUpgradeReEnablesExistingBuiltInsButPreservesCustomSettings() {
+        val builtIn = WebSearchProvider(
+            id = "tracker-rutor",
+            name = "My Rutor profile",
+            searchUrlTemplate = "https://rutor.info/search/{query}",
+            enabled = false,
+            cookie = "saved-session"
+        )
+        val custom = WebSearchProvider(
+            id = "custom",
+            name = "My private site",
+            searchUrlTemplate = "https://example.org/search?q={query}",
+            enabled = false,
+            cookie = "custom-cookie"
+        )
+        val defaults = listOf(
+            builtIn.copy(name = "Rutor", enabled = true, cookie = "")
+        )
+
+        val migrated = reEnableExistingBuiltInTrackerShortcutsOnce(
+            current = listOf(builtIn, custom),
+            defaults = defaults,
+            limit = 50
+        )
+
+        assertTrue(migrated.first { it.id == "tracker-rutor" }.enabled)
+        assertEquals("My Rutor profile", migrated.first { it.id == "tracker-rutor" }.name)
+        assertEquals("saved-session", migrated.first { it.id == "tracker-rutor" }.cookie)
+        assertEquals(false, migrated.first { it.id == "custom" }.enabled)
+        assertEquals("custom-cookie", migrated.first { it.id == "custom" }.cookie)
+    }
+
+    @Test
+    fun oneTimeUpgradeDoesNotReAddBuiltInsPreviouslyRemovedByTheUser() {
+        val remaining = listOf(
+            WebSearchProvider(
+                id = "custom",
+                name = "My site",
+                searchUrlTemplate = "https://example.org/search?q={query}"
+            )
+        )
+        val defaults = listOf(
+            WebSearchProvider(
+                id = "tracker-rutor",
+                name = "Rutor",
+                searchUrlTemplate = "https://rutor.info/search/{query}"
+            )
+        )
+
+        assertEquals(
+            remaining,
+            reEnableExistingBuiltInTrackerShortcutsOnce(
+                current = remaining,
+                defaults = defaults,
+                limit = 50
+            )
+        )
+    }
+
+    @Test
     fun completedSeedDoesNotSilentlyReAddSitesRemovedByTheUser() {
         val remaining = listOf(
             WebSearchProvider(
