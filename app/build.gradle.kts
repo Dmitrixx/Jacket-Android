@@ -6,7 +6,7 @@ plugins {
 
 android {
     namespace = "app.jacket.mobile"
-    compileSdk = 36
+    compileSdk = 37
 
     defaultConfig {
         applicationId = "app.jacket.mobile"
@@ -48,6 +48,11 @@ android {
     testOptions { unitTests.isIncludeAndroidResources = true }
 
     packaging {
+        jniLibs {
+            // PRoot's loader and helper executables must be extracted to nativeLibraryDir
+            // so Android's SELinux W^X policy permits execution from the app sandbox.
+            useLegacyPackaging = true
+        }
         resources {
             // Keep META-INF/media3-ffmpeg-decoder/**: it carries the FFmpeg LGPL
             // text, NOTICE, build provenance and source-rebuild information.
@@ -57,8 +62,10 @@ android {
 }
 
 dependencies {
-    // Compose 1.11.x line remains compatible with compileSdk 36.
-    // Compose 1.12.x requires API 37, which is not yet present in the stable SDK repo.
+    // The PRoot execution engine is ARM64-only in embedded mode; remote Lampac remains available elsewhere.
+    implementation(project(":proot-engine"))
+
+    // Compose 2026.06 stays pinned; API 37 is required by the embedded PRoot engine module.
     val composeBom = platform("androidx.compose:compose-bom:2026.06.00")
     implementation(composeBom)
 
