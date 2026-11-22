@@ -143,7 +143,7 @@ object LampacBridgeClient {
         )
     }
 
-    /** Parse only direct magnets or same-origin JacRed parseMagnet links. */
+    /** Parse direct magnets, direct same-origin .torrent links, and user-openable HTTPS details pages. */
     internal fun parseJacRedResults(data: JSONArray, baseUrl: String): List<SourceResult> {
         val base = normalizeBaseUrl(baseUrl)
         val results = ArrayList<SourceResult>()
