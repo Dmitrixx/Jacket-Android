@@ -28,6 +28,11 @@ data class LampacSearchOutcome(
     val checkedProviders: Int
 )
 
+internal data class LampacJacRedOutcome(
+    val results: List<SourceResult>,
+    val checkedResults: Int
+)
+
 /** Dynamic Lampac federation; provider routes are discovered from the configured server. */
 object LampacBridgeClient {
     private const val MAX_REDIRECTS = 3
@@ -38,6 +43,7 @@ object LampacBridgeClient {
     private const val MAX_PARALLEL_PROVIDERS = 4
     private const val MAX_LIFE_POLLS = 20
     private const val MAX_TOTAL_RESULTS = 80
+    private const val MAX_JACRED_RESULTS = 150
     private const val MIN_POLL_DELAY_MS = 350L
     private const val USER_AGENT = "Jacket-Android/2.8.5 (Lampac bridge)"
 
@@ -90,6 +96,125 @@ object LampacBridgeClient {
         addAccountParams(params, settings)
         return appendQuery("$base/lite/events", params)
     }
+
+    /** Builds a same-origin request for Lampac's built-in JacRed/Jackett-compatible API. */
+    internal fun buildJacRedSearchUrl(
+        settings: LampacSettings,
+        query: String,
+        item: CatalogItem
+    ): String {
+        val base = normalizeBaseUrl(settings.baseUrl)
+        require(item.providerId == "tmdb") { "Lampac JacRed пока поддерживает карточки TMDB" }
+        require(query.isNotBlank()) { "Введите название для поиска Lampac JacRed" }
+        val params = linkedMapOf(
+            "query" to query.trim().take(200),
+            "is_serial" to if (item.kind == MediaKind.SERIES) "2" else "1",
+            "year" to item.year.takeIf { it.matches(Regex("""\d{4}""")) }.orEmpty()
+        )
+        return appendQuery("$base/api/v2.0/indexers/all/results", params)
+    }
+
+    /**
+     * Searches the local JacRed adapters shipped with Lampac. This is separate
+     * from VOD /lite provider routes: it returns torrent magnets or same-origin
+     * parseMagnet URLs that Jacket's existing torrent engine can consume.
+     */
+    fun searchJacRedTorrents(
+        settings: LampacSettings,
+        query: String,
+        item: CatalogItem
+    ): LampacJacRedOutcome {
+        if (!settings.enabled || settings.baseUrl.isBlank()) {
+            return LampacJacRedOutcome(emptyList(), 0)
+        }
+        val base = normalizeBaseUrl(settings.baseUrl)
+        val body = requestText(
+            buildJacRedSearchUrl(settings, query, item),
+            base,
+            readTimeoutMs = 12_000
+        )
+        val root = runCatching { JSONObject(body) }
+            .getOrElse { throw IOException("Lampac JacRed вернул некорректный JSON", it) }
+        val rows = root.optJSONArray("Results") ?: root.optJSONArray("results")
+            ?: throw IOException("Lampac JacRed не вернул массив Results. Проверьте модуль JacRed.")
+        return LampacJacRedOutcome(
+            results = parseJacRedResults(rows, base),
+            checkedResults = rows.length()
+        )
+    }
+
+    /** Parse only direct magnets or same-origin JacRed parseMagnet links. */
+    internal fun parseJacRedResults(data: JSONArray, baseUrl: String): List<SourceResult> {
+        val base = normalizeBaseUrl(baseUrl)
+        val results = ArrayList<SourceResult>()
+        for (index in 0 until minOf(data.length(), 2_000)) {
+            val entry = data.optJSONObject(index) ?: continue
+            val title = entry.optString("Title")
+                .replace(Regex("[\\r\\n\\t]+"), " ")
+                .trim()
+                .take(240)
+            if (title.isBlank()) continue
+
+            val magnet = safeJacRedMagnet(entry.optString("MagnetUri"))
+            val parseLink = entry.optString("Link").takeIf(String::isNotBlank)?.let { candidate ->
+                runCatching { validateSameOriginUrl(candidate, base) }.getOrNull()
+            }
+            if (magnet == null && parseLink == null) continue
+
+            val tracker = entry.optString("Tracker").trim().take(100).ifBlank { "Lampac JacRed" }
+            val identity = magnet ?: parseLink.orEmpty()
+            val trackerId = tracker.lowercase()
+                .filter { it.isLetterOrDigit() || it in "-_." }
+                .take(64)
+                .ifBlank { "tracker" }
+            val details = safeExternalDetailsUrl(entry.optString("Details"))
+            val size = entry.optLong("Size", -1L).takeIf { it > 0L }
+            val seeders = entry.optInt("Seeders", -1).takeIf { it >= 0 }
+            val peers = entry.optInt("Peers", -1).takeIf { it >= 0 }
+            results += SourceResult(
+                id = "lampac-jacred:$trackerId:${stableStreamKey(identity)}",
+                title = title,
+                providerName = "Lampac JacRed",
+                magnetUri = magnet,
+                downloadUrl = if (magnet == null) parseLink else null,
+                sizeBytes = size,
+                seeders = seeders,
+                leechers = peers,
+                pageUrl = details,
+                category = entry.optString("CategoryDesc").takeIf(String::isNotBlank)?.take(120),
+                indexerId = "lampac-jacred:$trackerId",
+                tracker = tracker,
+                publishedDate = entry.optString("PublishDate").takeIf(String::isNotBlank)?.take(80),
+                sourceType = MediaSourceType.TORRENT
+            )
+            if (results.size >= MAX_JACRED_RESULTS) break
+        }
+        return results.distinctBy { it.magnetUri ?: it.downloadUrl ?: it.id }
+    }
+
+    private fun safeJacRedMagnet(value: String): String? {
+        val magnet = value.trim()
+        if (magnet.isBlank() || magnet.length > 8_192 ||
+            magnet.any { it == '\r' || it == '\n' || it == '\u0000' } ||
+            !magnet.startsWith("magnet:", ignoreCase = true)
+        ) return null
+        val uri = runCatching { URI(magnet) }.getOrNull() ?: return null
+        if (!uri.scheme.equals("magnet", ignoreCase = true)) return null
+        val hasInfoHash = uri.rawQuery.orEmpty().split('&').any { part ->
+            val key = decode(part.substringBefore('=')).equals("xt", ignoreCase = true)
+            val valuePart = decode(part.substringAfter('=', ""))
+            key && (valuePart.startsWith("urn:btih:", ignoreCase = true) ||
+                valuePart.startsWith("urn:btmh:", ignoreCase = true))
+        }
+        return magnet.takeIf { hasInfoHash }
+    }
+
+    private fun safeExternalDetailsUrl(value: String): String? = runCatching {
+        val uri = URI(value.trim())
+        require(uri.scheme.equals("https", ignoreCase = true))
+        require(!uri.host.isNullOrBlank() && uri.rawUserInfo == null)
+        uri.toString().takeIf { it.length <= 2_048 }
+    }.getOrNull()
 
     fun buildLifeEventsUrl(
         settings: LampacSettings,
@@ -495,13 +620,17 @@ object LampacBridgeClient {
         return result
     }
 
-    private fun requestText(startUrl: String, baseUrl: String): String {
+    private fun requestText(
+        startUrl: String,
+        baseUrl: String,
+        readTimeoutMs: Int = 5_000
+    ): String {
         var currentUrl = validateSameOriginUrl(startUrl, baseUrl)
         for (redirect in 0..MAX_REDIRECTS) {
             if (Thread.currentThread().isInterrupted) throw IOException("Запрос Lampac отменён")
             val connection = (URL(currentUrl).openConnection() as HttpURLConnection).apply {
                 connectTimeout = 5_000
-                readTimeout = 5_000
+                readTimeout = readTimeoutMs.coerceIn(1_000, 20_000)
                 instanceFollowRedirects = false
                 requestMethod = "GET"
                 setRequestProperty("Accept", "application/json, text/plain, */*")
