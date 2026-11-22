@@ -3,6 +3,7 @@ package app.jacket.mobile.lampac
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 
 enum class LampacRuntimePhase {
     IDLE,
@@ -30,23 +31,26 @@ object LampacRuntimeState {
         message: String,
         progress: Int? = null
     ) {
-        mutable.value = mutable.value.copy(
-            phase = phase,
-            message = LampacLogSanitizer.sanitize(message).take(240),
-            progress = progress
-        )
+        val cleanMessage = LampacLogSanitizer.sanitize(message).take(240)
+        mutable.update { current ->
+            current.copy(
+                phase = phase,
+                message = cleanMessage,
+                progress = progress
+            )
+        }
     }
 
-    @Synchronized
     fun appendLog(value: String) {
         val clean = LampacLogSanitizer.sanitize(value).take(500)
         if (clean.isBlank()) return
-        val rows = (mutable.value.logs + clean).takeLast(MAX_LOG_ROWS)
-        mutable.value = mutable.value.copy(logs = rows)
+        mutable.update { current ->
+            current.copy(logs = (current.logs + clean).takeLast(MAX_LOG_ROWS))
+        }
     }
 
     fun clearLogs() {
-        mutable.value = mutable.value.copy(logs = emptyList())
+        mutable.update { current -> current.copy(logs = emptyList()) }
     }
 
     private const val MAX_LOG_ROWS = 80
