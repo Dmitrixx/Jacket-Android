@@ -9,6 +9,10 @@ import java.net.URI
 import java.net.URL
 import java.net.URLEncoder
 import java.security.MessageDigest
+import java.util.concurrent.Callable
+import java.util.concurrent.ExecutionException
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 
 /**
  * Client for a Lampac instance operated by the user.
@@ -17,11 +21,21 @@ import java.security.MessageDigest
  * API and playback URLs are pinned to the configured server origin. This client does not
  * automate provider sign-in, solve browser challenges, or alter subscription checks.
  */
+data class LampacSearchOutcome(
+    val results: List<SourceResult>,
+    val failures: List<IndexerFailure>,
+    val discoveredProviders: Int,
+    val checkedProviders: Int
+)
+
+/** Dynamic Lampac federation; provider routes are discovered from the configured server. */
 object LampacBridgeClient {
     private const val MAX_REDIRECTS = 3
     private const val MAX_RESPONSE_BYTES = 2 * 1024 * 1024
-    private const val MAX_PROVIDER_ROUTES = 8
-    private const val MAX_LIFE_POLLS = 8
+    private const val MAX_PROVIDER_ROUTES = 48
+    private const val MAX_PARALLEL_PROVIDERS = 4
+    private const val MAX_LIFE_POLLS = 20
+    private const val MAX_TOTAL_RESULTS = 80
     private const val MIN_POLL_DELAY_MS = 350L
     private const val USER_AGENT = "Jacket-Android/2.8 (Lampac bridge)"
 
@@ -108,9 +122,20 @@ object LampacBridgeClient {
         settings: LampacSettings,
         item: CatalogItem,
         episodeCode: String? = null
-    ): List<SourceResult> {
-        if (!settings.enabled || settings.baseUrl.isBlank()) return emptyList()
-        if (item.kind == MediaKind.VIDEO || item.providerId != "tmdb") return emptyList()
+    ): List<SourceResult> = searchDetailed(settings, item, episodeCode).results
+
+    /**
+     * Queries the live route list returned by Lampac. A bounded worker pool
+     * isolates provider failures so one broken plugin cannot discard other streams.
+     */
+    fun searchDetailed(
+        settings: LampacSettings,
+        item: CatalogItem,
+        episodeCode: String? = null
+    ): LampacSearchOutcome {
+        if (!settings.enabled || settings.baseUrl.isBlank() ||
+            item.kind == MediaKind.VIDEO || item.providerId != "tmdb"
+        ) return LampacSearchOutcome(emptyList(), emptyList(), 0, 0)
 
         val base = normalizeBaseUrl(settings.baseUrl)
         val kickoffText = requestText(buildEventsUrl(settings, item), base)
@@ -143,8 +168,6 @@ object LampacBridgeClient {
                     if (routes.isEmpty() && serverMessage != null) {
                         throw IOException(serverMessage.take(240))
                     }
-                    // Lampac's online array contains every completed source check, including
-                    // providers which did not return playable content. Use its length as seen.
                     seen = online.length()
                     if (update.optBoolean("ready", false) || update.optInt("tasks", -1) == 0) break
                     val elapsedMs = (System.nanoTime() - startedAt) / 1_000_000L
@@ -154,55 +177,136 @@ object LampacBridgeClient {
             }
         }
 
-        if (routes.isEmpty()) return emptyList()
+        if (routes.isEmpty()) return LampacSearchOutcome(emptyList(), emptyList(), 0, 0)
         val episode = episodePattern.find(episodeCode.orEmpty())
         val targetSeason = episode?.groupValues?.getOrNull(1)?.toIntOrNull()
         val targetEpisode = episode?.groupValues?.getOrNull(2)?.toIntOrNull()
+        val selectedRoutes = routes.values.take(MAX_PROVIDER_ROUTES)
+        val executor = Executors.newFixedThreadPool(MAX_PARALLEL_PROVIDERS)
         val results = ArrayList<SourceResult>()
+        val failures = ArrayList<IndexerFailure>()
+        var checked = 0
 
-        routes.values.take(MAX_PROVIDER_ROUTES).forEach { route ->
-            if (Thread.currentThread().isInterrupted) throw IOException("Поиск Lampac отменён")
-            val pageUrl = stripSensitiveQueryParams(route.url, base)
-            val providerUrl = appendJsonModeAndAuth(route.url, settings, base)
-            val payload = JSONObject(requestText(providerUrl, base))
-            when (payload.optString("type").lowercase()) {
-                "movie" -> if (item.kind == MediaKind.MOVIE) {
-                    results += parsePlayableEntries(
-                        payload.optJSONArray("data"), pageUrl, base, item, route.name, null, null
+        try {
+            val futures = selectedRoutes.map { route ->
+                executor.submit(Callable {
+                    runCatching {
+                        resolveProviderRoute(
+                            route = route,
+                            settings = settings,
+                            base = base,
+                            item = item,
+                            targetSeason = targetSeason,
+                            targetEpisode = targetEpisode
+                        )
+                    }
+                })
+            }
+
+            futures.forEachIndexed { index, future ->
+                if (Thread.currentThread().isInterrupted) {
+                    throw IOException("Поиск Lampac отменён")
+                }
+                val route = selectedRoutes[index]
+                val outcome = try {
+                    future.get()
+                } catch (interrupted: InterruptedException) {
+                    Thread.currentThread().interrupt()
+                    throw IOException("Поиск Lampac отменён", interrupted)
+                } catch (error: ExecutionException) {
+                    Result.failure(error.cause ?: error)
+                }
+                checked++
+                outcome.onSuccess { results.addAll(it) }.onFailure { error ->
+                    val safeMessage = error.message.orEmpty()
+                        .replace(Regex("[\\r\\n\\t]+"), " ")
+                        .take(180)
+                        .ifBlank { "Провайдер вернул неподдерживаемый ответ" }
+                    failures += IndexerFailure(
+                        indexerId = "lampac:" + providerRouteId(route),
+                        indexerName = route.name,
+                        message = safeMessage
                     )
                 }
-                "season" -> if (item.kind == MediaKind.SERIES && targetSeason != null && targetEpisode != null) {
+            }
+        } finally {
+            executor.shutdownNow()
+            runCatching { executor.awaitTermination(250, TimeUnit.MILLISECONDS) }
+        }
+
+        return LampacSearchOutcome(
+            results = results.distinctBy { it.magnetUri ?: it.streamUrl ?: it.id }.take(MAX_TOTAL_RESULTS),
+            failures = failures,
+            discoveredProviders = routes.size,
+            checkedProviders = checked
+        )
+    }
+
+    private fun resolveProviderRoute(
+        route: ProviderRoute,
+        settings: LampacSettings,
+        base: String,
+        item: CatalogItem,
+        targetSeason: Int?,
+        targetEpisode: Int?
+    ): List<SourceResult> {
+        if (Thread.currentThread().isInterrupted) throw IOException("Поиск Lampac отменён")
+        val providerId = providerRouteId(route)
+        val safePageUrl = stripSensitiveQueryParams(route.url, base)
+        val providerUrl = appendJsonModeAndAuth(route.url, settings, base)
+        val payload = JSONObject(requestText(providerUrl, base))
+        return when (payload.optString("type").lowercase()) {
+            "movie" -> if (item.kind == MediaKind.MOVIE) {
+                parsePlayableEntries(
+                    payload.optJSONArray("data"), safePageUrl, base, item,
+                    route.name, null, null, providerId
+                )
+            } else emptyList()
+            "season" -> {
+                if (item.kind != MediaKind.SERIES || targetSeason == null || targetEpisode == null) {
+                    emptyList()
+                } else {
                     val seasonUrl = selectSeasonUrl(payload.optJSONArray("data"), targetSeason)
-                        ?: return@forEach
-                    val safeSeasonUrl = appendJsonModeAndAuth(seasonUrl, settings, base)
-                    val episodePayload = JSONObject(requestText(safeSeasonUrl, base))
+                        ?: return emptyList()
+                    val episodeRequestUrl = appendJsonModeAndAuth(seasonUrl, settings, base)
+                    val episodePayload = JSONObject(requestText(episodeRequestUrl, base))
                     if (episodePayload.optString("type").equals("episode", true)) {
-                        results += parsePlayableEntries(
+                        parsePlayableEntries(
                             episodePayload.optJSONArray("data"),
                             stripSensitiveQueryParams(seasonUrl, base),
                             base,
                             item,
                             route.name,
                             targetSeason,
-                            targetEpisode
+                            targetEpisode,
+                            providerId
                         )
-                    }
+                    } else emptyList()
                 }
-                "episode" -> if (item.kind == MediaKind.SERIES && targetSeason != null && targetEpisode != null) {
-                    results += parsePlayableEntries(
-                        payload.optJSONArray("data"),
-                        pageUrl,
-                        base,
-                        item,
-                        route.name,
-                        targetSeason,
-                        targetEpisode
-                    )
-                }
-                else -> Unit
             }
+            "episode" -> if (item.kind == MediaKind.SERIES && targetSeason != null && targetEpisode != null) {
+                parsePlayableEntries(
+                    payload.optJSONArray("data"),
+                    safePageUrl,
+                    base,
+                    item,
+                    route.name,
+                    targetSeason,
+                    targetEpisode,
+                    providerId
+                )
+            } else emptyList()
+            else -> emptyList()
         }
-        return results.distinctBy { it.id }.take(32)
+    }
+
+    private fun providerRouteId(route: ProviderRoute): String {
+        val path = runCatching { URI(route.url).path.orEmpty() }.getOrDefault("")
+        val value = path.substringAfterLast('/').ifBlank { route.name.lowercase() }
+        return value.lowercase()
+            .filter { it.isLetterOrDigit() || it in "-_." }
+            .take(80)
+            .ifBlank { "provider" }
     }
 
     internal fun isSameOrigin(candidate: String, baseUrl: String): Boolean = runCatching {
@@ -232,7 +336,8 @@ object LampacBridgeClient {
         item: CatalogItem,
         providerName: String,
         targetSeason: Int?,
-        targetEpisode: Int?
+        targetEpisode: Int?,
+        providerId: String? = null
     ): List<SourceResult> {
         if (data == null) return emptyList()
         val result = ArrayList<SourceResult>()
@@ -261,9 +366,11 @@ object LampacBridgeClient {
             result += SourceResult(
                 id = "lampac:" + providerName.lowercase() + ":" + stableStreamKey(safeStream),
                 title = title,
-                providerName = "Lampac",
+                providerName = providerName,
                 streamUrl = safeStream,
                 pageUrl = providerUrl,
+                indexerId = providerId?.let { "lampac:$it" },
+                tracker = providerName,
                 sourceType = MediaSourceType.LAMPAC,
                 qualityLabel = quality,
                 translationName = translation,

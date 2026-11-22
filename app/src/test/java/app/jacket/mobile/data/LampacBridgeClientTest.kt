@@ -145,6 +145,9 @@ class LampacBridgeClientTest {
         )
         assertEquals(1, result.size)
         assertEquals(MediaSourceType.LAMPAC, result.single().sourceType)
+        assertEquals("HDRezka", result.single().providerName)
+        assertEquals("lampac:rezka", result.single().indexerId)
+        assertEquals("https://lampac.example/lite/rezka?rjson=true", result.single().pageUrl)
         assertEquals("https://lampac.example/lite/rezka/movie.m3u8?play=true", result.single().streamUrl)
         assertEquals("1080p", result.single().qualityLabel)
         assertEquals("Русская озвучка", result.single().translationName)
@@ -154,6 +157,25 @@ class LampacBridgeClientTest {
         )
         assertFalse(result.single().requestHeaders.containsKey("Cookie"))
         assertFalse(result.single().requestHeaders.containsKey("Authorization"))
+    }
+
+    @Test
+    fun keepsProviderIdentitySeparateFromLampacServerName() {
+        val data = JSONArray().put(JSONObject().put("stream", "/watch/video.m3u8"))
+        val result = LampacBridgeClient.parsePlayableEntries(
+            data = data,
+            providerUrl = "https://lampac.example/lite/filmix?rjson=true",
+            baseUrl = "https://lampac.example",
+            item = movie,
+            providerName = "Filmix",
+            targetSeason = null,
+            targetEpisode = null,
+            providerId = "filmix"
+        )
+        assertEquals(1, result.size)
+        assertEquals("Filmix", result.single().providerName)
+        assertEquals("lampac:filmix", result.single().indexerId)
+        assertFalse(result.single().pageUrl.orEmpty().contains("token="))
     }
 
     @Test
@@ -173,6 +195,7 @@ class LampacBridgeClientTest {
         )
         assertEquals(1, result.size)
         assertEquals("https://lampac.example/", result.single().streamUrl)
+        assertEquals("Test provider", result.single().providerName)
     }
 
     @Test

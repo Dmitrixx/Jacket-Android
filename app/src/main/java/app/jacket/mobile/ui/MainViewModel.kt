@@ -582,14 +582,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
                     if (searchLampac) {
                         add(sourceTask("lampac", "Lampac") {
+                            val outcome = LampacBridgeClient.searchDetailed(
+                                settings = lampacConfig,
+                                item = item,
+                                episodeCode = episode?.releaseCode
+                            )
                             CombinedSourceGroupOutcome(
                                 groupId = "lampac",
-                                results = LampacBridgeClient.searchSources(
-                                    settings = lampacConfig,
-                                    item = item,
-                                    episodeCode = episode?.releaseCode
-                                ),
-                                failures = emptyList()
+                                results = outcome.results,
+                                failures = outcome.failures,
+                                progressMessage = "Lampac: проверено " + outcome.checkedProviders +
+                                    " провайдеров (обнаружено " + outcome.discoveredProviders + ")"
                             )
                         })
                     }
