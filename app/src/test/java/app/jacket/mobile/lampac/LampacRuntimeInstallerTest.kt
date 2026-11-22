@@ -141,7 +141,7 @@ class LampacRuntimeInstallerTest {
         val stagedValidation = command.indexOf("/opt/dotnet.stage/dotnet --info")
         val previousMove = command.indexOf("mv /opt/dotnet /opt/dotnet.previous")
         val activation = command.indexOf("mv /opt/dotnet.stage /opt/dotnet")
-        val finalValidation = command.indexOf("/opt/dotnet/dotnet --info")
+        val finalValidation = command.lastIndexOf("/opt/dotnet/dotnet --info")
 
         assertTrue(stagedValidation >= 0)
         assertTrue(previousMove > stagedValidation)
