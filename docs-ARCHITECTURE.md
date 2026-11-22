@@ -1,11 +1,11 @@
-# Jacket 2.8.3 — architecture
+# Jacket 2.8.4 — architecture
 
 ## Runtime layout
 
 ### Optional embedded Lampac runtime
 - ARM64 only: `:proot-engine` is built from the pinned `oonid/pr` submodule and its native helper binaries are extracted into `nativeLibraryDir` for Android's W^X execution policy. The app still builds for other ABIs; embedded mode is disabled there and the existing remote HTTPS bridge remains available.
 - On explicit user action, `LampacRuntimeService` installs a pinned Debian rootfs, .NET 10 and Lampac NextGen under app-private `filesDir`. Artifact downloads use a strict HTTPS host allowlist and pinned SHA-256/SHA-512 digests; extraction is size-bounded and validated before activation.
-- The local `init.conf` binds to `127.0.0.1:9118`. Browser automation, heavy transcoding and public listener modules are disabled. No boot receiver or automatic server restart is registered.
+- The local `init.conf` binds to `127.0.0.1:9118`. Browser automation, heavy transcoding and public listener modules are disabled. The optional `GStreamer` module is also skipped: its upstream initializer calls native GLib/GStreamer APIs, but those libraries are not included in the minimal Android Debian rootfs and the app uses Media3 for playback. Existing runtime installations are migrated before every launch by adding only this module to `BaseModule.SkipModules`, preserving all other `init.conf` settings. No boot receiver or automatic server restart is registered.
 - The server is owned by a foreground `specialUse` service with visible status/progress and a Stop action. First startup compiles enabled provider modules and is allowed up to five minutes; the watchdog probes Lampac's documented `/version?type=hash` health endpoint every 500 ms. A timeout is reported as a startup failure; the service intentionally stops the child only after the deadline. When startup fails, the settings log panel shows the last 24 sanitized output lines, including the leading exception and any inner socket error. It requires around 1.5 GB free storage and downloads approximately 480 MB for the Lampac archive plus the .NET runtime. Embedded installation and startup must still be tested on physical ARM64 Android hardware.
 
 ```text

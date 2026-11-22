@@ -135,6 +135,9 @@ class LampacRuntimeService : Service() {
         try {
             val host = JacketProotHost(applicationContext)
             LampacProotBootstrap.prepare(host)
+            // Existing installs keep their original init.conf across APK updates.
+            // Apply the safe Android module profile before launching Core.dll.
+            LampacEmbeddedConfig.ensureAndroidRuntimeConfig(File(host.debianRootfsDir, "opt/lampac"))
             val commands = LampacProotCommands(host)
             val command = "cd /opt/lampac && " +
                 "export DOTNET_ROOT=/opt/dotnet " +

@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.8.4
+
+- Fix embedded Lampac startup on ARM64: skip its optional GStreamer module, whose startup unconditionally initializes native GLib/GStreamer libraries that are not part of the minimal Android Debian rootfs.
+- Migrate existing installations before every server launch by adding only `GStreamer` to `BaseModule.SkipModules`; preserve other `init.conf` values and keep the migration idempotent.
+- Add unit coverage for the module exclusion and non-destructive config migration.
+
 ## 2.8.3
 
 - Expand the embedded Lampac diagnostic panel to show the last 24 sanitized process-output lines in a scrollable log. This preserves the original .NET exception and inner socket/host error, which were hidden when only the last four stack frames were shown.

@@ -27,7 +27,25 @@ class LampacEmbeddedConfigTest {
         val modules = (0 until skipped.length()).map { skipped.getString(it) }.toSet()
 
         assertTrue("Transcoding" in modules)
+        assertTrue("GStreamer" in modules)
         assertTrue("TorrServer" in modules)
+    }
+
+    @Test
+    fun installedConfigMigrationAddsGStreamerExclusionWithoutOverwritingCustomSettings() {
+        val config = JSONObject(
+            """{"listen":{"ip":"127.0.0.1","port":9123},"BaseModule":{"SkipModules":["Transcoding"]},"custom":{"marker":"keep"}}"""
+        )
+
+        assertTrue(LampacEmbeddedConfig.ensureGStreamerSkipped(config))
+        assertFalse(LampacEmbeddedConfig.ensureGStreamerSkipped(config))
+
+        assertEquals(9123, config.getJSONObject("listen").getInt("port"))
+        assertEquals("keep", config.getJSONObject("custom").getString("marker"))
+        val skipped = config.getJSONObject("BaseModule").getJSONArray("SkipModules")
+        assertEquals(2, skipped.length())
+        assertEquals("Transcoding", skipped.getString(0))
+        assertEquals("GStreamer", skipped.getString(1))
     }
 
     @Test
