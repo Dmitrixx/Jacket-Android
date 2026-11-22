@@ -2140,6 +2140,7 @@ private fun SettingsScreen(
     val filmixToken by viewModel.filmixToken.collectAsState()
     val filmixApiBase by viewModel.filmixApiBase.collectAsState()
     val filmixCustomApiBase by viewModel.filmixCustomApiBase.collectAsState()
+    val filmixCorsProxyBase by viewModel.filmixCorsProxyBase.collectAsState()
     val filmixCode by viewModel.filmixCode.collectAsState()
     val filmixStatus by viewModel.filmixStatus.collectAsState()
     val isFilmixPairing by viewModel.isFilmixPairing.collectAsState()
@@ -2195,6 +2196,7 @@ private fun SettingsScreen(
     }
     var token by remember(currentToken) { mutableStateOf(currentToken) }
     var filmixCustomApiInput by remember(filmixCustomApiBase) { mutableStateOf(filmixCustomApiBase) }
+    var filmixCorsProxyInput by remember(filmixCorsProxyBase) { mutableStateOf(filmixCorsProxyBase) }
     val savedRates = remember(context) { TorrentEngine.rateLimits(context) }
     var downloadLimit by rememberSaveable { mutableStateOf(savedRates.first.toString()) }
     var uploadLimit by rememberSaveable { mutableStateOf(savedRates.second.toString()) }
@@ -2668,6 +2670,33 @@ private fun SettingsScreen(
                                 } + " Перед отправкой ID и токена проверяется API и TLS-сертификат. Для AUTO после успешной привязки используется сервер, выдавший код.",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Text("Маршрут запросов и приватность", style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.SemiBold)
+                            OutlinedTextField(
+                                value = filmixCorsProxyInput,
+                                onValueChange = { filmixCorsProxyInput = it.take(300) },
+                                modifier = Modifier.fillMaxWidth(),
+                                label = { Text("HTTPS-прокси (пусто = напрямую)") },
+                                placeholder = { Text("https://мой-сервер.example") },
+                                singleLine = true,
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
+                                enabled = !isFilmixPairing
+                            )
+                            OutlinedButton(
+                                onClick = { viewModel.saveFilmixCorsProxyBase(filmixCorsProxyInput) },
+                                enabled = !isFilmixPairing,
+                                modifier = Modifier.fillMaxWidth()
+                            ) { Text("Сохранить маршрут") }
+                            Text(
+                                if (filmixCorsProxyInput.isBlank()) {
+                                    "Прокси отключён. Jacket отправляет запросы напрямую к выбранному HTTPS API. Это приватный вариант по умолчанию."
+                                } else {
+                                    "ВНИМАНИЕ: указанный прокси получает полный запрос, включая токен устройства и данные профиля. Base64 в адресе не является шифрованием. Используй только собственный или полностью доверенный HTTPS-сервер."
+                                },
+                                style = MaterialTheme.typography.labelSmall,
+                                color = if (filmixCorsProxyInput.isBlank()) MaterialTheme.colorScheme.onSurfaceVariant
+                                else MaterialTheme.colorScheme.error
                             )
                             Surface(
                                 modifier = Modifier.fillMaxWidth(),

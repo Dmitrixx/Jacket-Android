@@ -54,6 +54,10 @@ No external Jackett or TorrServer process is started or packaged.
 - Internet Archive media playback/download actions are offered only when item metadata carries a recognized Creative Commons / public-domain license URL. This is a conservative gate, not a full license audit.
 - `PosterDiskCache` keeps bounded public artwork in memory and app cache; cache files contain no credentials.
 
+## Filmix device authorization
+- Pairing uses a per-install device ID and the Lampa-compatible device fingerprint. The activation token is accepted only after the selected Filmix API reports user profile data.
+- API selection is pinned after pairing. The optional HTTPS relay is empty by default; it is a user-managed trust decision because the relay operator can inspect the decoded request payload, including the device token.
+
 ## Lampac provider federation
 - Lampac routes are discovered from the configured server through `/lite/events` and `/lifeevents`; the Android app does not hard-code a snapshot of provider plugins.
 - Up to 48 routes are queried using a four-worker pool. Each route failure is returned as a separate `IndexerFailure`; successful provider results are retained.

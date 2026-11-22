@@ -65,6 +65,19 @@ class MediaSettingsStore(context: Context) {
         if (value.isBlank()) "" else FilmixDeviceAuth.normalizeApiBase(value, allowCustomHost = true)
     }.getOrDefault("")
 
+    /** Optional user-managed HTTPS relay. Empty means direct HTTPS API requests. */
+    fun filmixCorsProxyBase(): String = runCatching {
+        val value = preferences.getString(KEY_FILMIX_CORS_PROXY_BASE, "").orEmpty()
+        FilmixDeviceAuth.normalizeCorsProxyBase(value)
+    }.getOrDefault("")
+
+    @Synchronized
+    fun saveFilmixCorsProxyBase(value: String): String {
+        val normalized = FilmixDeviceAuth.normalizeCorsProxyBase(value)
+        preferences.edit { putString(KEY_FILMIX_CORS_PROXY_BASE, normalized) }
+        return normalized
+    }
+
     @Synchronized
     fun saveFilmixApiSelection(value: String): String {
         val normalized = FilmixDeviceAuth.normalizeApiSelection(value)
@@ -525,6 +538,7 @@ class MediaSettingsStore(context: Context) {
         const val KEY_FILMIX_API_SELECTION = "filmix_api_selection"
         const val KEY_FILMIX_ACTIVE_API_BASE = "filmix_active_api_base"
         const val KEY_FILMIX_CUSTOM_API_BASE = "filmix_custom_api_base"
+        const val KEY_FILMIX_CORS_PROXY_BASE = "filmix_cors_proxy_base"
         const val KEY_FILMIX_DEVICE_ID = "filmix_device_id"
         const val KEY_HDREZKA_MIRROR = "hdrezka_mirror"
         const val KEY_HDREZKA_LOGIN = "hdrezka_login_enc"

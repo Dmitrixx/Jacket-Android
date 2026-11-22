@@ -2,6 +2,9 @@
 
 ## 2.8.0
 
+- Update Filmix device pairing to the current Lampa-compatible Android fingerprint and profile-confirmed activation; guard replacement/cancelled pairing operations against stale responses.
+- Make the optional HTTPS Filmix relay user-configured and blank by default. The settings screen warns that a relay operator can see the decoded device token and profile requests.
+
 - Add an optional on-device Lampac NextGen runtime for ARM64: private Debian + .NET 10 rootfs, checksum-pinned artifacts, bounded extraction, secure log redaction, start/stop controls and local-only binding at 127.0.0.1:9118.
 - Add PRoot JNI packaging, NDK/CMake CI setup and tests for artifact URL policy, runtime config, sanitized output and cancellation-safe state. Non-ARM64 devices keep the remote HTTPS Lampac connector.
 
