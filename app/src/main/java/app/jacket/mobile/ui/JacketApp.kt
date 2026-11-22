@@ -2931,10 +2931,10 @@ private fun SettingsScreen(
                                 fontWeight = FontWeight.Black,
                                 letterSpacing = 1.2.sp
                             )
-                            Text("Lampac bridge", style = MaterialTheme.typography.headlineSmall,
+                            Text("Lampac • единый каталог провайдеров", style = MaterialTheme.typography.headlineSmall,
                                 fontWeight = FontWeight.Bold)
                             Text(
-                                "Jacket обращается к вашему Lampac по официальным /lite/events и /lifeevents API, получает список доступных источников и запрашивает JSON-потоки. Поддерживаются фильмы и выбранные эпизоды сериалов из каталога TMDB.",
+                                "Jacket получает динамический список включённых провайдеров Lampac через /lite/events и /lifeevents, затем проверяет их параллельно (до 4 одновременно) и собирает потоки в одну карточку. Поставщики доступны только при наличии и включении соответствующих модулей на сервере. Поддерживаются фильмы и выбранные эпизоды сериалов из каталога TMDB.",
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -2989,7 +2989,7 @@ private fun SettingsScreen(
                                 singleLine = true
                             )
                             Text(
-                                "Email, UID и Token шифруются Android Keystore и передаются только указанному серверу. Удалённый сервер должен использовать HTTPS; HTTP разрешён только для 127.0.0.1. Jacket не обходит CAPTCHA, Cloudflare, DRM, платный доступ или региональные ограничения.",
+                                "Email, UID и Token шифруются Android Keystore и передаются только указанному серверу. Для встроенного Lampac используется 127.0.0.1; удалённый сервер должен использовать HTTPS. Наличие каждого провайдера зависит от модулей и настроек Lampac. Jacket не обходит CAPTCHA, Cloudflare, DRM, платный доступ или региональные ограничения.",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -3195,15 +3195,24 @@ private fun SettingsScreen(
                                     when (source.integration) {
                                         MediaSourceIntegration.DIRECT_ADAPTER -> "КОННЕКТОР"
                                         MediaSourceIntegration.AUTH_SETTINGS_ONLY -> "ЕСТЬ НАСТРОЙКИ"
+                                        MediaSourceIntegration.LAMPAC_MANAGED -> "LAMPAC / ПЛАГИН"
                                         MediaSourceIntegration.MEDIA_ADAPTER_MISSING -> "НЕ ПОДКЛЮЧЁН"
                                     },
-                                    accent = source.integration != MediaSourceIntegration.MEDIA_ADAPTER_MISSING
+                                    accent = source.integration == MediaSourceIntegration.DIRECT_ADAPTER ||
+                                        source.integration == MediaSourceIntegration.AUTH_SETTINGS_ONLY
                                 )
                                 OverflowActionsMenu(
                                     actions = if (source.integration == MediaSourceIntegration.DIRECT_ADAPTER ||
                                         source.integration == MediaSourceIntegration.AUTH_SETTINGS_ONLY
                                     ) {
                                         listOf("Настройки источника" to { selectedSettingsSection = source.id })
+                                    } else if (source.integration == MediaSourceIntegration.LAMPAC_MANAGED) {
+                                        listOf(
+                                            "Настроить Lampac" to { selectedSettingsSection = "lampac" },
+                                            "Проверить описание" to {
+                                                Toast.makeText(context, source.notes, Toast.LENGTH_LONG).show()
+                                            }
+                                        )
                                     } else {
                                         listOf("Почему не подключён" to {
                                             Toast.makeText(context, source.notes, Toast.LENGTH_LONG).show()
@@ -3225,6 +3234,12 @@ private fun SettingsScreen(
                                     modifier = Modifier.fillMaxWidth()
                                 ) {
                                     Text(if (source.id == "filmix") "Настройки Filmix" else "Настройки HDRezka")
+                                }
+                                MediaSourceIntegration.LAMPAC_MANAGED -> OutlinedButton(
+                                    onClick = { selectedSettingsSection = "lampac" },
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Text("Подключить через Lampac")
                                 }
                                 MediaSourceIntegration.MEDIA_ADAPTER_MISSING -> Text(
                                     "Нет проверенного API или совместимого адаптера в текущем проекте.",

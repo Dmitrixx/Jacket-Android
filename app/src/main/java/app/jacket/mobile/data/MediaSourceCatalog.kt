@@ -3,6 +3,7 @@ package app.jacket.mobile.data
 enum class MediaSourceIntegration {
     DIRECT_ADAPTER,
     AUTH_SETTINGS_ONLY,
+    LAMPAC_MANAGED,
     MEDIA_ADAPTER_MISSING
 }
 
@@ -51,8 +52,8 @@ object MediaSourceCatalog {
             types = listOf("serial"),
             authRequired = false,
             supports4k = false,
-            notes = "Сериалы и собственная озвучка. Проверенный адаптер пока не подключён.",
-            integration = MediaSourceIntegration.MEDIA_ADAPTER_MISSING
+            notes = "Сериалы и озвучка доступны через совместимый модуль Lampac, если он установлен и включён.",
+            integration = MediaSourceIntegration.LAMPAC_MANAGED
         ),
         MediaSourceDescriptor(
             id = "baskino",
@@ -62,8 +63,8 @@ object MediaSourceCatalog {
             types = listOf("movie", "serial"),
             authRequired = false,
             supports4k = false,
-            notes = "Нужен проверенный адаптер и подтверждённый формат источника.",
-            integration = MediaSourceIntegration.MEDIA_ADAPTER_MISSING
+            notes = "Фильмы и сериалы доступны через совместимый модуль Lampac, если он установлен и включён.",
+            integration = MediaSourceIntegration.LAMPAC_MANAGED
         ),
         MediaSourceDescriptor(
             id = "kinogo",
@@ -73,8 +74,8 @@ object MediaSourceCatalog {
             types = listOf("movie", "serial"),
             authRequired = false,
             supports4k = false,
-            notes = "Нужен проверенный адаптер и подтверждённый формат источника.",
-            integration = MediaSourceIntegration.MEDIA_ADAPTER_MISSING
+            notes = "Фильмы и сериалы доступны через совместимый модуль Lampac, если он установлен и включён.",
+            integration = MediaSourceIntegration.LAMPAC_MANAGED
         ),
         MediaSourceDescriptor(
             id = "videocdn",
@@ -84,8 +85,8 @@ object MediaSourceCatalog {
             types = listOf("movie", "serial"),
             authRequired = false,
             supports4k = false,
-            notes = "Требуется документированный API или совместимый плагин-поставщик.",
-            integration = MediaSourceIntegration.MEDIA_ADAPTER_MISSING
+            notes = "Видеопотоки доступны через совместимый модуль Lampac, если он установлен и включён.",
+            integration = MediaSourceIntegration.LAMPAC_MANAGED
         ),
         MediaSourceDescriptor(
             id = "collaps",
@@ -95,8 +96,8 @@ object MediaSourceCatalog {
             types = listOf("movie", "serial"),
             authRequired = false,
             supports4k = false,
-            notes = "Требуется документированный API или совместимый плагин-поставщик.",
-            integration = MediaSourceIntegration.MEDIA_ADAPTER_MISSING
+            notes = "Видеопотоки доступны через совместимый модуль Lampac, если он установлен и включён.",
+            integration = MediaSourceIntegration.LAMPAC_MANAGED
         ),
         MediaSourceDescriptor(
             id = "kinobase",
@@ -106,8 +107,8 @@ object MediaSourceCatalog {
             types = listOf("movie", "serial"),
             authRequired = false,
             supports4k = false,
-            notes = "Дополнительный источник. Проверенный адаптер пока не подключён.",
-            integration = MediaSourceIntegration.MEDIA_ADAPTER_MISSING
+            notes = "Фильмы и сериалы доступны через совместимый модуль Lampac, если он установлен и включён.",
+            integration = MediaSourceIntegration.LAMPAC_MANAGED
         ),
         MediaSourceDescriptor(
             id = "cdnmovies",
@@ -117,8 +118,8 @@ object MediaSourceCatalog {
             types = listOf("movie", "serial"),
             authRequired = false,
             supports4k = false,
-            notes = "Резервный источник. Проверенный адаптер пока не подключён.",
-            integration = MediaSourceIntegration.MEDIA_ADAPTER_MISSING
+            notes = "Резервный источник доступен через Lampac, если соответствующий модуль установлен и включён.",
+            integration = MediaSourceIntegration.LAMPAC_MANAGED
         ),
         MediaSourceDescriptor(
             id = "lordfilm",
@@ -128,8 +129,8 @@ object MediaSourceCatalog {
             types = listOf("movie", "serial"),
             authRequired = false,
             supports4k = false,
-            notes = "Требуется проверенный источник и поддержка смены URL через настройки, не через обход блокировок.",
-            integration = MediaSourceIntegration.MEDIA_ADAPTER_MISSING
+            notes = "Фильмы и сериалы доступны через совместимый модуль Lampac, если он установлен и включён.",
+            integration = MediaSourceIntegration.LAMPAC_MANAGED
         )
     )
 }

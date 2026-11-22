@@ -2,6 +2,9 @@
 
 ## 2.8.0
 
+- Expand Lampac federation to dynamically discovered routes (up to 48) with four concurrent workers; retain per-provider errors and successful partial results while displaying the real provider name.
+- Route the eight optional video-source catalogue entries through Lampac modules when installed and enabled, without claiming every module exists on every server.
+
 - Add consistent three-dot action menus to provider, tracker, direct-indexer and Jackett catalogue cards, with test/search/configure/edit/delete actions where supported.
 - Add a configurable peer-connection cap for the built-in torrent engine (automatic device-aware defaults or a user-selected 20–500 limit).
 

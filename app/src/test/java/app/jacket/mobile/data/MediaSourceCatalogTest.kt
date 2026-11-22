@@ -24,20 +24,27 @@ class MediaSourceCatalogTest {
     }
 
     @Test
-    fun marksDirectConnectorsSeparatelyFromSettingsOnlyProviders() {
+    fun separatesDirectAdaptersFromLampacManagedOptionalProviders() {
         val directAdapters = MediaSourceCatalog.sources
             .filter { it.integration == MediaSourceIntegration.DIRECT_ADAPTER }
             .map { it.id }
+        val lampacManaged = MediaSourceCatalog.sources
+            .filter { it.integration == MediaSourceIntegration.LAMPAC_MANAGED }
+            .map { it.id }
 
         assertEquals(listOf("hdrezka", "filmix"), directAdapters)
+        assertEquals(
+            listOf("coldfilm", "baskino", "kinogo", "videocdn", "collaps", "kinobase", "cdnmovies", "lordfilm"),
+            lampacManaged
+        )
         assertTrue(MediaSourceCatalog.sources.none {
-            it.integration == MediaSourceIntegration.AUTH_SETTINGS_ONLY
+            it.integration == MediaSourceIntegration.AUTH_SETTINGS_ONLY ||
+                it.integration == MediaSourceIntegration.MEDIA_ADAPTER_MISSING
         })
-        assertTrue(MediaSourceCatalog.sources
-            .filter { it.integration == MediaSourceIntegration.MEDIA_ADAPTER_MISSING }
-            .all { it.notes.contains("адаптер") || it.notes.contains("API") ||
-                it.notes.contains("источник") || it.notes.contains("плагин") })
+        assertTrue(lampacManaged.all { id ->
+            MediaSourceCatalog.sources.first { it.id == id }.notes.contains("Lampac")
+        })
         assertFalse(MediaSourceCatalog.sources.any { it.id == "coldfilm" &&
-            it.integration != MediaSourceIntegration.MEDIA_ADAPTER_MISSING })
+            it.integration == MediaSourceIntegration.DIRECT_ADAPTER })
     }
 }

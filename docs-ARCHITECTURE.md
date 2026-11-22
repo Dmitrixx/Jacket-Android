@@ -38,7 +38,7 @@ No external Jackett or TorrServer process is started or packaged.
 
 ## Video source registry
 
-`MediaSourceCatalog` preserves the ten requested provider IDs, priorities, media types, auth requirements and 4K flags. Filmix and HDRezka now have direct adapters: Filmix uses its selected HTTPS API and device token; HDRezka uses only the mirror explicitly entered by the user. The other eight descriptors remain catalog metadata with no active adapter. Provider availability still depends on the user's network, account, source mirror and the site's supported stream format.
+`MediaSourceCatalog` preserves the ten requested provider IDs, priorities, media types, auth requirements and 4K flags. Filmix and HDRezka now have direct adapters: Filmix uses its selected HTTPS API and device token; HDRezka uses only the mirror explicitly entered by the user. The other eight descriptors are managed through the optional Lampac catalogue when a matching module is installed and enabled on the user's server. Jacket discovers runtime routes, checks up to 48 with four concurrent workers and isolates per-provider failures. Availability still depends on server modules, network access, account entitlements and the provider's stream format.
 
 ## Catalog flow
 
@@ -47,6 +47,12 @@ No external Jackett or TorrServer process is started or packaged.
 - Torrent indexer searches include the `SxxExx` code and episode title. Filmix and HDRezka search the series title/year, then resolve the selected season/episode through the provider's own catalogue/player response.
 - Internet Archive media playback/download actions are offered only when item metadata carries a recognized Creative Commons / public-domain license URL. This is a conservative gate, not a full license audit.
 - `PosterDiskCache` keeps bounded public artwork in memory and app cache; cache files contain no credentials.
+
+## Lampac provider federation
+- Lampac routes are discovered from the configured server through `/lite/events` and `/lifeevents`; the Android app does not hard-code a snapshot of provider plugins.
+- Up to 48 routes are queried using a four-worker pool. Each route failure is returned as a separate `IndexerFailure`; successful provider results are retained.
+- The provider slug/name is preserved in `SourceResult`, while account parameters are stripped from page metadata. Provider and stream requests remain pinned to the configured Lampac origin.
+- The current bridge accepts TMDB movie and selected-series-episode cards. TMDB metadata credentials and a running, configured Lampac instance are prerequisites. A catalogue label does not assert that every named plugin exists on the server.
 
 ## Indexer cabinet
 

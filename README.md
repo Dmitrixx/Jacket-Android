@@ -33,7 +33,7 @@ Tracker pages can change markup or require an account, CAPTCHA, Cloudflare or an
 
 ## Video source catalogue
 
-The source picker keeps the requested priority order: HDRezka, Filmix, ColdFilm, Baskino, Kinogo, VideoCDN, Collaps, Kinobase, CDNMovies and Lordfilm. Direct search/player adapters are implemented for Filmix and HDRezka. The other eight entries are catalogue descriptors only and remain visibly unconnected until a compatible, verified API or feed adapter is available. No live connector is claimed for Kinogo or Lordfilm.
+The source picker keeps the requested priority order: HDRezka, Filmix, ColdFilm, Baskino, Kinogo, VideoCDN, Collaps, Kinobase, CDNMovies and Lordfilm. HDRezka and Filmix have direct adapters. The other eight entries are routed through the optional Lampac bridge: Jacket discovers providers enabled on the user's server at runtime, queries up to 48 returned routes with four concurrent workers, and labels each result with the real provider name. A card marked "Lampac / plugin" means a compatible module must be installed and enabled on the server; not every named site is present on every Lampac installation.
 
 ## Indexer cabinet and optional Jackett connector
 
@@ -67,7 +67,7 @@ The built-in tracker list contains RuTracker, NNM-Club, Rutor, Kinozal, 1337x an
 
 For a broader, server-maintained catalogue, connect your own Jackett endpoint: Jacket reads the indexer list from that server instead of hardcoding a snapshot. Filter public/private providers, language and configuration status, then open the selected indexer's dynamic auth fields and save them back to Jackett. This follows the centralised, parallel-search and per-private-tracker configuration approach described in the Habr overview, while keeping Jackett optional and external.
 
-Filmix, HDRezka and Lampac have separate source settings. Additional direct feeds can be configured as RSS / Atom or Torznab / Newznab indexers; website-only providers can be added as HTTPS search shortcuts. A catalogue descriptor without a verified adapter is visibly marked as unconnected rather than being presented as a working player integration. The app does not ship tracker credentials. CAPTCHA, anti-bot challenges, proprietary sign-in flows and interactive 2FA are not automated. A manually entered cookie may work where the source permits it.
+Filmix and HDRezka use direct adapters. The eight additional video catalogue entries use Lampac's live provider catalogue when a matching module is installed and enabled on the configured server. The current bridge resolves TMDB movie and selected-series-episode cards, so TMDB metadata configuration is required for this path. Additional direct feeds can be configured as RSS / Atom or Torznab / Newznab indexers; website-only providers can be added as HTTPS search shortcuts. The app does not ship tracker credentials. CAPTCHA, anti-bot challenges, proprietary sign-in flows and interactive 2FA are not automated. A manually entered cookie may work where the source permits it.
 
 ## User-configured website search
 
