@@ -281,7 +281,7 @@ object LampacEmbeddedConfig {
      * Provider credentials, priorities, JacRed adapters and all other custom sections
      * are retained as supplied by the user.
      */
-    fun importInitConfig(serverDirectory: File, content: String): File {
+    internal fun prepareImportedConfig(content: String): String {
         val encoded = content.toByteArray(Charsets.UTF_8)
         require(encoded.isNotEmpty() && encoded.size <= MAX_INIT_CONFIG_BYTES) {
             "Файл init.conf должен быть непустым и не превышать 2 МиБ"
@@ -292,12 +292,17 @@ object LampacEmbeddedConfig {
             throw IOException("Файл init.conf не является корректным JSON", error)
         }
         ensureAndroidModules(config)
+        return config.toString(2)
+    }
+
+    fun importInitConfig(serverDirectory: File, content: String): File {
+        val normalizedConfig = prepareImportedConfig(content)
         if (!serverDirectory.exists() && !serverDirectory.mkdirs()) {
             throw IOException("Не удалось создать каталог Lampac: ${serverDirectory.absolutePath}")
         }
         require(serverDirectory.isDirectory) { "Путь Lampac не является каталогом" }
         val target = File(serverDirectory, "init.conf")
-        writeConfigAtomically(target, config.toString(2))
+        writeConfigAtomically(target, normalizedConfig)
         return target
     }
 
