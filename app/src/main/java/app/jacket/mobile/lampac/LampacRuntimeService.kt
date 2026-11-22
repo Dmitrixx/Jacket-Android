@@ -160,14 +160,23 @@ class LampacRuntimeService : Service() {
         monitorJob?.cancel()
         monitorJob = scope.launch(Dispatchers.IO) {
             val buffer = ByteArray(4096)
+            val outputLines = LampacOutputLineBuffer { line ->
+                if (line.isNotBlank()) {
+                    LampacRuntimeState.appendLog(line)
+                    if (LampacRuntimeState.state.value.phase == LampacRuntimePhase.STARTING) {
+                        updateNotification(line.take(100))
+                    }
+                }
+            }
             while (isActive && !isStopping.get()) {
                 val count = runCatching { session.read(buffer) }.getOrDefault(-1)
                 when {
-                    count > 0 -> appendOutput(buffer, count)
+                    count > 0 -> outputLines.append(buffer, count)
                     count <= 0 && session.exitCode != null -> break
                     else -> delay(35)
                 }
             }
+            outputLines.finish()
 
             val exitCode = session.exitCode
             if (serverSession === session && !isStopping.get()) {
@@ -217,18 +226,6 @@ class LampacRuntimeService : Service() {
             false
         } finally {
             connection.disconnect()
-        }
-    }
-
-    private fun appendOutput(buffer: ByteArray, count: Int) {
-        val text = String(buffer, 0, count, Charsets.UTF_8)
-        text.lineSequence().forEach { line ->
-            if (line.isNotBlank()) {
-                LampacRuntimeState.appendLog(line)
-                if (LampacRuntimeState.state.value.phase == LampacRuntimePhase.STARTING) {
-                    updateNotification(line.take(100))
-                }
-            }
         }
     }
 
