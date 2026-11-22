@@ -117,6 +117,7 @@ object LampacEmbeddedConfig {
     internal fun ensureAndroidModules(config: JSONObject): Boolean {
         var changed = ensureLocalListener(config)
         if (ensureAllModulesLoadedWhenUnspecified(config)) changed = true
+        if (ensureAndroidRuntimeRestrictions(config)) changed = true
         if (ensureGStreamerSkipped(config)) changed = true
         if (ensureUpstreamDefaultExclusions(config)) changed = true
         if (ensureAndroidOptionalModulesSkipped(config)) changed = true
@@ -136,6 +137,28 @@ object LampacEmbeddedConfig {
             .put("scheme", "http")
             .put("localhost", HOST)
         return before != listen.toString()
+    }
+
+    /** Browser automation and telemetry endpoints are not part of the embedded Android profile. */
+    internal fun ensureAndroidRuntimeRestrictions(config: JSONObject): Boolean {
+        var changed = false
+        val chromium = config.optJSONObject("chromium") ?: JSONObject().also {
+            config.put("chromium", it)
+            changed = true
+        }
+        if (!chromium.has("enable") || chromium.optBoolean("enable", true)) {
+            chromium.put("enable", false)
+            changed = true
+        }
+        val openstat = config.optJSONObject("openstat") ?: JSONObject().also {
+            config.put("openstat", it)
+            changed = true
+        }
+        if (!openstat.has("enable") || openstat.optBoolean("enable", true)) {
+            openstat.put("enable", false)
+            changed = true
+        }
+        return changed
     }
 
     /** Lampac loads enabled modules selected by LoadModules, less SkipModules. */
