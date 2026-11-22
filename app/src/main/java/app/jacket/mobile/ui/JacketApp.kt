@@ -3340,12 +3340,24 @@ private fun SettingsScreen(
             item {
                 Text("Встроенные источники", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
                 Card(modifier = Modifier.fillMaxWidth()) {
-                    Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        Text("Internet Archive", fontWeight = FontWeight.SemiBold)
-                        Text(
-                            "Каталог открытых медиа доступен напрямую, отдельный сервер Jackett не нужен.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(14.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Text("Internet Archive", fontWeight = FontWeight.SemiBold)
+                            Text(
+                                "Каталог открытых медиа доступен напрямую, отдельный сервер Jackett не нужен.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        OverflowActionsMenu(
+                            actions = listOf(
+                                "Открыть каталог Internet Archive" to {
+                                    openExternal(context, "https://archive.org/details/movies")
+                                }
+                            )
                         )
                     }
                 }
