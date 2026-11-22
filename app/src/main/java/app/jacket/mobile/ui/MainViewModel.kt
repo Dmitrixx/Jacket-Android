@@ -428,7 +428,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     (if (builtInTrackers.isNotEmpty()) 1 else 0) +
                     (if (searchFilmix) 1 else 0) +
                     (if (searchRezka) 1 else 0) +
-                    (if (searchLampac) 1 else 0)
+                    // Lampac VOD federation and JacRed torrent search run independently.
+                    (if (searchLampac) 2 else 0)
                 val accumulator = SourceSearchAccumulator(groupCount)
                 val publicationLock = Any()
                 var finalized = false
@@ -588,40 +589,34 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     }
 
                     if (searchLampac) {
-                        add(sourceTask("lampac", "Lampac") {
+                        add(sourceTask("lampac", "Lampac VOD") {
                             val outcome = LampacBridgeClient.searchDetailed(
                                 settings = lampacConfig,
                                 item = item,
                                 episodeCode = episode?.releaseCode
                             )
-                            // JacRed is a separate Lampac API: it searches the server's
-                            // built-in tracker adapters and returns magnets/.torrent links.
-                            // A JacRed failure must not discard successful VOD results.
-                            val jacRed = runCatching {
-                                LampacBridgeClient.searchJacRedTorrents(
-                                    settings = lampacConfig,
-                                    query = query,
-                                    item = item
-                                )
-                            }
-                            val jacRedFailure = jacRed.exceptionOrNull()?.let { error ->
-                                IndexerFailure(
-                                    indexerId = "lampac:jacred",
-                                    indexerName = "Lampac JacRed",
-                                    message = error.message.orEmpty()
-                                        .replace(Regex("[\\r\\n\\t]+"), " ")
-                                        .take(180)
-                                        .ifBlank { "Модуль JacRed недоступен" }
-                                )
-                            }
-                            val jacRedOutcome = jacRed.getOrNull()
                             CombinedSourceGroupOutcome(
                                 groupId = "lampac",
-                                results = outcome.results + (jacRedOutcome?.results ?: emptyList()),
-                                failures = outcome.failures + listOfNotNull(jacRedFailure),
-                                progressMessage = "Lampac: " + outcome.checkedProviders +
-                                    "/" + outcome.discoveredProviders + " VOD-провайдеров; JacRed: " +
-                                    (jacRedOutcome?.results?.size ?: 0) + " раздач"
+                                results = outcome.results,
+                                failures = outcome.failures,
+                                progressMessage = "Lampac VOD: проверено " + outcome.checkedProviders +
+                                    " из " + outcome.discoveredProviders + " провайдеров"
+                            )
+                        })
+                        // Keep JacRed independent: a slow VOD provider fan-out must not
+                        // hold up torrent results, and one API failure must not discard the other.
+                        add(sourceTask("lampac-jacred", "Lampac JacRed") {
+                            val outcome = LampacBridgeClient.searchJacRedTorrents(
+                                settings = lampacConfig,
+                                query = query,
+                                item = item
+                            )
+                            CombinedSourceGroupOutcome(
+                                groupId = "lampac-jacred",
+                                results = outcome.results,
+                                failures = emptyList(),
+                                progressMessage = "Lampac JacRed: проверено " + outcome.checkedResults +
+                                    " записей, найдено раздач: " + outcome.results.size
                             )
                         })
                     }
