@@ -8,7 +8,7 @@ A user installs one Jacket APK. From **Settings → Lampac engine**, they can in
 
 The existing LampacBridgeClient remains the app-facing API client. The embedded engine should expose the same local API contract so the source picker and Media3 playback pipeline do not need a second implementation.
 
-## Current facts and constraints
+## Current Lampac constraints
 
 The upstream Lampac NextGen project is a server application, not an Android library:
 
@@ -33,28 +33,48 @@ The .NET Android workload is intended to build Android applications. The documen
 
 A direct Kotlin port of all Lampac providers would avoid a Linux userspace but would be a separate, large compatibility project. It should not be presented as a simple packaging change.
 
-## Candidate implementation
+## Strong candidate: reuse an Android PRoot engine
 
-### First candidate: app-managed Linux userspace (no Termux app)
+Research identified **oonid/pr** (https://github.com/oonid/pr), an Android project specifically designed to run Linux distributions inside an APK without root and without a separate Termux installation. It is much closer to the requested user experience than asking users to install Termux.
 
-Run the upstream ARM64 Lampac release inside an app-private Debian userspace, launched and supervised by Jacket. A PRoot-style userspace runner is the first candidate because it may allow the existing Linux ASP.NET Core runtime to run without device root. It is **not yet proven** to work from Jacket's Android sandbox.
+Its source currently provides:
+- An Android library module named proot-engine with Kotlin ProotHost / ProotLauncher APIs and ARM64 native binaries for PRoot, its loader and pr-cli.
+- A session-core Android library with rootfs bootstrap, process execution, session supervision, foreground-service notifications and cancellation.
+- Debian and other ARM64 userspace installation from OCI images.
+- Android-specific handling for syscall / seccomp and executable-file restrictions.
+
+Important limits before adopting it:
+- The published project currently declares its PRoot engine ABI as arm64-v8a. Jacket supports additional ABIs, so embedded mode must be explicitly disabled where no matching engine exists or more ABIs must be built and tested.
+- Its Android libraries currently use compileSdk 37 and its documented build uses a recent Android Gradle Plugin, NDK and Rust toolchain. Compatibility with Jacket's existing Gradle/SDK configuration must be verified rather than assumed.
+- The project is young and must be audited and tested on Jacket's target devices. Its README documents PRoot's syscall interception and performance limits; this is not a VM or a full Linux kernel.
+- Its licence is multi-component: the Android source is MIT, but the PRoot and pr-cli native components are GPL-2.0-or-later / GPL-3.0-or-later. The whole dependency must not be treated as MIT. Jacket's distribution licence and obligations for redistributing these binaries must be resolved before vendoring them.
+- The PRoot process can run a normal long-lived command, but it does not provide systemd or real root privileges. Lampac must be launched directly as a supervised process, not as a Linux system service.
+
+Reference files:
+- https://github.com/oonid/pr
+- https://github.com/oonid/pr/blob/main/LICENSE
+- https://github.com/oonid/pr/blob/main/android/proot-engine
+- https://github.com/oonid/pr/blob/main/android/session-core
+
+This makes the initial route concrete: audit whether Jacket can integrate the proot-engine and session-core libraries, then run the official ARM64 Debian rootfs and .NET ASP.NET Core 10 runtime from Jacket's own private storage. The PRoot dependency is a candidate, not an approved dependency or a verified build yet.
+
+## Candidate runtime layout
 
     Jacket UI
       └── LampacRuntimeManager
-           ├── install / verify / update engine files in app-private storage
-           ├── start / stop / monitor child process
-           └── Lampac runtime service
-                └── userspace runner
-                     └── Debian ARM64 rootfs
-                          └── .NET ASP.NET Core 10 runtime
-                               └── Lampac Core.dll
-                                    └── 127.0.0.1:9118
-                                         └── existing LampacBridgeClient
-                                              └── Jacket source picker / Media3
+           ├── install / verify / update runtime in app-private storage
+           ├── supervise one child process and collect bounded logs
+           └── PRoot Android engine
+                └── Debian ARM64 rootfs
+                     └── .NET ASP.NET Core 10 runtime
+                          └── Lampac Core.dll
+                               └── 127.0.0.1:9118
+                                    └── existing LampacBridgeClient
+                                         └── Jacket source picker / Media3
 
-This would be integrated into the Jacket experience: the Linux userspace and Lampac files are managed by Jacket, not by a separately installed terminal app. The first install may download runtime components, so the base APK can remain smaller; the UI must show download size, storage requirement, progress, version and failure reason.
+The Linux userspace and Lampac files are managed by Jacket, not by a separately installed terminal app. The first install may download runtime components, so the base APK can remain smaller; the UI must show download size, storage requirement, progress, version and failure reason.
 
-### Reduced-feature first boot
+## Reduced-feature first boot
 
 The first proof of concept should start with a conservative configuration:
 
@@ -71,8 +91,8 @@ The official sample configuration uses 0.0.0.0 for listening. Jacket must genera
 
 Do not start a large UI or APK-bundling effort until this test passes on a real ARM64 Android device, without installing Termux:
 
-1. Package or stage the userspace runner in Jacket's private app directory and execute it under the normal Android app UID (no root).
-2. Create and enter an ARM64 Debian rootfs from that private directory.
+1. Build or integrate the PRoot Android engine in a small Jacket test flavor and run it under the normal Android app UID (no root).
+2. Create and enter an ARM64 Debian rootfs from Jacket's private directory.
 3. Install / stage the matching ASP.NET Core 10 runtime and verify dotnet --info.
 4. Launch the upstream Lampac release with a minimal config and confirm it binds to 127.0.0.1:9118 only.
 5. Verify /version?type=hash, the event handshake used by Jacket, and at least one provider route that does not require a browser.
@@ -85,9 +105,10 @@ Do not start a large UI or APK-bundling effort until this test passes on a real 
 ## Jacket implementation milestones after the proof of concept
 
 ### M0 — runtime feasibility
-- Minimal ARM64 harness and repeatable Android 12+ device test.
+- Audit and pin a specific PRoot Android engine commit; review its full component licence map and build integration.
+- Build a minimal ARM64 harness and repeatable Android 12+ device test.
 - Record APK download impact, installed footprint, first-start time, peak memory and idle CPU.
-- Decide exactly which upstream modules can be enabled.
+- Decide exactly which upstream Lampac modules can be enabled.
 
 ### M1 — runtime manager
 - Add a typed state machine: NOT_INSTALLED, DOWNLOADING, INSTALLING, STARTING, READY, STOPPING, FAILED.
@@ -110,7 +131,7 @@ Do not start a large UI or APK-bundling effort until this test passes on a real 
 ### M4 — compatibility and release
 - Expand the enabled provider/module set only after endpoint tests and lawful account/access behaviour are verified.
 - Test phones, tablets and Android TV separately, including low-memory devices and process recreation.
-- Publish the source and notices for all redistributed components and complete the AGPL-3.0-only compliance review.
+- Publish the source and notices for all redistributed components and complete AGPL-3.0-only and PRoot GPL licence compliance review.
 
 ## Acceptance criteria
 
@@ -127,4 +148,4 @@ Embedded mode is ready for release only when:
 
 ## Current implementation status
 
-The repository currently has a remote Lampac API bridge only. The runtime manager, Debian userspace, embedded server process, install UI and physical-device validation are **not implemented yet**. This design is the gate for the first runnable prototype, not a release claim.
+The repository currently has a remote Lampac API bridge only. The runtime manager, Debian userspace, embedded server process, install UI and physical-device validation are **not implemented yet**. An Android PRoot engine candidate has been identified and inspected, but it has not been integrated into Jacket or tested on a Jacket build. This design is the gate for the first runnable prototype, not a release claim.
