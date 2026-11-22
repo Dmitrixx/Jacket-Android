@@ -42,6 +42,7 @@ Add user-owned endpoints:
 - RSS / Atom feeds and Torznab / Newznab-compatible endpoints over HTTPS.
 - HTTP endpoints only when they target a private / loopback / link-local IP or a local DNS suffix such as `.local` or `.lan`; this is intended for a Jackett server on your own network.
 - An optional Jackett setup card with server address, API key, tracker filter (`all` by default), connection test and disconnect. Jacket probes Jackett with `t=caps`, then searches its selected tracker set. Jackett remains external and is never installed or bundled.
+- Torrent session controls include download/upload rate caps, Wi-Fi-only queue gating and a maximum peer-connection setting. Automatic mode uses conservative device-aware defaults (80 for low-RAM devices, 200 otherwise); a manual cap can be set from 20 to 500.
 - API key, HTTP Basic username/password, or a manually supplied session cookie.
 - Categories, tags, Freeleech flag, sort field and sort order.
 - Enable/disable, edit, individual test, test all and a per-indexer probe search.
@@ -60,7 +61,9 @@ Search templates include `{query}`; `{apikey}` is optional. Public indexers must
 
 Release labels such as 720p / 1080p / 2160p, HDR / DV, HEVC / x264 and common audio/dubbing tags are extracted heuristically from the release title. They are not authoritative tracker metadata. Filters operate on the current results and do not issue another request.
 
-The built-in tracker list contains RuTracker, NNM-Club, Rutor, Kinozal, 1337x and The Pirate Bay. Each profile can be enabled/disabled, edited (HTTPS search template and optional same-origin Cookie), and tested from Settings with a real in-app search; the test reports connection/parser errors separately from an empty result set. Internet Archive and user-added website shortcuts remain browser links. The default list is restored only by an explicit user action, preserving custom entries and avoiding silent activation of trackers.
+Direct RSS / Atom and Torznab / Newznab indexer cards expose test, trial search, edit and delete actions from the same three-dot menu. Jackett's live catalogue uses the menu for per-tracker search, testing, configuration and the source website when available.
+
+The built-in tracker list contains RuTracker, NNM-Club, Rutor, Kinozal, 1337x and The Pirate Bay. Each profile can be enabled/disabled, edited (HTTPS search template and optional same-origin Cookie), and tested from Settings with a real in-app search; the test reports connection/parser errors separately from an empty result set. A three-dot action menu keeps test/open, edit and delete actions together on every site card. Internet Archive and user-added website shortcuts remain browser links. The default list is restored only by an explicit user action, preserving custom entries and avoiding silent activation of trackers.
 
 For a broader, server-maintained catalogue, connect your own Jackett endpoint: Jacket reads the indexer list from that server instead of hardcoding a snapshot. Filter public/private providers, language and configuration status, then open the selected indexer's dynamic auth fields and save them back to Jackett. This follows the centralised, parallel-search and per-private-tracker configuration approach described in the Habr overview, while keeping Jackett optional and external.
 

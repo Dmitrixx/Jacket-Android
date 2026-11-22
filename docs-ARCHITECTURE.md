@@ -118,8 +118,10 @@ Resume data is asynchronous and periodic: abruptly killing the process can lose 
 - One application module and one APK for phone, tablet and Android TV.
 - Leanback launcher category and banner are provided; touchscreen is optional.
 - Phone uses bottom navigation; television uses a navigation rail.
+- Site, tracker, direct-indexer, media-provider and Jackett catalogue cards use a common three-dot action menu. The available actions are scoped to each adapter: native test/search, external website, configure, edit or delete.
+- Torrent network settings include download/upload rate caps, Wi-Fi-only queue gating and a configurable peer connection ceiling. Automatic mode keeps device-aware defaults (80 connections on low-RAM devices, 200 otherwise); manual values are bounded to 20–500.
 - Cards have larger TV artwork and visible focus borders. The player is fullscreen on phone and television: overlay controls auto-hide, D-pad left/right seeks 10 seconds while the chrome is hidden, and Back dismisses the chrome before exiting. Speed and picture-fit choices are stored in app-private preferences. Phones can enter picture-in-picture; the activity handles the corresponding configuration changes so playback is not recreated.
-- Dialogs, list rows and text fields remain normal Compose focus targets and should be checked with physical remotes.
+- Dialogs, list rows, overflow menus and text fields remain normal Compose focus targets and should be checked with physical remotes.
 
 ## Local storage and secrets
 

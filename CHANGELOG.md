@@ -2,6 +2,9 @@
 
 ## 2.8.0
 
+- Add consistent three-dot action menus to provider, tracker, direct-indexer and Jackett catalogue cards, with test/search/configure/edit/delete actions where supported.
+- Add a configurable peer-connection cap for the built-in torrent engine (automatic device-aware defaults or a user-selected 20–500 limit).
+
 - Restrict automatic HDRezka mirror redirects to exact known HTTPS hosts and port 443; prevent stale login or mirror-check jobs from restoring a disconnected session or overwriting a newer operation.
 
 - Consolidated native Filmix and HDRezka search/player adapters, encrypted account state, provider diagnostics and the unified detail-card source picker.
