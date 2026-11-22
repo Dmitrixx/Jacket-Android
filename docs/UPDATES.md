@@ -45,6 +45,8 @@ GitHub Actions restores the key into the temporary runner directory and signs th
 3. Open the APK on the Android device and accept **Update** / **Install**. Do not uninstall the existing Jacket first.
 4. Keep `applicationId` unchanged and keep using the same keystore for every later build.
 
-If the currently installed app was signed with a temporary CI debug key, switching to the permanent release key may require one final uninstall/reinstall because Android rejects APKs signed by a different certificate. This is not required for every update: after the installed copy and CI use the same permanent key, later builds install over the existing app and preserve app-private data.\n\n**Do not uninstall Jacket merely to test an update.** First try the signed APK. If Android reports a signature/package conflict, cancel the installation. In particular, do not remove an installation containing the embedded Lampac rootfs until its data has been safely backed up; a normal APK update preserves that private data, but uninstalling the app deletes it.
+If the currently installed app was signed with a temporary CI debug key, switching to the permanent release key may require one final uninstall/reinstall because Android rejects APKs signed by a different certificate. This is not required for every update: after the installed copy and CI use the same permanent key, later builds install over the existing app and preserve app-private data.
+
+**Do not uninstall Jacket merely to test an update.** First try the signed APK. If Android reports a signature/package conflict, cancel the installation. In particular, do not remove an installation containing the embedded Lampac rootfs until its data has been safely backed up; a normal APK update preserves that private data, but uninstalling the app deletes it.
 
 The APK is a personal development build. Do not share the keystore, passwords, or signed APK with others.
