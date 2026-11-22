@@ -261,7 +261,7 @@ object FilmixDeviceAuth {
         val prefix = "param/User-Agent=${encode(API_USER_AGENT)}/"
         val payload = Base64.getEncoder().encodeToString((prefix + proxiedTarget).toByteArray(Charsets.UTF_8))
         val endpointName = target.rawPath.substringAfterLast('/').ifBlank { "api" }
-        return "$proxy/enc2/${encode(payload)}/$endpointName?jacred.test"
+        return "$proxy/enc2t/${encode(payload)}/$endpointName?jacred.test"
     }
 
     private fun isPublicDnsHost(host: String): Boolean =

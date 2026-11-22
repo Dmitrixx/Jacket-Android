@@ -48,7 +48,8 @@ class FilmixDeviceAuthTest {
         val proxyUrl = FilmixDeviceAuth.buildCorsProxyUrl(
             "https://filmixapp.cyou/api/v2/token_request?user_dev_token=private-token"
         )
-        assertTrue(proxyUrl.startsWith("https://cors.jacred.stream/enc2/"))
+        assertTrue(proxyUrl.startsWith("https://cors.jacred.stream/enc2t/"))
+        assertFalse(proxyUrl.contains("/enc2/"))
         assertTrue(proxyUrl.endsWith("/token_request?jacred.test"))
         assertFalse(proxyUrl.contains("private-token"))
 
