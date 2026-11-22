@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.8.8
+
+- Show the actual app version/build and persistent-signing status in Settings → About; add direct links to the main CI builds and the in-place update guide.
+- Publish the normal main-branch APK artifact only when the permanent user-owned signing key is configured. Stop labelling temporary-runner debug APKs as update packages, preventing failed in-place installs caused by certificate mismatches.
+- Keep the application ID unchanged and increment versionCode to 20. Compatible signed APKs update the installed app in place and preserve app-private settings, torrent queue and embedded Lampac data.
+
 ## 2.8.7
 
 - Enable Lampac's built-in JacRed module in local Jackett-compatible mode; existing installations are migrated by removing only the JacRed exclusion and adding defaults only when the corresponding settings are absent. Enable upstream's normally disabled Megapeer adapter on fresh/unconfigured installs while preserving an explicit user disable choice.
