@@ -66,6 +66,7 @@ object LampacEmbeddedConfig {
                     JSONObject()
                         .put("search_lang", "query")
                         .put("timeoutSeconds", 8)
+                        .put("Megapeer", JSONObject().put("enable", true))
                 )
         )
         .put(
@@ -185,6 +186,17 @@ object LampacEmbeddedConfig {
         }
         if (!jackett.has("timeoutSeconds")) {
             jackett.put("timeoutSeconds", 8)
+            changed = true
+        }
+        // Megapeer is the only upstream JacRed adapter disabled by default.
+        // Enable it on fresh/previously unconfigured embedded installs, but keep
+        // an explicit user enable=false choice intact.
+        val megapeer = jackett.optJSONObject("Megapeer") ?: JSONObject().also {
+            jackett.put("Megapeer", it)
+            changed = true
+        }
+        if (!megapeer.has("enable")) {
+            megapeer.put("enable", true)
             changed = true
         }
         return changed
