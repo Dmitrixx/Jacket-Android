@@ -1,10 +1,10 @@
-# Jacket — Android media center 2.8.7
+# Jacket — Android media center 2.8.8
 
-## Latest APK from main
+## Latest update APK from main
 
-[Open the latest main-branch Android CI runs](https://github.com/Dmitrixx/Jacket-Android/actions/workflows/android.yml?query=branch%3Amain). Open the newest successful run and download **Jacket-main-apk** from its **Artifacts** section. The ZIP contains the universal APK and its SHA-256 checksum. Artifacts are retained for 14 days. When the one-time persistent signing key is configured, the artifact is a signed release APK that can update the installed app in place. Without that key, CI publishes a debug APK for testing only; debug APKs from different temporary runners are not guaranteed to share a signing certificate.
+[Open the latest main-branch Android CI runs](https://github.com/Dmitrixx/Jacket-Android/actions/workflows/android.yml?query=branch%3Amain). After the newest run succeeds, download **Jacket-main-apk** from its **Artifacts** section. The ZIP contains the universal release APK and its SHA-256 checksum and is retained for 14 days. This update artifact is published only when the permanent signing key is configured; when it is absent, CI deliberately does not publish a temporary-runner debug APK that may be rejected by an existing installation.
 
-For the one-time signing setup and update instructions, see [docs/UPDATES.md](docs/UPDATES.md).
+Install the APK over the existing Jacket app. Do not uninstall the app or clear its data. Android preserves settings, torrent tasks and embedded Lampac files when the package name and signing certificate remain the same. For the one-time signing setup and update instructions, see [docs/UPDATES.md](docs/UPDATES.md).
 
 Jacket is a single Android application for phones, tablets and Android TV / Google TV. It combines a poster-based media catalog, a user-configurable indexer cabinet, an integrated BitTorrent engine and a loopback HTTP media server.
 

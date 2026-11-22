@@ -41,6 +41,7 @@ jobs:
       # A permanent keystore is supplied once through repository Actions secrets.
       # Never store the signing key or its passwords in git.
       - name: Restore persistent Jacket signing key
+        id: restore_signing
         if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
         shell: bash
         env:
@@ -55,7 +56,8 @@ jobs:
                 -z "$JACKET_KEY_ALIAS" ||
                 -z "$JACKET_KEY_PASSWORD" ]]; then
             echo "JACKET_SIGNING_READY=false" >> "$GITHUB_ENV"
-            echo "::warning::Persistent signing is not configured. Debug APKs from separate CI runners may not update each other."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::Persistent signing is not configured. No main-branch update APK will be uploaded."
             exit 0
           fi
           signing_dir="$RUNNER_TEMP/jacket-signing"
@@ -69,6 +71,7 @@ jobs:
             echo "JACKET_SIGNING_KEY_ALIAS=$JACKET_KEY_ALIAS"
             echo "JACKET_SIGNING_KEY_PASSWORD=$JACKET_KEY_PASSWORD"
           } >> "$GITHUB_ENV"
+          echo "ready=true" >> "$GITHUB_OUTPUT"
 
       # Uses the checked-in Gradle 9.9.1 wrapper; CI must not install a second Gradle version.
       - name: Set up Gradle
@@ -77,7 +80,7 @@ jobs:
         run: ./gradlew --no-daemon --stacktrace lint testDebugUnitTest assembleDebug assembleRelease
 
       - name: Prepare universal APK and checksum
-        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && steps.restore_signing.outputs.ready == 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -86,13 +89,8 @@ jobs:
             echo "Could not read app versionName" >&2
             exit 1
           fi
-          if [[ "${JACKET_SIGNING_READY:-false}" == "true" ]]; then
-            apk="$(find app/build/outputs/apk/release -type f -iname '*universal*.apk' -print -quit)"
-            build_kind="signed-release"
-          else
-            apk="$(find app/build/outputs/apk/debug -type f -iname '*universal*.apk' -print -quit)"
-            build_kind="debug"
-          fi
+          apk="$(find app/build/outputs/apk/release -type f -iname '*universal*.apk' -print -quit)"
+          build_kind="signed-release"
           if [[ -z "$apk" ]]; then
             echo "Universal APK not found. Available APK files:" >&2
             find app/build/outputs/apk -type f -name '*.apk' -print >&2 || true
@@ -104,7 +102,7 @@ jobs:
           sha256sum "$output" > "$output.sha256"
 
       - name: Upload universal APK artifact
-        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && steps.restore_signing.outputs.ready == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: Jacket-main-apk
@@ -112,3 +110,16 @@ jobs:
           if-no-files-found: error
           retention-days: 14
           compression-level: 0
+
+
+      - name: Explain why no update APK was published
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && steps.restore_signing.outputs.ready != 'true'
+        shell: bash
+        run: |
+          {
+            echo "## Update APK not published"
+            echo
+            echo "The build and tests completed, but the updateable APK was not uploaded because the persistent signing key is not configured."
+            echo
+            echo "Configure the four keystore secrets by following [docs/UPDATES.md](docs/UPDATES.md), then run this workflow again. Temporary-runner debug APKs are intentionally not published as app updates."
+          } >> "$GITHUB_STEP_SUMMARY"
