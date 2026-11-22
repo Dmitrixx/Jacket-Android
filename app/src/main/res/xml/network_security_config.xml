@@ -1,7 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <network-security-config>
-    <base-config cleartextTrafficPermitted="false" />
-    <domain-config cleartextTrafficPermitted="true">
-        <domain includeSubdomains="false">127.0.0.1</domain>
-    </domain-config>
+    <!--
+        Lampac and optional user-managed indexers may live at arbitrary private LAN IPs.
+        Android Network Security Config cannot express private IPv4/IPv6 CIDR allow-lists.
+        Dynamic app requests must therefore pass LocalNetwork.isAllowedUrl() before opening
+        HTTP connections: only loopback/private/link-local IPs and approved local DNS suffixes
+        are accepted; public endpoints must use HTTPS.
+    -->
+    <base-config cleartextTrafficPermitted="true" />
 </network-security-config>
