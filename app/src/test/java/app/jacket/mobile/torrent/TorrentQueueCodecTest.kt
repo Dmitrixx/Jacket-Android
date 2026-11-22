@@ -93,6 +93,24 @@ class TorrentQueueCodecTest {
     }
 
     @Test
+    fun corruptAndDuplicateLegacyRowsDoNotConsumeValidEntryLimit() {
+        val array = JSONArray().put(JSONObject())
+        val items = (0 until 300).map { index ->
+            val hash = index.toString(16).padStart(40, '0')
+            val magnet = "magnet:?xt=urn:btih:$hash"
+            val item = JSONObject()
+                .put("id", hash)
+                .put("title", "Legacy queue item $index")
+                .put("magnet", magnet)
+            array.put(item)
+            if (index == 0) array.put(item)
+            QueuedTorrent(id = hash, title = "Legacy queue item $index", magnetUri = magnet)
+        }
+
+        assertEquals(items, TorrentQueueCodec.decodeLegacy(array.toString()))
+    }
+
+    @Test
     fun migratesLegacyFileUsingHashFilenameAndSkipsUnverifiableIds() {
         val hash = "abcdef0123456789abcdef0123456789abcdef01"
         val directory = Files.createTempDirectory("jacket-legacy-queue").toFile()
