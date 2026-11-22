@@ -31,17 +31,46 @@ class LampacRuntimeInstallerTest {
         val root = java.nio.file.Files.createTempDirectory("jacket-debian-ready").toFile()
         try {
             File(root, "etc").mkdirs()
-            File(root, "etc/os-release").writeText("ID=debian")
+            File(root, "etc/os-release").writeText("NAME=Debian\\nID=debian\\n")
             File(root, "bin").mkdirs()
-            File(root, "bin/sh").writeText("placeholder")
+            val shell = File(root, "bin/sh").apply { writeText("placeholder") }
             File(root, "usr/bin").mkdirs()
-            File(root, "usr/bin/apt-get").writeText("placeholder")
+            val apt = File(root, "usr/bin/apt-get").apply { writeText("placeholder") }
+            assertTrue(shell.setExecutable(true))
+            assertTrue(apt.setExecutable(true))
 
             assertTrue(isDebianRootfsReady(root))
         } finally {
             root.deleteRecursively()
         }
     }
+    @Test
+    fun rejectsWrongDistributionAndNonExecutableRequiredTools() {
+        val root = java.nio.file.Files.createTempDirectory("jacket-debian-tools").toFile()
+        try {
+            File(root, "etc").mkdirs()
+            val osRelease = File(root, "etc/os-release").apply { writeText("ID=ubuntu\\n") }
+            File(root, "bin").mkdirs()
+            val shell = File(root, "bin/sh").apply { writeText("placeholder") }
+            File(root, "usr/bin").mkdirs()
+            val apt = File(root, "usr/bin/apt-get").apply { writeText("placeholder") }
+            assertTrue(shell.setExecutable(true))
+            assertTrue(apt.setExecutable(true))
+
+            assertFalse(isDebianRootfsReady(root))
+            osRelease.writeText("ID=debian\\n")
+            assertTrue(shell.setExecutable(false))
+            assertFalse(isDebianRootfsReady(root))
+            assertTrue(shell.setExecutable(true))
+            assertTrue(apt.setExecutable(false))
+            assertFalse(isDebianRootfsReady(root))
+            assertTrue(apt.setExecutable(true))
+            assertTrue(isDebianRootfsReady(root))
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
     @Test
     fun boundedArchiveCopyAcceptsExactDeclaredSize() {
         val payload = "lampac-runtime".toByteArray()
