@@ -17,7 +17,7 @@ class FilmixDeviceAuthTest {
         assertTrue(url.contains("user_dev_vendor=Xiaomi"))
         assertTrue(url.contains("user_dev_os=14"))
         assertTrue(url.contains("user_dev_apk=2.2.0"))
-        assertTrue(url.contains("app_lang=ru-RU"))
+        assertTrue(url.contains("app_lang=ru-rRU"))
     }
 
     @Test
@@ -26,7 +26,7 @@ class FilmixDeviceAuthTest {
         assertTrue(url.startsWith("https://filmixapp.cyou/api/v2/check_update?"))
         assertTrue(url.contains("user_dev_id=abcdef0123456789"))
         assertTrue(url.contains("user_dev_name=Xiaomi"))
-        assertTrue(url.contains("app_lang=ru-RU"))
+        assertTrue(url.contains("app_lang=ru-rRU"))
     }
 
     @Test
