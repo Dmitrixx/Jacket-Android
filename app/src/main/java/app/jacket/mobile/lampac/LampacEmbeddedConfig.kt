@@ -18,11 +18,21 @@ object LampacEmbeddedConfig {
     const val PORT = 9118
     const val BASE_URL = "http://127.0.0.1:9118"
 
+    // Preserve the upstream base.conf exclusions as init.conf arrays replace,
+    // rather than append to, the base arrays during Lampac config merging.
     private val skippedModules = listOf(
         "Catalog",
+        "CacheMedia",
         "DLNA",
+        "ForkPlayerXML",
         "GStreamer",
+        "MsxNative",
+        "Potok",
+        "QRAuth",
+        "SeriesNotify",
         "Sync",
+        "TelegramAuth",
+        "TelegramAuthBot",
         "TimeCode",
         "TorrServer",
         "Tracks",
@@ -103,7 +113,36 @@ object LampacEmbeddedConfig {
     /** Adds only Android-specific module exclusions and required local JacRed defaults. */
     internal fun ensureAndroidModules(config: JSONObject): Boolean {
         var changed = ensureGStreamerSkipped(config)
+        if (ensureUpstreamDefaultExclusions(config)) changed = true
         if (ensureJacRedConfigured(config)) changed = true
+        return changed
+    }
+
+    /** init.conf replaces BaseModule.SkipModules; restore all upstream base.conf exclusions. */
+    internal fun ensureUpstreamDefaultExclusions(config: JSONObject): Boolean {
+        val baseModule = config.optJSONObject("BaseModule") ?: JSONObject().also {
+            config.put("BaseModule", it)
+        }
+        val skipped = baseModule.optJSONArray("SkipModules") ?: JSONArray().also {
+            baseModule.put("SkipModules", it)
+        }
+        val required = listOf(
+            "CacheMedia",
+            "ForkPlayerXML",
+            "MsxNative",
+            "Potok",
+            "QRAuth",
+            "SeriesNotify",
+            "TelegramAuth",
+            "TelegramAuthBot"
+        )
+        var changed = false
+        required.forEach { module ->
+            if ((0 until skipped.length()).none { skipped.optString(it).equals(module, true) }) {
+                skipped.put(module)
+                changed = true
+            }
+        }
         return changed
     }
 
