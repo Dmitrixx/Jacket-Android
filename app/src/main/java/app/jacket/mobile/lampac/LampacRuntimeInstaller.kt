@@ -159,7 +159,7 @@ private object LampacArtifactDownloader {
             if (spec.expectedBytes != null && downloaded != spec.expectedBytes) {
                 throw IOException("Файл загрузился не полностью: $downloaded из ${spec.expectedBytes} байт")
             }
-            val actualDigest = digest.digest().joinToString("") { "%02x".format(it) }
+            val actualDigest = digest.digest().joinToString("") { "%02x".format(it.toInt() and 0xff) }
             if (!actualDigest.equals(spec.expectedDigest, true)) {
                 throw IOException("Контрольная сумма файла не совпала. Архив удалён.")
             }
@@ -185,7 +185,7 @@ private object LampacArtifactDownloader {
                 md.update(buffer, 0, count)
             }
         }
-        return md.digest().joinToString("") { "%02x".format(it) }
+        return md.digest().joinToString("") { "%02x".format(it.toInt() and 0xff) }
     }
 
     private fun moveAtomically(source: File, target: File) {
