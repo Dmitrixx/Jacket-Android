@@ -2,9 +2,13 @@
 
 Jacket keeps the same Android package name (`app.jacket.mobile`) and increments `versionCode` for each app update. Android can update an installed copy in place and preserve its settings, torrent queue, private Debian rootfs, .NET runtime and Lampac files. Do not uninstall Jacket and do not clear its storage when applying a normal update.
 
-> Main-branch CI now publishes the standard `Jacket-main-apk` artifact only when the persistent signing key is configured. If that artifact is missing, read the workflow summary and complete the one-time signing setup below. Temporary-runner debug APKs are not published as update packages.
+> Main-branch CI publishes `Jacket-main-apk` only after validating the permanent keystore, alias and private-key password by signing and verifying a temporary probe. If signing secrets are missing or invalid, lint, tests and APK assembly still run without signing, but no update APK is uploaded. Read the workflow summary and check the four signing secrets below.
 
 ## One-time persistent signing setup
+
+## Validate signing credentials
+
+Before Gradle receives the signing configuration, CI decodes the keystore, creates a disposable probe JAR, signs it with the configured alias and private-key password, and verifies the signature. This catches invalid keystore data, aliases and passwords without printing secret values. If validation fails, the workflow continues with an unsigned release build for CI checks and skips publishing the update APK. Correct the four Actions secrets and rerun the workflow.
 
 Android accepts an in-place APK update only when the new APK is signed with the same certificate as the installed APK. A CI debug key generated on a temporary runner is not persistent, so debug builds from separate CI runs may not update each other. Configure a permanent private keystore once; never commit it to this public repository.
 

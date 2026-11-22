@@ -2,7 +2,7 @@ name: Android CI
 
 on:
   push:
-    branches: [main, 'feat/**', 'chore/**']
+    branches: [main, 'feat/**', 'fix/**', 'chore/**']
   pull_request:
     branches: [main]
   workflow_dispatch:
@@ -40,7 +40,7 @@ jobs:
 
       # A permanent keystore is supplied once through repository Actions secrets.
       # Never store the signing key or its passwords in git.
-      - name: Restore persistent Jacket signing key
+      - name: Restore and validate persistent Jacket signing key
         id: restore_signing
         if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
         shell: bash
@@ -51,22 +51,42 @@ jobs:
           JACKET_KEY_PASSWORD: ${{ secrets.JACKET_KEY_PASSWORD }}
         run: |
           set -euo pipefail
+          mark_signing_unready() {
+            echo "JACKET_SIGNING_READY=false" >> "$GITHUB_ENV"
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          }
           if [[ -z "$JACKET_KEYSTORE_BASE64" ||
                 -z "$JACKET_KEYSTORE_PASSWORD" ||
                 -z "$JACKET_KEY_ALIAS" ||
                 -z "$JACKET_KEY_PASSWORD" ]]; then
-            echo "JACKET_SIGNING_READY=false" >> "$GITHUB_ENV"
-            echo "ready=false" >> "$GITHUB_OUTPUT"
-            echo "::warning::Persistent signing is not configured. No main-branch update APK will be uploaded."
+            mark_signing_unready
+            echo "::warning::Persistent signing secrets are not configured. CI will build without signing and will not upload an update APK."
             exit 0
           fi
           signing_dir="$RUNNER_TEMP/jacket-signing"
           mkdir -p "$signing_dir"
-          printf '%s' "$JACKET_KEYSTORE_BASE64" | base64 --decode > "$signing_dir/jacket-release.jks"
-          test -s "$signing_dir/jacket-release.jks"
+          keystore="$signing_dir/jacket-release.jks"
+          if ! (printf '%s' "$JACKET_KEYSTORE_BASE64" | base64 --decode > "$keystore" 2>/dev/null) || [[ ! -s "$keystore" ]]; then
+            mark_signing_unready
+            echo "::warning::Persistent signing keystore could not be decoded or validated. CI will build without signing; no update APK will be uploaded."
+            exit 0
+          fi
+          probe_source="$signing_dir/signing-probe.txt"
+          probe_jar="$signing_dir/signing-probe.jar"
+          probe_signed="$signing_dir/signing-probe-signed.jar"
+          printf 'Jacket signing validation probe\n' > "$probe_source"
+          if ! jar --create --file "$probe_jar" -C "$signing_dir" signing-probe.txt >/dev/null 2>&1 ||
+             ! jarsigner -keystore "$keystore" -storepass "$JACKET_KEYSTORE_PASSWORD" -keypass "$JACKET_KEY_PASSWORD" -signedjar "$probe_signed" "$probe_jar" "$JACKET_KEY_ALIAS" >/dev/null 2>&1 ||
+             ! jarsigner -verify "$probe_signed" >/dev/null 2>&1; then
+            mark_signing_unready
+            rm -f "$probe_source" "$probe_jar" "$probe_signed"
+            echo "::warning::Persistent signing key validation failed (keystore, alias or private-key password). CI will continue without signing and will not upload an update APK. Secret values are not logged."
+            exit 0
+          fi
+          rm -f "$probe_source" "$probe_jar" "$probe_signed"
           {
             echo "JACKET_SIGNING_READY=true"
-            echo "JACKET_SIGNING_STORE_FILE=$signing_dir/jacket-release.jks"
+            echo "JACKET_SIGNING_STORE_FILE=$keystore"
             echo "JACKET_SIGNING_STORE_PASSWORD=$JACKET_KEYSTORE_PASSWORD"
             echo "JACKET_SIGNING_KEY_ALIAS=$JACKET_KEY_ALIAS"
             echo "JACKET_SIGNING_KEY_PASSWORD=$JACKET_KEY_PASSWORD"
@@ -119,7 +139,7 @@ jobs:
           {
             echo "## Update APK not published"
             echo
-            echo "The build and tests completed, but the updateable APK was not uploaded because the persistent signing key is not configured."
+            echo "The build and tests completed, but the update APK was not uploaded because the persistent signing secrets are missing or failed validation."
             echo
             echo "Configure the four keystore secrets by following [docs/UPDATES.md](docs/UPDATES.md), then run this workflow again. Temporary-runner debug APKs are intentionally not published as app updates."
           } >> "$GITHUB_STEP_SUMMARY"

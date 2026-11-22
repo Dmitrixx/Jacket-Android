@@ -2,7 +2,7 @@
 
 ## Latest update APK from main
 
-[Open the latest main-branch Android CI runs](https://github.com/Dmitrixx/Jacket-Android/actions/workflows/android.yml?query=branch%3Amain). After the newest run succeeds, download **Jacket-main-apk** from its **Artifacts** section. The ZIP contains the universal release APK and its SHA-256 checksum and is retained for 14 days. This update artifact is published only when the permanent signing key is configured; when it is absent, CI deliberately does not publish a temporary-runner debug APK that may be rejected by an existing installation.
+[Open the latest main-branch Android CI runs](https://github.com/Dmitrixx/Jacket-Android/actions/workflows/android.yml?query=branch%3Amain). After the newest run succeeds, download **Jacket-main-apk** from its **Artifacts** section. The ZIP contains the universal release APK and its SHA-256 checksum and is retained for 14 days. This update artifact is published only when the permanent signing key is configured and successfully validated. If secrets are missing or validation fails, CI still runs lint, tests and APK assembly without signing, but skips update-artifact upload; the run summary explains the safe next step.
 
 Install the APK over the existing Jacket app. Do not uninstall the app or clear its data. Android preserves settings, torrent tasks and embedded Lampac files when the package name and signing certificate remain the same. For the one-time signing setup and update instructions, see [docs/UPDATES.md](docs/UPDATES.md).
 
