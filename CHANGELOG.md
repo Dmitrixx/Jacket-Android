@@ -2,6 +2,8 @@
 
 ## 2.8.0
 
+- Apply atomic StateFlow mutations to embedded Lampac status and bounded logs so concurrent process output and service-status updates cannot overwrite one another; add a concurrent regression test.
+
 - Bound actual bytes written while extracting each Lampac ZIP entry; abort on entry expansion mismatch or truncated payload, and check coroutine cancellation between chunks instead of trusting central-directory sizes alone.
 
 - Redact tokens, passwords, cookies, API keys, account identifiers and bearer credentials from embedded Lampac status text, runtime logs and foreground notifications.
