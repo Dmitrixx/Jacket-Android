@@ -34,6 +34,25 @@ class TorrentQueueCodecTest {
     }
 
     @Test
+    fun corruptAndDuplicateRowsDoNotConsumeValidEntryLimit() {
+        val items = (0 until 300).map { index ->
+            val hash = index.toString(16).padStart(40, '0')
+            QueuedTorrent(
+                id = hash,
+                title = "Queue item $index",
+                magnetUri = "magnet:?xt=urn:btih:$hash"
+            )
+        }
+        val encoded = TorrentQueueCodec.encode(items)
+        val lines = encoded.lines().toMutableList()
+        val firstValidRecord = lines[1]
+        lines.add(1, "corrupted-row")
+        lines.add(2, firstValidRecord)
+
+        assertEquals(items, TorrentQueueCodec.decode(lines.joinToString("\n")))
+    }
+
+    @Test
     fun rejectsOversizedQueueBeforeEncoding() {
         val oversizedMagnet = "magnet:?" + "🦄".repeat(8_000)
         val items = (0 until 300).map { index ->
