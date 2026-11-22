@@ -84,12 +84,20 @@ class LampacRuntimeService : Service() {
         updateNotification("Установка встроенного Lampac…")
         try {
             val installer = LampacRuntimeInstaller(applicationContext)
+            var lastNotificationAt = 0L
             installer.install { progress ->
                 val phase = progress.phase
                 val message = progress.message
                 val value = progress.percent
                 LampacRuntimeState.update(LampacRuntimePhase.INSTALLING, message, value)
-                updateNotification(value?.let { "$message • $it%" } ?: message)
+                LampacRuntimeState.appendLog(message)
+                val now = android.os.SystemClock.elapsedRealtime()
+                if (now - lastNotificationAt >= NOTIFICATION_UPDATE_INTERVAL_MS ||
+                    phase == "installed" || value == 100
+                ) {
+                    lastNotificationAt = now
+                    updateNotification(value?.let { "$message • $it%" } ?: message)
+                }
             }
             LampacRuntimeState.update(LampacRuntimePhase.INSTALLED, "Lampac установлен. Запускаем сервер…")
             startInstalledServer()
@@ -342,6 +350,7 @@ class LampacRuntimeService : Service() {
     companion object {
         private const val CHANNEL_ID = "jacket-lampac-runtime"
         private const val NOTIFICATION_ID = 4412
+        private const val NOTIFICATION_UPDATE_INTERVAL_MS = 1_000L
 
         const val ACTION_INSTALL_AND_START = "app.jacket.mobile.lampac.INSTALL_AND_START"
         const val ACTION_START = "app.jacket.mobile.lampac.START"
