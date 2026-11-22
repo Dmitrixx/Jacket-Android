@@ -17,6 +17,7 @@ import app.jacket.mobile.MainActivity
 import app.jacket.mobile.R
 import id.or.oo.pr.engine.ProotLauncher
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -29,6 +30,7 @@ import kotlinx.coroutines.withContext
 import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
+import java.util.concurrent.atomic.AtomicReference
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
@@ -138,8 +140,27 @@ class LampacRuntimeService : Service() {
                 "DOTNET_NOLOGO=1 " +
                 "PATH=/opt/dotnet:\$PATH && " +
                 "exec /opt/dotnet/dotnet /opt/lampac/Core.dll"
-            val session = withContext(Dispatchers.IO) {
-                commands.start(listOf("login", "debian", "--user", "root", "--", command))
+            // Keep a side reference: withContext may throw on return if the
+            // service is cancelled just after PRoot starts, otherwise the newly
+            // spawned PTY session would be lost and the child could be orphaned.
+            val launchedSession = AtomicReference<ProotLauncher.Session?>()
+            val session = try {
+                withContext(Dispatchers.IO) {
+                    commands.start(listOf("login", "debian", "--user", "root", "--", command))
+                        .also(launchedSession::set)
+                }
+            } catch (cancelled: CancellationException) {
+                launchedSession.get()?.let { pendingSession ->
+                    withContext(NonCancellable + Dispatchers.IO) {
+                        runCatching { pendingSession.write(byteArrayOf(3)) }
+                        repeat(30) {
+                            if (pendingSession.exitCode != null) return@withContext
+                            delay(50)
+                        }
+                        pendingSession.close()
+                    }
+                }
+                throw cancelled
             }
             serverSession = session
             monitorServer(session)

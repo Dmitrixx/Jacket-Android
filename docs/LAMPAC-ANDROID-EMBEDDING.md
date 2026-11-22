@@ -16,7 +16,7 @@ The embedded server must listen on **127.0.0.1:9118 only**. Remote Lampac remain
 - Install ASP.NET Core Runtime 10.0.15 and Lampac NextGen 1.90.2 from pinned HTTPS URLs with SHA-512 / SHA-256 verification.
 - Extract and stage the Lampac payload under Debian /opt/lampac, validate required managed files, create an Android-specific init.conf, then atomically switch the installation directory.
 - Generate a conservative first-run config: bind to 127.0.0.1:9118, turn Chromium and openstat off, and skip optional browser/transcoding and unrelated server modules.
-- Add a foreground service with install, start, stop, health-check and bounded log state. It starts only after an explicit user action; there is no boot receiver or automatic startup.
+- Add a foreground service with install, start, stop, health-check and bounded log state. The startup path also retains and closes a just-created PTY session if cancellation races with process creation. It starts only after an explicit user action; there is no boot receiver or automatic startup.
 - Add Settings controls for install/start, stop, status, recent output, and connecting http://127.0.0.1:9118 to Jacket's existing Lampac bridge.
 - Keep the remote Lampac address and account settings as a fallback.
 - Disable public APK uploads and public GitHub Release publishing in this personal-use workflow.
