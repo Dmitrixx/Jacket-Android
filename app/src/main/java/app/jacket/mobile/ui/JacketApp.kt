@@ -2135,6 +2135,7 @@ private fun SettingsScreen(
     val filmixToken by viewModel.filmixToken.collectAsState()
     val filmixApiBase by viewModel.filmixApiBase.collectAsState()
     val filmixCustomApiBase by viewModel.filmixCustomApiBase.collectAsState()
+    val filmixCorsProxyBase by viewModel.filmixCorsProxyBase.collectAsState()
     val filmixCode by viewModel.filmixCode.collectAsState()
     val filmixStatus by viewModel.filmixStatus.collectAsState()
     val isFilmixPairing by viewModel.isFilmixPairing.collectAsState()
@@ -2180,6 +2181,7 @@ private fun SettingsScreen(
     }
     var token by remember(currentToken) { mutableStateOf(currentToken) }
     var filmixCustomApiInput by remember(filmixCustomApiBase) { mutableStateOf(filmixCustomApiBase) }
+    var filmixCorsProxyInput by remember(filmixCorsProxyBase) { mutableStateOf(filmixCorsProxyBase) }
     val savedRates = remember(context) { TorrentEngine.rateLimits(context) }
     var downloadLimit by rememberSaveable { mutableStateOf(savedRates.first.toString()) }
     var uploadLimit by rememberSaveable { mutableStateOf(savedRates.second.toString()) }
@@ -2629,6 +2631,33 @@ private fun SettingsScreen(
                                     FilmixDeviceAuth.ALTERNATE_API_BASE -> "Выбран резервный сервер Filmix."
                                     else -> "Выбран пользовательский сервер: " + filmixApiBase.substringAfter("://").substringBefore("/")
                                 } + " Перед отправкой ID и токена проверяется API и TLS-сертификат. Для AUTO после успешной привязки используется сервер, выдавший код.",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+
+                            Text("Маршрут запросов и приватность", style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.SemiBold)
+                            OutlinedTextField(
+                                value = filmixCorsProxyInput,
+                                onValueChange = { filmixCorsProxyInput = it.take(300) },
+                                modifier = Modifier.fillMaxWidth(),
+                                label = { Text("CORS-прокси HTTPS (пусто = напрямую)") },
+                                placeholder = { Text("https://cors.jacred.stream") },
+                                singleLine = true,
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
+                                enabled = !isFilmixPairing
+                            )
+                            OutlinedButton(
+                                onClick = { viewModel.saveFilmixCorsProxyBase(filmixCorsProxyInput) },
+                                enabled = !isFilmixPairing,
+                                modifier = Modifier.fillMaxWidth()
+                            ) { Text("Сохранить CORS-прокси") }
+                            Text(
+                                if (filmixCorsProxyInput.isBlank()) {
+                                    "Прокси отключён: запросы пойдут напрямую к выбранному HTTPS API. Старый основной API Filmix может не отвечать без совместимого прокси."
+                                } else {
+                                    "Сейчас используется HTTPS-прокси ${filmixCorsProxyInput.trim().substringAfter("://").substringBefore('/')}. Оператор прокси получает API-запросы, включая токен устройства и данные профиля. В Lampa-совместимом маршруте токен кодируется Base64 внутри URL; Base64 не является шифрованием. HTTPS защищает канал до прокси, но не скрывает содержимое от его оператора. Используй только сервер, которому доверяешь, либо собственный HTTPS-прокси."
+                                },
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )

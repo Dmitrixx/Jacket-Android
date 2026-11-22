@@ -2,7 +2,14 @@
 
 ## 2.8.0
 
+- Make the Filmix CORS relay configurable (including direct HTTPS mode), and disclose that an external relay can read device tokens and profile/search data; Base64 in the Lampa `enc2t` path is not encryption.
+- Guard Filmix pairing with operation generations so cancelled or superseded device-code polling cannot overwrite the status of a newer pairing attempt.
+
+- Match Lampa's `enc2t` proxy route exactly for Filmix auth, profile and catalog API calls.
+
 - Consolidated native Filmix and HDRezka search/player adapters, encrypted account state, provider diagnostics and the unified detail-card source picker.
+- Match Filmix's current Lampa Android device fingerprint and device-code flow; confirm activation by polling `user_profile` with the temporary token, parse the nested `user_data` profile, and route Filmix API requests through the configured Lampa-compatible HTTPS `enc2t` CORS proxy with the required `okhttp/3.10.0` User-Agent override.
+- Fix the Filmix custom HTTPS API host guard so explicitly configured mirrors are not rejected by the catalog client; improve selected-episode lookup in both indexed and keyed playlist structures.
 - Filmix AUTO mode checks the explicitly saved custom HTTPS API first (when present), then the official primary and reserve hosts; activation polling and catalog requests stay pinned to the host that issued the device code.
 - Allow an explicitly user-entered HTTPS Filmix API host with strict URL/host validation, normal certificate validation and no cross-host token forwarding.
 

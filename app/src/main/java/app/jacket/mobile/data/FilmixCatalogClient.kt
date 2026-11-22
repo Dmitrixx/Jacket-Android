@@ -8,7 +8,6 @@ import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URI
 import java.net.URL
-import java.net.URLEncoder
 
 data class FilmixSearchEntry(
     val id: Int,
@@ -24,20 +23,14 @@ data class FilmixQualityVariant(
     val url: String
 )
 
-/**
- * Direct Filmix v2 client authenticated with the user's device token.
- *
- * It deliberately uses only the API base explicitly selected in settings:
- * no mirror discovery, proxy, cleartext fallback or TLS relaxation.
- */
+/** Filmix v2 client using the Lampa-compatible fingerprint and optional HTTPS CORS transport. */
 object FilmixCatalogClient {
     private const val MAX_RESPONSE_BYTES = 4 * 1024 * 1024
     private const val MAX_SEARCH_ITEMS = 8
     private const val MAX_TRANSLATIONS = 12
-    private const val MAX_EPISODES_PER_SEASON = 100
-    private const val USER_AGENT = "JacketAndroid/2.7 (Filmix v2 client)"
     private const val LIVEHASH_POST_ID = 171042
     private const val LIVEHASH_TTL_MS = 2 * 60 * 60 * 1000L
+    private const val USER_AGENT = FilmixDeviceAuth.API_USER_AGENT
     private val livehashPattern = Regex("/s/([^/]+)/")
     @Volatile private var cachedLivehash: String? = null
     @Volatile private var cachedLivehashKey: String? = null
@@ -53,34 +46,44 @@ object FilmixCatalogClient {
         token: String,
         query: String,
         kind: MediaKind,
-        episodeCode: String? = null
+        episodeCode: String? = null,
+        corsProxyBase: String = FilmixDeviceAuth.DEFAULT_CORS_PROXY_BASE
     ): List<SourceResult> {
         require(query.isNotBlank()) { "Введите название для поиска Filmix" }
         require(token.isNotBlank()) { "Сначала привяжите устройство Filmix" }
         val safeBase = FilmixDeviceAuth.normalizeApiBase(apiBase, allowCustomHost = true)
+        val safeProxy = FilmixDeviceAuth.normalizeCorsProxyBase(corsProxyBase)
         val safeDeviceId = deviceId.takeIf { it.matches(Regex("[a-fA-F0-9]{16}")) }
             ?: throw IllegalArgumentException("Некорректный ID устройства Filmix")
 
         val searchJson = getJson(
-            buildApiUrl(safeBase, "search", safeDeviceId, token, mapOf("story" to query.trim().take(160)))
+            buildApiUrl(safeBase, "search", safeDeviceId, token, mapOf("story" to query.trim().take(160))),
+            safeBase,
+            safeProxy
         )
         val entries = parseSearchEntries(searchJson)
             .asSequence()
-            .filter { when (kind) {
-                MediaKind.MOVIE -> !it.isSeries
-                MediaKind.SERIES -> it.isSeries
-                MediaKind.VIDEO -> true
-            } }
+            .filter {
+                when (kind) {
+                    MediaKind.MOVIE -> !it.isSeries
+                    MediaKind.SERIES -> it.isSeries
+                    MediaKind.VIDEO -> true
+                }
+            }
             .distinctBy { it.id }
             .take(MAX_SEARCH_ITEMS)
             .toList()
         if (entries.isEmpty()) return emptyList()
 
-        val maxQuality = loadMaxQuality(safeBase, safeDeviceId, token)
+        val maxQuality = loadMaxQuality(safeBase, safeDeviceId, token, safeProxy)
         val parsed = buildList {
             entries.forEach { entry ->
                 val post = runCatching {
-                    getJson(buildApiUrl(safeBase, "post/${entry.id}", safeDeviceId, token))
+                    getJson(
+                        buildApiUrl(safeBase, "post/${entry.id}", safeDeviceId, token),
+                        safeBase,
+                        safeProxy
+                    )
                 }.getOrNull() ?: return@forEach
                 addAll(
                     parsePostSources(
@@ -93,10 +96,8 @@ object FilmixCatalogClient {
             }
         }.distinctBy { it.id }.take(80)
 
-        // Some Filmix CDN URLs contain a rotating /s/{livehash}/ prefix. Refresh
-        // it from the public reference post only when a selected result needs it.
         if (parsed.none { livehashPattern.containsMatchIn(it.streamUrl.orEmpty()) }) return parsed
-        val livehash = getLivehash(safeBase, safeDeviceId, token) ?: return parsed
+        val livehash = getLivehash(safeBase, safeDeviceId, token, safeProxy) ?: return parsed
         return parsed.map { source ->
             val url = source.streamUrl ?: return@map source
             source.copy(streamUrl = replaceLivehash(url, livehash))
@@ -120,7 +121,12 @@ object FilmixCatalogClient {
         livehashPattern.find(post.toString())?.groupValues?.getOrNull(1)
             ?.takeIf { it.matches(Regex("[A-Za-z0-9_-]{1,128}")) }
 
-    private fun getLivehash(apiBase: String, deviceId: String, token: String): String? {
+    private fun getLivehash(
+        apiBase: String,
+        deviceId: String,
+        token: String,
+        corsProxyBase: String
+    ): String? {
         val cacheKey = "$apiBase|$deviceId"
         val now = System.currentTimeMillis()
         if (cachedLivehashKey == cacheKey && now < livehashExpiresAt) {
@@ -132,7 +138,7 @@ object FilmixCatalogClient {
                 cachedLivehash?.let { return it }
             }
             val post = runCatching {
-                getJson(buildApiUrl(apiBase, "post/$LIVEHASH_POST_ID", deviceId, token))
+                getJson(buildApiUrl(apiBase, "post/$LIVEHASH_POST_ID", deviceId, token), apiBase, corsProxyBase)
             }.getOrNull() ?: return null
             val fresh = extractLivehash(post) ?: return null
             cachedLivehash = fresh
@@ -153,8 +159,7 @@ object FilmixCatalogClient {
             val item = array.optJSONObject(index) ?: return@mapNotNull null
             val id = item.optInt("id").takeIf { it > 0 } ?: return@mapNotNull null
             val title = item.optString("title").trim().takeIf { it.isNotBlank() } ?: return@mapNotNull null
-            val section = item.optInt("section", -1)
-            val isSeries = section == 7
+            val isSeries = item.optInt("section", -1) == 7
             val slug = item.optString("alt_name").trim()
             val page = slug.takeIf { it.matches(Regex("[\\p{L}\\p{N}._-]{1,180}")) }?.let {
                 "${FilmixDeviceAuth.SITE_BASE}/${if (isSeries) "seria" else "film"}/$id-$it.html"
@@ -184,14 +189,12 @@ object FilmixCatalogClient {
             return buildList {
                 for (i in 0 until minOf(movies.length(), MAX_TRANSLATIONS)) {
                     val translation = movies.optJSONObject(i) ?: continue
-                    val name = translation.optString("translation").ifBlank { "Оригинал" }
-                    val link = translation.optString("link")
                     addAll(
                         variantsToSources(
                             entry = entry,
                             title = title,
-                            translation = name,
-                            link = link,
+                            translation = translation.optString("translation").ifBlank { "Оригинал" },
+                            link = translation.optString("link"),
                             explicitQualities = translation.optJSONArray("qualities"),
                             maxQuality = maxQuality,
                             episodeCode = null
@@ -226,14 +229,19 @@ object FilmixCatalogClient {
         val wantedSeason = episodeMatch.groupValues[1].toIntOrNull() ?: return emptyList()
         val wantedEpisode = episodeMatch.groupValues[2].toIntOrNull() ?: return emptyList()
         val playlist = playerLinks.optJSONObject("playlist") ?: return emptyList()
-        val season = playlist.optJSONObject(wantedSeason.toString()) ?: return emptyList()
+        val season = sequenceOf(
+            wantedSeason.toString(),
+            wantedSeason.toString().padStart(2, '0'),
+            "s$wantedSeason",
+            "season$wantedSeason"
+        ).firstNotNullOfOrNull { playlist.optJSONObject(it) } ?: return emptyList()
+
         return buildList {
             val translations = season.keys()
             var count = 0
             while (translations.hasNext() && count++ < MAX_TRANSLATIONS) {
                 val translationName = translations.next()
-                val value = season.opt(translationName)
-                val episode = findEpisode(value, wantedEpisode) ?: continue
+                val episode = findEpisode(season.opt(translationName), wantedEpisode, wantedSeason) ?: continue
                 addAll(
                     variantsToSources(
                         entry = entry,
@@ -255,8 +263,7 @@ object FilmixCatalogClient {
         val parsedQualities = buildSet {
             if (explicitQualities != null) {
                 for (index in 0 until explicitQualities.length()) {
-                    val quality = explicitQualities.optInt(index).takeIf { it in 144..4320 }
-                    if (quality != null) add(quality)
+                    explicitQualities.optInt(index).takeIf { it in 144..4320 }?.let(::add)
                 }
             }
             qualityListPattern.find(safeLink)?.groupValues?.getOrNull(1)
@@ -284,14 +291,12 @@ object FilmixCatalogClient {
     }
 
     internal fun maxQualityFromProfile(profile: JSONObject): Int {
-        fun flag(name: String): Boolean {
-            val value = profile.opt(name)
-            return when (value) {
-                is Boolean -> value
-                is Number -> value.toInt() != 0
-                is String -> value == "1" || value.equals("true", true)
-                else -> false
-            }
+        val data = profile.optJSONObject("user_data") ?: profile
+        fun flag(name: String): Boolean = when (val value = data.opt(name)) {
+            is Boolean -> value
+            is Number -> value.toInt() != 0
+            is String -> value == "1" || value.equals("true", true)
+            else -> false
         }
         return when {
             flag("is_pro_plus") -> 2160
@@ -309,11 +314,9 @@ object FilmixCatalogClient {
         maxQuality: Int,
         episodeCode: String?
     ): List<SourceResult> {
-        val variants = parseQualityVariants(link, explicitQualities)
-        if (variants.isEmpty()) return emptyList()
-        val eligible = variants.filter { it.quality == null || it.quality <= maxQuality }
+        val eligible = parseQualityVariants(link, explicitQualities)
+            .filter { it.quality == null || it.quality <= maxQuality }
         return eligible.map { variant ->
-            val qualityText = variant.quality?.let { "${it}p" }
             SourceResult(
                 id = "filmix:${entry.id}:${episodeCode.orEmpty()}:$translation:${variant.quality ?: "auto"}",
                 title = title,
@@ -321,7 +324,7 @@ object FilmixCatalogClient {
                 streamUrl = variant.url,
                 pageUrl = entry.pageUrl,
                 sourceType = MediaSourceType.FILMIX,
-                qualityLabel = qualityText,
+                qualityLabel = variant.quality?.let { "${it}p" },
                 translationName = translation,
                 requestHeaders = mapOf(
                     "Referer" to (entry.pageUrl ?: FilmixDeviceAuth.SITE_BASE),
@@ -331,23 +334,61 @@ object FilmixCatalogClient {
         }
     }
 
-    private fun findEpisode(value: Any?, episodeNumber: Int): JSONObject? = when (value) {
-        is JSONArray -> value.optJSONObject(episodeNumber - 1)
-        is JSONObject -> value.optJSONObject(episodeNumber.toString())
-            ?: value.optJSONObject(episodeNumber.toString().padStart(2, '0'))
-        else -> null
+    private fun findEpisode(value: Any?, episodeNumber: Int, seasonNumber: Int): JSONObject? {
+        fun matches(item: JSONObject): Boolean {
+            val explicit = listOf("episode", "episode_num", "number", "num")
+                .firstNotNullOfOrNull { key -> item.optString(key).toIntOrNull() }
+            if (explicit == episodeNumber) return true
+            val link = item.optString("link")
+            val code = episodeCodePattern.find(link)
+            return code != null &&
+                code.groupValues[1].toIntOrNull() == seasonNumber &&
+                code.groupValues[2].toIntOrNull() == episodeNumber
+        }
+
+        return when (value) {
+            is JSONArray -> {
+                val entries = (0 until value.length()).mapNotNull { value.optJSONObject(it) }
+                entries.firstOrNull(::matches) ?: entries.getOrNull(episodeNumber - 1)
+            }
+            is JSONObject -> {
+                value.optJSONObject(episodeNumber.toString())
+                    ?: value.optJSONObject(episodeNumber.toString().padStart(2, '0'))
+                    ?: value.keys().asSequence()
+                        .mapNotNull { key -> value.optJSONObject(key) }
+                        .firstOrNull(::matches)
+            }
+            else -> null
+        }
     }
 
-    private fun loadMaxQuality(apiBase: String, deviceId: String, token: String): Int = runCatching {
-        maxQualityFromProfile(getJson(buildApiUrl(apiBase, "user_profile", deviceId, token)))
+    private fun loadMaxQuality(
+        apiBase: String,
+        deviceId: String,
+        token: String,
+        corsProxyBase: String
+    ): Int = runCatching {
+        maxQualityFromProfile(
+            getJson(buildApiUrl(apiBase, "user_profile", deviceId, token), apiBase, corsProxyBase)
+        )
     }.getOrDefault(720)
 
-    private fun getJson(requestUrl: String): JSONObject {
-        val uri = URI(requestUrl)
-        require(uri.scheme.equals("https", true) && uri.host in setOf("filmixapp.cyou", "fxapp.biz")) {
-            "API Filmix должен использовать выбранный HTTPS-сервер"
-        }
-        val connection = (URL(requestUrl).openConnection() as HttpURLConnection).apply {
+    private fun getJson(requestUrl: String, apiBase: String, corsProxyBase: String): JSONObject {
+        val baseUri = URI(FilmixDeviceAuth.normalizeApiBase(apiBase, allowCustomHost = true))
+        val targetUri = URI(requestUrl)
+        val basePath = baseUri.rawPath.trimEnd('/')
+        require(
+            targetUri.scheme.equals("https", true) &&
+                targetUri.host.equals(baseUri.host, true) &&
+                (targetUri.port == -1 || targetUri.port == 443) &&
+                targetUri.rawUserInfo == null &&
+                targetUri.rawPath.startsWith("$basePath/")
+        ) { "Запрос Filmix вышел за пределы выбранного API-сервера" }
+
+        val proxy = FilmixDeviceAuth.normalizeCorsProxyBase(corsProxyBase)
+        val outboundUrl = if (proxy.isBlank()) requestUrl
+            else FilmixDeviceAuth.buildCorsProxyUrl(requestUrl, proxy)
+        val connection = (URL(outboundUrl).openConnection() as HttpURLConnection).apply {
             requestMethod = "GET"
             connectTimeout = 8_000
             readTimeout = 15_000
@@ -357,22 +398,21 @@ object FilmixCatalogClient {
         }
         try {
             val status = connection.responseCode
-            if (status !in 200..299) {
-                throw IOException("Filmix API: HTTP $status (${uri.host}, ${uri.path})")
-            }
-            val declaredSize = connection.getHeaderFieldLong("Content-Length", -1L)
-            require(declaredSize <= MAX_RESPONSE_BYTES) { "Ответ Filmix API слишком большой" }
-            val bytes = connection.inputStream.use { input ->
+            val stream = if (status in 200..299) connection.inputStream else connection.errorStream
+            val bytes = stream?.use { input ->
                 val output = ByteArrayOutputStream()
                 val buffer = ByteArray(8192)
                 while (true) {
                     val count = input.read(buffer)
                     if (count < 0) break
-                    if (output.size() + count > MAX_RESPONSE_BYTES) throw IOException("Ответ Filmix API слишком большой")
+                    if (output.size() + count > MAX_RESPONSE_BYTES) {
+                        throw IOException("Ответ Filmix API слишком большой")
+                    }
                     output.write(buffer, 0, count)
                 }
                 output.toByteArray()
-            }
+            } ?: ByteArray(0)
+            if (status !in 200..299) throw IOException("Filmix API: HTTP $status")
             val parsed = JSONTokener(bytes.toString(Charsets.UTF_8)).nextValue()
             if (parsed is JSONObject) return parsed
             if (parsed is JSONArray) return JSONObject().put("data", parsed)

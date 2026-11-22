@@ -88,6 +88,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _filmixCustomApiBase = MutableStateFlow(settings.filmixCustomApiBase())
     val filmixCustomApiBase: StateFlow<String> = _filmixCustomApiBase.asStateFlow()
 
+    private val _filmixCorsProxyBase = MutableStateFlow(settings.filmixCorsProxyBase())
+    val filmixCorsProxyBase: StateFlow<String> = _filmixCorsProxyBase.asStateFlow()
+
+    private val filmixPairingGeneration = FilmixPairingGenerationGate()
+
     private val _filmixCode = MutableStateFlow<String?>(null)
     val filmixCode: StateFlow<String?> = _filmixCode.asStateFlow()
 
@@ -403,6 +408,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 val filmixTokenValue = settings.filmixToken()
                 val filmixApiValue = settings.filmixApiBase()
                 val filmixDeviceValue = settings.filmixDeviceId()
+                val filmixProxyValue = settings.filmixCorsProxyBase()
                 val rezkaSettings = settings.hdRezkaSettings()
                 val lampacConfig = settings.lampacSettings()
 
@@ -545,7 +551,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                                     token = filmixTokenValue,
                                     query = catalogueQuery,
                                     kind = item.kind,
-                                    episodeCode = episode?.releaseCode
+                                    episodeCode = episode?.releaseCode,
+                                    corsProxyBase = filmixProxyValue
                                 ),
                                 failures = emptyList()
                             )
@@ -1190,18 +1197,27 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun startFilmixPairing() {
+        val generation = filmixPairingGeneration.begin()
         filmixPairingJob?.cancel()
+        _isFilmixPairing.value = true
+        _filmixCode.value = null
+        _filmixStatus.value = "Запрашиваем код у Filmix…"
         filmixPairingJob = viewModelScope.launch {
-            _isFilmixPairing.value = true
-            _filmixCode.value = null
-            _filmixStatus.value = "Запрашиваем код у Filmix…"
             try {
                 val deviceId = settings.filmixDeviceId()
                 val selectedApi = settings.filmixApiSelection()
                 val customApi = settings.filmixCustomApiBase()
+                val corsProxy = settings.filmixCorsProxyBase()
                 val pending = withContext(Dispatchers.IO) {
-                    FilmixDeviceAuth.requestCode(deviceId, selectedApi, customApi)
+                    FilmixDeviceAuth.requestCode(
+                        deviceId = deviceId,
+                        apiBase = selectedApi,
+                        customApiBase = customApi,
+                        corsProxyBase = corsProxy
+                    )
                 }
+                if (!filmixPairingGeneration.isCurrent(generation)) return@launch
+
                 // Keep catalog requests pinned to the exact origin that issued this code.
                 settings.saveFilmixApiBase(pending.apiBase)
                 val activeHost = pending.apiBase.substringAfter("://").substringBefore('/')
@@ -1209,18 +1225,25 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 _filmixStatus.value = "API Filmix выбран: $activeHost. Введите код на странице устройств."
                 val deadline = System.currentTimeMillis() + FILMIX_PAIRING_TIMEOUT_MS
 
-                while (isActive && System.currentTimeMillis() < deadline) {
+                while (isActive && filmixPairingGeneration.isCurrent(generation) &&
+                    System.currentTimeMillis() < deadline
+                ) {
                     delay(FILMIX_PAIRING_POLL_MS)
+                    if (!filmixPairingGeneration.isCurrent(generation)) return@launch
+
                     val activated = try {
                         withContext(Dispatchers.IO) {
-                            FilmixDeviceAuth.pollActivation(pending)
+                            FilmixDeviceAuth.pollActivation(pending, corsProxy)
                         }
                     } catch (cancelled: CancellationException) {
                         throw cancelled
                     } catch (error: Exception) {
-                        _filmixStatus.value = "Нет ответа от Filmix. Повторяем проверку…"
+                        if (filmixPairingGeneration.isCurrent(generation)) {
+                            _filmixStatus.value = "Нет ответа от Filmix. Повторяем проверку…"
+                        }
                         null
                     }
+                    if (!filmixPairingGeneration.isCurrent(generation)) return@launch
                     if (!activated.isNullOrBlank()) {
                         settings.saveFilmixToken(activated)
                         _filmixToken.value = settings.filmixToken()
@@ -1229,16 +1252,21 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         return@launch
                     }
                 }
-                if (isActive) {
+                if (isActive && filmixPairingGeneration.isCurrent(generation)) {
                     _filmixStatus.value = "Время действия запроса истекло. Получите новый код."
                 }
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Exception) {
-                _filmixStatus.value = FilmixDeviceAuth.userFriendlyError(error)
-                _filmixCode.value = null
+                if (filmixPairingGeneration.isCurrent(generation)) {
+                    _filmixStatus.value = FilmixDeviceAuth.userFriendlyError(error)
+                    _filmixCode.value = null
+                }
             } finally {
-                _isFilmixPairing.value = false
+                if (filmixPairingGeneration.isCurrent(generation)) {
+                    _isFilmixPairing.value = false
+                    filmixPairingJob = null
+                }
             }
         }
     }
@@ -1280,7 +1308,22 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             .onFailure { _filmixStatus.value = it.message ?: "Некорректный пользовательский API Filmix" }
     }
 
+    fun saveFilmixCorsProxyBase(value: String) {
+        if (_isFilmixPairing.value) return
+        runCatching { settings.saveFilmixCorsProxyBase(value) }
+            .onSuccess {
+                _filmixCorsProxyBase.value = it
+                _filmixStatus.value = if (it.isBlank()) {
+                    "CORS-прокси отключён. Используется прямое подключение к выбранному HTTPS API."
+                } else {
+                    "CORS-прокси сохранён: ${it.substringAfter("://").substringBefore('/')}. Проверьте, что доверяете этому серверу."
+                }
+            }
+            .onFailure { _filmixStatus.value = it.message ?: "Некорректный адрес CORS-прокси" }
+    }
+
     fun cancelFilmixPairing() {
+        filmixPairingGeneration.invalidate()
         filmixPairingJob?.cancel()
         filmixPairingJob = null
         _isFilmixPairing.value = false
