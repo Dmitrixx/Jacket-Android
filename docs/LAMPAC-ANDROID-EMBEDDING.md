@@ -15,11 +15,19 @@ The embedded server must listen on **127.0.0.1:9118 only**. Remote Lampac remain
 - Install an ARM64 Debian OCI rootfs via pr-cli install debian; accept it only when `/etc/os-release` identifies Debian and `/bin/sh` plus `/usr/bin/apt-get` are executable.
 - Install ASP.NET Core Runtime 10.0.15 and Lampac NextGen 1.90.2 from pinned HTTPS URLs with SHA-512 / SHA-256 verification.
 - Extract and stage the Lampac payload under Debian /opt/lampac, validate required managed files, create an Android-specific init.conf, then atomically switch the installation directory.
-- Generate a conservative first-run config: bind to 127.0.0.1:9118, turn Chromium and openstat off, and skip optional browser/transcoding and unrelated server modules.
+- Generate a first-run config with `BaseModule.LoadModules: [".*"]` so all installed modules whose own manifests enable them are eligible for loading. Bind only to 127.0.0.1:9118, turn Chromium and openstat off, enable JacRed and exclude Android-incompatible modules such as GStreamer, DLNA, TorrServer, Transcoding, Sync and TimeCode.
 - Add a foreground service with install, start, stop, health-check and bounded log state. The startup path also retains and closes a just-created PTY session if cancellation races with process creation. It starts only after an explicit user action; there is no boot receiver or automatic startup.
 - Add Settings controls for install/start, stop, status, recent output, and connecting http://127.0.0.1:9118 to Jacket's existing Lampac bridge.
 - Keep the remote Lampac address and account settings as a fallback.
+- Add Settings → Lampac import/export for `init.conf`. Import preserves the user's provider/module options, priorities, account fields, JacRed adapter configuration and unrelated custom JSON sections, while enforcing the embedded loopback listener and Android-specific module exclusions. Import is available only when the local server is stopped. Export warns that the file may contain access tokens and passwords.
+- Preserve the prior `init.conf` when replacing the Lampac runtime archive; do not reset a user's provider setup during an installer refresh.
 - Disable public APK uploads and public GitHub Release publishing in this personal-use workflow.
+
+## Provider discovery and configuration transfer
+
+Lampac's enabled provider modules are loaded through `BaseModule.LoadModules: [".*"]`; each individual module's own `enable` setting and the Android `SkipModules` list still determine whether it can run. Jacket discovers the available VOD routes per TMDB title using `/lite/events` and `/lifeevents`, then queries the discovered routes with a bounded worker pool (up to 96 provider routes, four concurrent requests). Results are not hard-coded to a fixed site list. Actual availability still depends on the module files present in the Lampac installation, module configuration, account entitlements and the provider's current service response.
+
+To reuse a Lampac installation configured outside Jacket, export its `init.conf` and choose Settings → Lampac → Import `init.conf`. The import keeps provider options, priorities, tokens, JacRed settings and custom config sections. It deliberately overwrites only the listening endpoint to `127.0.0.1:9118` and keeps Android-incompatible native/network modules excluded. Custom module binaries or source files in a separate `mods/` directory are not contained in `init.conf` and are not copied by this import. Stop the embedded server before importing, then start it again. Exported `init.conf` may contain credentials; do not share it publicly.
 
 ## Runtime diagnostics and credential handling
 
