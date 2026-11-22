@@ -2,6 +2,9 @@
 
 ## 2.8.0
 
+- Restrict automatic HDRezka mirror redirects to exact maintained hostnames and the standard HTTPS port; reject spoofed lookalike domains.
+- Cancel stale HDRezka login/mirror checks on replacement or disconnect so an old operation cannot restore a removed session or clear the busy state of a newer operation.
+
 - Consolidated native Filmix and HDRezka search/player adapters, encrypted account state, provider diagnostics and the unified detail-card source picker.
 - Filmix AUTO mode checks the explicitly saved custom HTTPS API first (when present), then the official primary and reserve hosts; activation polling and catalog requests stay pinned to the host that issued the device code.
 - Allow an explicitly user-entered HTTPS Filmix API host with strict URL/host validation, normal certificate validation and no cross-host token forwarding.
