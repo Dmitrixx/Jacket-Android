@@ -1,4 +1,4 @@
-# Jacket — Android media center 2.8.2
+# Jacket — Android media center 2.8.3
 
 ## Latest APK from main
 
@@ -75,7 +75,7 @@ Filmix uses device-code pairing with a profile-confirmed activation flow and its
 
 ### Optional embedded Lampac runtime
 
-On ARM64 Android devices, Settings → Lampac can install Debian, .NET 10 and a pinned Lampac NextGen release into Jacket's private storage and start it on demand. The runtime requires around 1.5 GB of free storage and downloads a Lampac archive of about 480 MB plus the .NET runtime. It does not require root or Termux. On first start, .NET compiles enabled provider modules; on Android this can take up to five minutes, so the startup watchdog allows five minutes and does not interrupt the compilation after 20 seconds. Readiness is checked through Lampac's `/version?type=hash` health endpoint. The server binds only to 127.0.0.1:9118; it is not exposed to the LAN, does not auto-start after reboot, and the Android profile disables browser automation and heavy transcoding modules. The embedded server runs as a foreground service only after the user presses Install/Start. Non-ARM64 devices can still use a remote Lampac endpoint over HTTPS. See [the embedded runtime notes](docs/LAMPAC-ANDROID-EMBEDDING.md).
+On ARM64 Android devices, Settings → Lampac can install Debian, .NET 10 and a pinned Lampac NextGen release into Jacket's private storage and start it on demand. The runtime requires around 1.5 GB of free storage and downloads a Lampac archive of about 480 MB plus the .NET runtime. It does not require root or Termux. On first start, .NET compiles enabled provider modules; on Android this can take up to five minutes, so the startup watchdog allows five minutes and does not interrupt the compilation after 20 seconds. Readiness is checked through Lampac's `/version?type=hash` health endpoint. The settings screen retains the last 24 sanitized process-output lines in a scrollable panel so the first exception message is visible when the host fails before binding its port. The server binds only to 127.0.0.1:9118; it is not exposed to the LAN, does not auto-start after reboot, and the Android profile disables browser automation and heavy transcoding modules. The embedded server runs as a foreground service only after the user presses Install/Start. Non-ARM64 devices can still use a remote Lampac endpoint over HTTPS. See [the embedded runtime notes](docs/LAMPAC-ANDROID-EMBEDDING.md).
 
 ## User-configured website search
 

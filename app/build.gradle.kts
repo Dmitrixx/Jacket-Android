@@ -13,8 +13,8 @@ android {
         minSdk = 28
         // Embedded PRoot's tested Android integration currently targets API 35; compile against API 36.
         targetSdk = 35
-        versionCode = 14
-        versionName = "2.8.2"
+        versionCode = 15
+        versionName = "2.8.3"
         vectorDrawables { useSupportLibrary = true }
     }
 

@@ -3083,12 +3083,32 @@ private fun SettingsScreen(
                                         Text("Проверить соединение и подключить")
                                     }
                                     if (lampacRuntime.logs.isNotEmpty()) {
-                                        Text(
-                                            lampacRuntime.logs.takeLast(4).joinToString("\n"),
-                                            style = MaterialTheme.typography.labelSmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                            maxLines = 5
-                                        )
+                                        Surface(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            shape = RoundedCornerShape(12.dp),
+                                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)
+                                        ) {
+                                            Column(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .heightIn(max = 280.dp)
+                                                    .verticalScroll(rememberScrollState())
+                                                    .padding(12.dp),
+                                                verticalArrangement = Arrangement.spacedBy(6.dp)
+                                            ) {
+                                                Text(
+                                                    "ЖУРНАЛ LAMPAC • ПОСЛЕДНИЕ 24 СТРОКИ",
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    fontWeight = FontWeight.Bold,
+                                                    color = MaterialTheme.colorScheme.primary
+                                                )
+                                                Text(
+                                                    lampacRuntime.logs.takeLast(24).joinToString("\n"),
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                )
+                                            }
+                                        }
                                     }
                                     Text(
                                         "Перед установкой требуется около 1,5 ГБ свободной памяти. При первом запуске .NET компилирует модули провайдеров — это может занять до 5 минут; пока в журнале появляются строки compilation, не закрывайте Jacket и не нажимайте «Остановить». Сервер доступен только на 127.0.0.1:9118; браузерная автоматизация и тяжёлое транскодирование отключены. Автоматического запуска после перезагрузки нет.",

@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.8.3
+
+- Expand the embedded Lampac diagnostic panel to show the last 24 sanitized process-output lines in a scrollable log. This preserves the original .NET exception and inner socket/host error, which were hidden when only the last four stack frames were shown.
+- Keep diagnostic output in the app's existing redacted log buffer; credentials and cookies remain sanitized.
+
 ## 2.8.2
 
 - Fix embedded Lampac cold startup on Android: allow five minutes for .NET provider-module compilation instead of interrupting it after 20 seconds with Ctrl+C / exit code 130.
