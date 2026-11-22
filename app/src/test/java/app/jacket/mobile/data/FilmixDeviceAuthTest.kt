@@ -63,6 +63,24 @@ class FilmixDeviceAuthTest {
     }
 
     @Test
+    fun supportsAnExplicitUserManagedHttpsProxy() {
+        assertEquals(
+            "https://proxy.home.example",
+            FilmixDeviceAuth.normalizeCorsProxyBase("https://proxy.home.example/")
+        )
+        val url = FilmixDeviceAuth.buildCorsProxyUrl(
+            "https://fxapp.biz/api/v2/user_profile?user_dev_token=secret",
+            "https://proxy.home.example"
+        )
+        assertTrue(url.startsWith("https://proxy.home.example/enc2t/"))
+    }
+
+    @Test(expected = IllegalArgumentException::class)
+    fun rejectsNonStandardHttpsPortForCustomProxy() {
+        FilmixDeviceAuth.normalizeCorsProxyBase("https://proxy.home.example:8443")
+    }
+
+    @Test
     fun normalizesTheScreenshotCorsProxyAndRejectsCleartextProxy() {
         assertEquals(
             "https://cors.jacred.stream",

@@ -2,6 +2,9 @@
 
 ## 2.8.0
 
+- Make the Filmix CORS relay configurable (including direct HTTPS mode), and disclose that an external relay can read device tokens and profile/search data; Base64 in the Lampa `enc2t` path is not encryption.
+- Guard Filmix pairing with operation generations so cancelled or superseded device-code polling cannot overwrite the status of a newer pairing attempt.
+
 - Match Lampa's `enc2t` proxy route exactly for Filmix auth, profile and catalog API calls.
 
 - Consolidated native Filmix and HDRezka search/player adapters, encrypted account state, provider diagnostics and the unified detail-card source picker.
