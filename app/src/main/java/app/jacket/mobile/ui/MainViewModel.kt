@@ -594,12 +594,34 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                                 item = item,
                                 episodeCode = episode?.releaseCode
                             )
+                            // JacRed is a separate Lampac API: it searches the server's
+                            // built-in tracker adapters and returns magnets/.torrent links.
+                            // A JacRed failure must not discard successful VOD results.
+                            val jacRed = runCatching {
+                                LampacBridgeClient.searchJacRedTorrents(
+                                    settings = lampacConfig,
+                                    query = catalogueQuery,
+                                    item = item
+                                )
+                            }
+                            val jacRedFailure = jacRed.exceptionOrNull()?.let { error ->
+                                IndexerFailure(
+                                    indexerId = "lampac:jacred",
+                                    indexerName = "Lampac JacRed",
+                                    message = error.message.orEmpty()
+                                        .replace(Regex("[\\r\\n\\t]+"), " ")
+                                        .take(180)
+                                        .ifBlank { "Модуль JacRed недоступен" }
+                                )
+                            }
+                            val jacRedOutcome = jacRed.getOrNull()
                             CombinedSourceGroupOutcome(
                                 groupId = "lampac",
-                                results = outcome.results,
-                                failures = outcome.failures,
-                                progressMessage = "Lampac: проверено " + outcome.checkedProviders +
-                                    " провайдеров (обнаружено " + outcome.discoveredProviders + ")"
+                                results = outcome.results + (jacRedOutcome?.results ?: emptyList()),
+                                failures = outcome.failures + listOfNotNull(jacRedFailure),
+                                progressMessage = "Lampac: " + outcome.checkedProviders +
+                                    "/" + outcome.discoveredProviders + " VOD-провайдеров; JacRed: " +
+                                    (jacRedOutcome?.results?.size ?: 0) + " раздач"
                             )
                         })
                     }
