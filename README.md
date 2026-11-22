@@ -1,4 +1,4 @@
-# Jacket — Android media center 2.8.6
+# Jacket — Android media center 2.8.7
 
 ## Latest APK from main
 
@@ -27,7 +27,7 @@ The project is under active development. CI verifies JVM unit tests and APK asse
 
 Start the embedded server in Settings → Lampac. When its local health check succeeds, Jacket automatically saves `http://127.0.0.1:9118`, tests `/online.js`, and enables Lampac in the unified source search. No separate manual connection step is required. Results are merged into the Sources panel for TMDB movie cards and selected TMDB series episodes. Lampac provider routes are discovered per title, with a bounded ceiling of 96 routes and four concurrent requests.
 
-Lampac is a backend, not a second catalog UI. The embedded profile keeps server modules that duplicate Jacket's torrent engine or require unavailable native dependencies disabled. In particular, TorrServer duplicates Jacket's in-process torrent engine, while GStreamer needs Linux native libraries not included in the lightweight Android runtime. Browser automation and challenge bypass are not enabled. The full upstream module catalogue remains documented by [Lampac](https://docs.lampac.dev/modules/overview).
+Lampac is a backend, not a second catalog UI. The embedded profile enables the built-in JacRed API in local `jackett` mode, so Lampac's Rutor, Kinozal, NNMClub, RuTracker, Toloka and other configured adapters can contribute torrent results to Jacket alongside VOD streams. Direct magnets and same-origin `parseMagnet` links are routed into Jacket's own torrent engine; a JacRed failure does not discard successful VOD results. The settings migration enables JacRed on existing installations without replacing unrelated `init.conf` values. TorrServer duplicates Jacket's in-process torrent engine, while GStreamer needs Linux native libraries not included in the lightweight Android runtime. DLNA, browser automation, server-side transcoding, Sync and TimeCode remain disabled until their device-specific networking, runtime and data-sync paths are integrated and tested. The full upstream module catalogue remains documented by [Lampac](https://docs.lampac.dev/modules/overview).
 
 ## Filmix and HDRezka accounts
 
