@@ -43,6 +43,12 @@ Chromium/browser automation, Playwright-dependent providers, transcoding, TorrSe
 
 The initial config intentionally prioritizes the no-browser API path used by Jacket. Modules will be enabled only after provider/API and playback tests.
 
+## Upstream TLS caveat
+
+The pinned Lampac source configures its internal `proxy`, `proxyRedirect` and `proxyimg` HTTP clients with `RemoteCertificateValidationCallback` that accepts all certificate results. Those upstream proxy paths therefore do not enforce server-certificate validation. This is inherited upstream behavior, not a Jacket setting, and this integration does not patch it.
+
+The embedded listener is restricted to `127.0.0.1:9118` and must not be exposed to Wi-Fi/LAN or the public internet. Use this only on a trusted device/network, avoid entering sensitive third-party credentials into Lampac modules, and treat returned media URLs as untrusted.
+
 ## Licence and personal use
 
 Lampac NextGen is AGPL-3.0-only. The PRoot Android wrapper is MIT, while its PRoot and pr-cli native components have GPL-2.0-or-later / GPL-3.0-or-later licensing. Source provenance and notices are retained. This branch is for a personal build; it does not publish APKs or create public releases. Any future redistribution would require a full corresponding-source and licence-compliance review.
