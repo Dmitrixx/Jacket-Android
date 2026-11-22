@@ -2253,6 +2253,31 @@ private fun SettingsScreen(
     var lampacUid by remember(lampacSettings.uid) { mutableStateOf(lampacSettings.uid) }
     var lampacToken by remember(lampacSettings.token) { mutableStateOf(lampacSettings.token) }
     var lampacEnabled by remember(lampacSettings.enabled) { mutableStateOf(lampacSettings.enabled) }
+    var localLampacAutoConnectPending by rememberSaveable { mutableStateOf(false) }
+
+    LaunchedEffect(lampacRuntime.phase, localLampacAutoConnectPending, isLampacBusy) {
+        when {
+            localLampacAutoConnectPending &&
+                lampacRuntime.phase == app.jacket.mobile.lampac.LampacRuntimePhase.RUNNING &&
+                !isLampacBusy -> {
+                localLampacAutoConnectPending = false
+                val localSettings = LampacSettings(
+                    baseUrl = app.jacket.mobile.lampac.LampacEmbeddedConfig.BASE_URL,
+                    accountEmail = lampacAccountEmail,
+                    uid = lampacUid,
+                    token = lampacToken,
+                    enabled = true
+                )
+                lampacBaseUrl = localSettings.baseUrl
+                lampacEnabled = true
+                viewModel.testLampacConnection(localSettings)
+            }
+            localLampacAutoConnectPending &&
+                lampacRuntime.phase == app.jacket.mobile.lampac.LampacRuntimePhase.ERROR -> {
+                localLampacAutoConnectPending = false
+            }
+        }
+    }
 
     var editingId by remember { mutableStateOf("") }
     var sourceName by remember { mutableStateOf("") }
@@ -2973,7 +2998,7 @@ private fun SettingsScreen(
                             Text("Lampac • единый каталог провайдеров", style = MaterialTheme.typography.headlineSmall,
                                 fontWeight = FontWeight.Bold)
                             Text(
-                                "Jacket получает динамический список включённых провайдеров Lampac через /lite/events и /lifeevents, затем проверяет их параллельно (до 4 одновременно) и собирает потоки в одну карточку. Поставщики доступны только при наличии и включении соответствующих модулей на сервере. Поддерживаются фильмы и выбранные эпизоды сериалов из каталога TMDB.",
+                                "Lampac — это серверный источник, а не отдельная вкладка каталога. После подключения Jacket автоматически получает доступные провайдеры Online (70+ источников VOD, аниме и региональных групп) через /lite/events и /lifeevents, проверяет их параллельно и объединяет результаты с Filmix, HDRezka и торрентами. Результаты появляются в карточке TMDB-фильма или выбранного эпизода → «Источники». Ничего добавлять вручную по одному не нужно.",
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -3022,6 +3047,9 @@ private fun SettingsScreen(
                                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                         Button(
                                             onClick = {
+                                                // Connect the local endpoint to combined search only
+                                                // after the server health probe reports RUNNING.
+                                                localLampacAutoConnectPending = true
                                                 if (localLampacInstalled) {
                                                     app.jacket.mobile.lampac.LampacRuntimeService.start(context)
                                                 } else {

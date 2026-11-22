@@ -4,6 +4,19 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
+// One persistent user-owned keystore is used for every update build.
+// Its file and passwords are supplied only through local/CI environment variables.
+val jacketSigningStoreFile = System.getenv("JACKET_SIGNING_STORE_FILE")
+val jacketSigningStorePassword = System.getenv("JACKET_SIGNING_STORE_PASSWORD")
+val jacketSigningKeyAlias = System.getenv("JACKET_SIGNING_KEY_ALIAS")
+val jacketSigningKeyPassword = System.getenv("JACKET_SIGNING_KEY_PASSWORD")
+val hasJacketReleaseSigning = listOf(
+    jacketSigningStoreFile,
+    jacketSigningStorePassword,
+    jacketSigningKeyAlias,
+    jacketSigningKeyPassword
+).all { !it.isNullOrBlank() }
+
 android {
     namespace = "app.jacket.mobile"
     compileSdk = 36
@@ -13,8 +26,8 @@ android {
         minSdk = 28
         // Embedded PRoot's tested Android integration currently targets API 35; compile against API 36.
         targetSdk = 35
-        versionCode = 16
-        versionName = "2.8.4"
+        versionCode = 17
+        versionName = "2.8.5"
         vectorDrawables { useSupportLibrary = true }
     }
 
@@ -28,10 +41,24 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
+    signingConfigs {
+        if (hasJacketReleaseSigning) {
+            create("jacketRelease") {
+                storeFile = file(requireNotNull(jacketSigningStoreFile))
+                storePassword = jacketSigningStorePassword
+                keyAlias = jacketSigningKeyAlias
+                keyPassword = jacketSigningKeyPassword
+            }
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = true
             isShrinkResources = true
+            if (hasJacketReleaseSigning) {
+                signingConfig = signingConfigs.getByName("jacketRelease")
+            }
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
     }

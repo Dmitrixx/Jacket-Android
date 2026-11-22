@@ -1,8 +1,10 @@
-# Jacket — Android media center 2.8.4
+# Jacket — Android media center 2.8.5
 
 ## Latest APK from main
 
-[Open the latest main-branch Android CI runs](https://github.com/Dmitrixx/Jacket-Android/actions/workflows/android.yml?query=branch%3Amain). Open the newest successful run and download **Jacket-main-apk** from its **Artifacts** section. The ZIP contains the universal APK and its SHA-256 checksum. Artifacts are retained for 14 days and refreshed after each successful build on `main`; this is a debug-signed development build, not a permanent release.
+[Open the latest main-branch Android CI runs](https://github.com/Dmitrixx/Jacket-Android/actions/workflows/android.yml?query=branch%3Amain). Open the newest successful run and download **Jacket-main-apk** from its **Artifacts** section. The ZIP contains the universal APK and its SHA-256 checksum. Artifacts are retained for 14 days. When the one-time persistent signing key is configured, the artifact is a signed release APK that can update the installed app in place. Without that key, CI publishes a debug APK for testing only; debug APKs from different temporary runners are not guaranteed to share a signing certificate.
+
+For the one-time signing setup and update instructions, see [docs/UPDATES.md](docs/UPDATES.md).
 
 Jacket is a single Android application for phones, tablets and Android TV / Google TV. It combines a poster-based media catalog, a user-configurable indexer cabinet, an integrated BitTorrent engine and a loopback HTTP media server.
 
@@ -20,6 +22,12 @@ The project is under active development. CI verifies JVM unit tests and APK asse
 - **Downloads** — magnet and `.torrent` tasks, file list, selected-file priorities, pause/resume, speed and progress.
 - **Player** — fullscreen Media3 / ExoPlayer for phone and Android TV: overlay controls, 10-second seek, speed, fit/fill/zoom, sleep timer, audio and subtitle selection, picture-in-picture, sidecar subtitles, external-player handoff, progressive video, HLS and DASH.
 - **Settings** — LAMPA-inspired control center for Filmix device-code pairing, HDRezka account/session, built-in tracker shortcuts, torrent indexers, catalog metadata and network limits.
+
+## Lampac integration
+
+Start the embedded server in Settings → Lampac. When its local health check succeeds, Jacket automatically saves `http://127.0.0.1:9118`, tests `/online.js`, and enables Lampac in the unified source search. No separate manual connection step is required. Results are merged into the Sources panel for TMDB movie cards and selected TMDB series episodes. Lampac provider routes are discovered per title, with a bounded ceiling of 96 routes and four concurrent requests.
+
+Lampac is a backend, not a second catalog UI. The embedded profile keeps server modules that duplicate Jacket's torrent engine or require unavailable native dependencies disabled. In particular, TorrServer duplicates Jacket's in-process torrent engine, while GStreamer needs Linux native libraries not included in the lightweight Android runtime. Browser automation and challenge bypass are not enabled. The full upstream module catalogue remains documented by [Lampac](https://docs.lampac.dev/modules/overview).
 
 ## Filmix and HDRezka accounts
 

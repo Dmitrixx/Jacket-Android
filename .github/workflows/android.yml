@@ -38,6 +38,38 @@ jobs:
       - name: Install Android SDK packages
         run: sdkmanager "platforms;android-36" "build-tools;36.0.0" "platform-tools" "ndk;27.2.12479018" "cmake;3.22.1"
 
+      # A permanent keystore is supplied once through repository Actions secrets.
+      # Never store the signing key or its passwords in git.
+      - name: Restore persistent Jacket signing key
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        shell: bash
+        env:
+          JACKET_KEYSTORE_BASE64: ${{ secrets.JACKET_KEYSTORE_BASE64 }}
+          JACKET_KEYSTORE_PASSWORD: ${{ secrets.JACKET_KEYSTORE_PASSWORD }}
+          JACKET_KEY_ALIAS: ${{ secrets.JACKET_KEY_ALIAS }}
+          JACKET_KEY_PASSWORD: ${{ secrets.JACKET_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$JACKET_KEYSTORE_BASE64" ||
+                -z "$JACKET_KEYSTORE_PASSWORD" ||
+                -z "$JACKET_KEY_ALIAS" ||
+                -z "$JACKET_KEY_PASSWORD" ]]; then
+            echo "JACKET_SIGNING_READY=false" >> "$GITHUB_ENV"
+            echo "::warning::Persistent signing is not configured. Debug APKs from separate CI runners may not update each other."
+            exit 0
+          fi
+          signing_dir="$RUNNER_TEMP/jacket-signing"
+          mkdir -p "$signing_dir"
+          printf '%s' "$JACKET_KEYSTORE_BASE64" | base64 --decode > "$signing_dir/jacket-release.jks"
+          test -s "$signing_dir/jacket-release.jks"
+          {
+            echo "JACKET_SIGNING_READY=true"
+            echo "JACKET_SIGNING_STORE_FILE=$signing_dir/jacket-release.jks"
+            echo "JACKET_SIGNING_STORE_PASSWORD=$JACKET_KEYSTORE_PASSWORD"
+            echo "JACKET_SIGNING_KEY_ALIAS=$JACKET_KEY_ALIAS"
+            echo "JACKET_SIGNING_KEY_PASSWORD=$JACKET_KEY_PASSWORD"
+          } >> "$GITHUB_ENV"
+
       # Uses the checked-in Gradle 9.9.1 wrapper; CI must not install a second Gradle version.
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v6
@@ -49,14 +81,25 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          apk="$(find app/build/outputs/apk/debug -type f -iname '*universal*.apk' -print -quit)"
+          version_name="$(sed -nE 's/^[[:space:]]*versionName = "([^"]+)".*/\1/p' app/build.gradle.kts | head -n 1)"
+          if [[ -z "$version_name" ]]; then
+            echo "Could not read app versionName" >&2
+            exit 1
+          fi
+          if [[ "${JACKET_SIGNING_READY:-false}" == "true" ]]; then
+            apk="$(find app/build/outputs/apk/release -type f -iname '*universal*.apk' -print -quit)"
+            build_kind="signed-release"
+          else
+            apk="$(find app/build/outputs/apk/debug -type f -iname '*universal*.apk' -print -quit)"
+            build_kind="debug"
+          fi
           if [[ -z "$apk" ]]; then
-            echo "Universal debug APK not found. Available APK files:" >&2
+            echo "Universal APK not found. Available APK files:" >&2
             find app/build/outputs/apk -type f -name '*.apk' -print >&2 || true
             exit 1
           fi
           mkdir -p dist
-          output="dist/Jacket-2.8.1-main-${GITHUB_SHA:0:7}-universal-debug.apk"
+          output="dist/Jacket-${version_name}-main-${GITHUB_SHA:0:7}-universal-${build_kind}.apk"
           cp "$apk" "$output"
           sha256sum "$output" > "$output.sha256"
 

@@ -32,12 +32,14 @@ data class LampacSearchOutcome(
 object LampacBridgeClient {
     private const val MAX_REDIRECTS = 3
     private const val MAX_RESPONSE_BYTES = 2 * 1024 * 1024
-    private const val MAX_PROVIDER_ROUTES = 48
+    // Lampac documents 70+ VOD/anime/regional providers. Keep a bounded ceiling
+    // above that count so the client does not silently truncate at 48 routes.
+    private const val MAX_PROVIDER_ROUTES = 96
     private const val MAX_PARALLEL_PROVIDERS = 4
     private const val MAX_LIFE_POLLS = 20
     private const val MAX_TOTAL_RESULTS = 80
     private const val MIN_POLL_DELAY_MS = 350L
-    private const val USER_AGENT = "Jacket-Android/2.8 (Lampac bridge)"
+    private const val USER_AGENT = "Jacket-Android/2.8.5 (Lampac bridge)"
 
     private val redirectCodes = setOf(301, 302, 303, 307, 308)
     private val episodePattern = Regex("""(?i)S(\d{1,2})E(\d{1,3})""")

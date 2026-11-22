@@ -1,8 +1,9 @@
-# Jacket 2.8.4 — architecture
+# Jacket 2.8.5 — architecture
 
 ## Runtime layout
 
 ### Optional embedded Lampac runtime
+- After the local service passes its health probe, the settings UI persists `http://127.0.0.1:9118` and enables the Lampac group in combined source search. Available `/lite/events` routes are discovered for each TMDB movie/episode; up to 96 provider routes are considered with four concurrent requests.
 - ARM64 only: `:proot-engine` is built from the pinned `oonid/pr` submodule and its native helper binaries are extracted into `nativeLibraryDir` for Android's W^X execution policy. The app still builds for other ABIs; embedded mode is disabled there and the existing remote HTTPS bridge remains available.
 - On explicit user action, `LampacRuntimeService` installs a pinned Debian rootfs, .NET 10 and Lampac NextGen under app-private `filesDir`. Artifact downloads use a strict HTTPS host allowlist and pinned SHA-256/SHA-512 digests; extraction is size-bounded and validated before activation.
 - The local `init.conf` binds to `127.0.0.1:9118`. Browser automation, heavy transcoding and public listener modules are disabled. The optional `GStreamer` module is also skipped: its upstream initializer calls native GLib/GStreamer APIs, but those libraries are not included in the minimal Android Debian rootfs and the app uses Media3 for playback. Existing runtime installations are migrated before every launch by adding only this module to `BaseModule.SkipModules`, preserving all other `init.conf` settings. No boot receiver or automatic server restart is registered.

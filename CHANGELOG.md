@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.8.5
+
+- Automatically connect the embedded loopback Lampac server to Jacket's unified source search after its health check succeeds; persist the local address and enable the Lampac search provider without a separate manual step.
+- Raise the dynamic Lampac route ceiling from 48 to 96 while retaining four concurrent provider requests, covering the documented 70+ provider catalogue.
+- Add persistent Release APK signing through a user-owned keystore supplied from GitHub Actions secrets. Once configured, APKs can update in place without uninstalling or deleting the embedded Debian/.NET/Lampac data.
+
 ## 2.8.4
 
 - Fix embedded Lampac startup on ARM64: skip its optional GStreamer module, whose startup unconditionally initializes native GLib/GStreamer libraries that are not part of the minimal Android Debian rootfs.

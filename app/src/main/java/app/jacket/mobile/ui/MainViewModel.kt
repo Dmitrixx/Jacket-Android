@@ -1543,7 +1543,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 val saved = settings.saveLampacSettings(config)
                 _lampacSettings.value = saved
-                _lampacStatus.value = message
+                _lampacStatus.value = if (saved.enabled) {
+                    "$message • подключён к общему поиску Jacket"
+                } else {
+                    "$message • сохранён, но отключён от общего поиска"
+                }
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Exception) {
