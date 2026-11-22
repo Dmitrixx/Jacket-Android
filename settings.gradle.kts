@@ -7,3 +7,5 @@ dependencyResolutionManagement {
 }
 rootProject.name = "Jacket"
 include(":app")
+include(":proot-engine")
+project(":proot-engine").projectDir = file("proot-engine")
