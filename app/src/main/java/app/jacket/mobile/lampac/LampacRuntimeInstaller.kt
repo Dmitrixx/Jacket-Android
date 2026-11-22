@@ -336,7 +336,7 @@ private object LampacZipInstaller {
         require(!value.startsWith('/') && '\\' !in value && '\u0000' !in value) {
             "Архив Lampac содержит недопустимый путь"
         }
-        val segments = value.split('/')
+        val segments = value.trimEnd('/').split('/')
         require(segments.none { it.isBlank() || it == "." || it == ".." }) {
             "Архив Lampac содержит traversal-путь"
         }
