@@ -55,7 +55,7 @@ private val lampacArtifactAllowedHosts = setOf(
 /** Accept only pinned HTTPS artifact hosts and the standard HTTPS port, including after redirects. */
 internal fun isAllowedLampacArtifactUri(uri: URI): Boolean =
     uri.scheme.equals("https", true) &&
-        uri.host?.lowercase() in lampacArtifactAllowedHosts &&
+        uri.host?.lowercase()?.let { it in lampacArtifactAllowedHosts } == true &&
         (uri.port == -1 || uri.port == 443) &&
         uri.rawUserInfo == null &&
         uri.rawFragment.isNullOrBlank()
