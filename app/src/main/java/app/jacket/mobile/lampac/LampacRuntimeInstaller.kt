@@ -10,6 +10,8 @@ import java.io.BufferedOutputStream
 import java.io.File
 import java.io.FileOutputStream
 import java.io.IOException
+import java.io.InputStream
+import java.io.OutputStream
 import java.net.HttpURLConnection
 import java.net.URI
 import java.net.URL
@@ -290,14 +292,22 @@ private object LampacZipInstaller {
                         }
                         zip.getInputStream(entry).use { input ->
                             FileOutputStream(output).use { file ->
-                                val buffer = ByteArray(64 * 1024)
-                                while (true) {
-                                    context.ensureActive()
-                                    val count = input.read(buffer)
-                                    if (count < 0) break
-                                    file.write(buffer, 0, count)
-                                    written += count
-                                    if (written % (512 * 1024L) < count) onProgress(written, totalBytes)
+                                written = Math.addExact(
+                                    written,
+                                    copyArchiveEntryBounded(
+                                        input = input,
+                                        output = file,
+                                        declaredSize = entry.size,
+                                        maxBytes = MAX_ENTRY_BYTES
+                                    ) { copied ->
+                                        val aggregate = Math.addExact(written, copied)
+                                        if (aggregate % (512 * 1024L) < copied) {
+                                            onProgress(aggregate, totalBytes)
+                                        }
+                                    }
+                                )
+                                require(written <= totalBytes) {
+                                    "Фактический объём архива превышает объявленный размер"
                                 }
                                 file.fd.sync()
                             }
@@ -345,6 +355,42 @@ private object LampacZipInstaller {
 
     private fun formatBytes(value: Long): String =
         String.format("%.1f ГБ", value / (1024.0 * 1024.0 * 1024.0))
+}
+
+/**
+ * Copies one ZIP entry while enforcing the uncompressed size declared in its
+ * central directory. ZIP metadata is untrusted: both overruns and truncated
+ * entries abort the staged install before the directory can be activated.
+ */
+internal fun copyArchiveEntryBounded(
+    input: InputStream,
+    output: OutputStream,
+    declaredSize: Long,
+    maxBytes: Long,
+    onProgress: (Long) -> Unit = {}
+): Long {
+    require(declaredSize >= 0L && declaredSize <= maxBytes) {
+        "Размер файла в архиве превышает ограничение"
+    }
+    require(maxBytes >= 0L) { "Некорректный лимит распаковки" }
+
+    val buffer = ByteArray(64 * 1024)
+    var copied = 0L
+    while (true) {
+        val count = input.read(buffer)
+        if (count < 0) break
+        if (count == 0) continue
+        if (count.toLong() > declaredSize - copied || count.toLong() > maxBytes - copied) {
+            throw IOException("Фактический размер файла в архиве превышает объявленный")
+        }
+        output.write(buffer, 0, count)
+        copied += count.toLong()
+        onProgress(copied)
+    }
+    if (copied != declaredSize) {
+        throw IOException("Файл в архиве повреждён: распаковано $copied из $declaredSize байт")
+    }
+    return copied
 }
 
 /** True only when the PRoot Debian root contains the required base system tools. */
