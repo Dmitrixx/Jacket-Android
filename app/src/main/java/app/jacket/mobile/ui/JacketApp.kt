@@ -2994,7 +2994,7 @@ private fun SettingsScreen(
                                             ),
                                             modifier = Modifier.weight(1f)
                                         ) {
-                                            Icon(Icons.Default.Stop, contentDescription = null)
+                                            Icon(Icons.Default.Close, contentDescription = null)
                                             Spacer(Modifier.width(6.dp))
                                             Text("Остановить")
                                         }
@@ -3016,7 +3016,7 @@ private fun SettingsScreen(
                                         enabled = localLampacInstalled,
                                         modifier = Modifier.fillMaxWidth()
                                     ) {
-                                        Icon(Icons.Default.Link, contentDescription = null)
+                                        Icon(Icons.Default.OpenInNew, contentDescription = null)
                                         Spacer(Modifier.width(8.dp))
                                         Text("Подключить localhost к общему поиску")
                                     }
