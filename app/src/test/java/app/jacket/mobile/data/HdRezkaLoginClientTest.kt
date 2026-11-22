@@ -9,13 +9,60 @@ import java.io.ByteArrayInputStream
 class HdRezkaLoginClientTest {
     @Test
     fun normalizesSecureMirror() {
-        assertEquals("https://hdrezka.example", HdRezkaLoginClient.validateMirror("https://hdrezka.example/"))
+        assertEquals("https://hdrezka.tv", HdRezkaLoginClient.validateMirror("https://hdrezka.tv/"))
     }
 
     @Test
     fun acceptsRezkaZipAndAllowlistedUkraineAlternateMirror() {
         assertEquals("https://rezka.zip", HdRezkaLoginClient.validateMirror("https://rezka.zip"))
         assertEquals("https://rezkify.com", HdRezkaLoginClient.validateMirror("https://rezkify.com"))
+    }
+
+    @Test
+    fun acceptsExactHostsFromTheMaintainedRezkaMirrorList() {
+        listOf(
+            "hdrezka.cm",
+            "hdrezka.la",
+            "standby-rezka.tv",
+            "hdrezka.tv",
+            "hdrezka-home.tv",
+            "rezka.ag",
+            "rezka-ua.net",
+            "rezka.zip",
+            "rezkify.com"
+        ).forEach { host ->
+            assertTrue("$host should be recognized", HdRezkaLoginClient.isKnownRezkaMirror(host))
+            assertTrue(
+                "www.$host should be recognized",
+                HdRezkaLoginClient.isKnownRezkaMirror("www.$host")
+            )
+        }
+    }
+
+    @Test
+    fun rejectsLookalikeDomainsFromTheKnownMirrorAllowlist() {
+        listOf(
+            "hdrezka.attacker.example",
+            "hdrezka-fake.example",
+            "rezka.attacker.example",
+            "rezka-fake.example",
+            "standby-rezka.attacker.example"
+        ).forEach { host ->
+            assertFalse("$host must not be trusted automatically", HdRezkaLoginClient.isKnownRezkaMirror(host))
+        }
+    }
+
+    @Test(expected = IllegalArgumentException::class)
+    fun rejectsNonStandardHttpsPorts() {
+        HdRezkaLoginClient.validateMirror("https://hdrezka.tv:8443")
+    }
+
+    @Test(expected = IllegalArgumentException::class)
+    fun customMirrorTrustDoesNotAllowNonStandardHttpsPorts() {
+        HdRezkaLoginClient.validateMirror(
+            "https://media.home.example:8443",
+            allowCustomMirror = true
+        )
     }
 
     @Test
@@ -119,7 +166,7 @@ class HdRezkaLoginClientTest {
             "https://rezka.zip",
             HdRezkaLoginClient.validateRedirectTarget(
                 "https://rezka.zip",
-                "https://hdrezka.example",
+                "https://hdrezka.tv",
                 allowCustomMirror = false
             )
         )
