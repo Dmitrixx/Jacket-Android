@@ -87,7 +87,8 @@ object TorrentQueueCodec {
         val migrated = ArrayList<QueuedTorrent>()
         val seen = HashSet<String>()
         var encodedBytes = HEADER.toByteArray(StandardCharsets.UTF_8).size.toLong()
-        for (index in 0 until minOf(array.length(), MAX_QUEUE_ITEMS)) {
+        for (index in 0 until array.length()) {
+            if (migrated.size >= MAX_QUEUE_ITEMS) break
             val item = array.optJSONObject(index) ?: continue
             val magnet = item.optString("magnet").takeIf {
                 it.startsWith("magnet:?") && it.length <= MAX_MAGNET_LENGTH
