@@ -36,7 +36,7 @@ const bundle = await rollup({
   plugins: [
     babel({
       babelHelpers: "bundled",
-      presets: ["@babel/preset-env"]
+      presets: [require.resolve("@babel/preset-env")]
     }),
     commonjs(),
     nodeResolve(),
