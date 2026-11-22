@@ -47,6 +47,7 @@ import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Movie
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.OpenInNew
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
@@ -59,6 +60,8 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -2185,6 +2188,7 @@ private fun SettingsScreen(
     val savedRates = remember(context) { TorrentEngine.rateLimits(context) }
     var downloadLimit by rememberSaveable { mutableStateOf(savedRates.first.toString()) }
     var uploadLimit by rememberSaveable { mutableStateOf(savedRates.second.toString()) }
+    var peerLimit by rememberSaveable { mutableStateOf(TorrentEngine.connectionLimitOverride(context).toString()) }
     var wifiOnly by rememberSaveable { mutableStateOf(TorrentEngine.isWifiOnly(context)) }
     val exportIndexers = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
         if (uri != null) {
@@ -2500,9 +2504,9 @@ private fun SettingsScreen(
 
             if (selectedSettingsSection == "network") {
             item {
-                Text("Загрузки и сеть", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                Text("Торрент-движок и сеть", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
                 Text(
-                    "Лимиты применяются ко всей торрент-сессии. Значение 0 означает отсутствие ограничения.",
+                    "Настройки применяются ко всей встроенной торрент-сессии. Скорость указывается в КБ/с; 0 снимает ограничение.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -2524,6 +2528,20 @@ private fun SettingsScreen(
                         singleLine = true
                     )
                 }
+                OutlinedTextField(
+                    value = peerLimit,
+                    onValueChange = { peerLimit = it.filter(Char::isDigit).take(3) },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("Максимум соединений с пирами") },
+                    placeholder = { Text("0 — автоматически") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    singleLine = true
+                )
+                Text(
+                    "0 — автоматически (80 на устройствах с малым объёмом памяти, 200 на остальных). Ручное значение: от 20 до 500. Слишком высокий предел увеличивает расход памяти и батареи.",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
@@ -2541,16 +2559,22 @@ private fun SettingsScreen(
                 }
                 Button(
                     onClick = {
-                        TorrentEngine.setRateLimits(
-                            context,
-                            downloadLimit.toIntOrNull()?.coerceAtLeast(0) ?: 0,
-                            uploadLimit.toIntOrNull()?.coerceAtLeast(0) ?: 0
-                        )
-                        TorrentEngine.setWifiOnly(context, wifiOnly)
-                        Toast.makeText(context, "Настройки загрузки сохранены", Toast.LENGTH_SHORT).show()
+                        val requestedPeers = peerLimit.toIntOrNull()
+                        if (requestedPeers == null || (requestedPeers != 0 && requestedPeers !in 20..500)) {
+                            Toast.makeText(context, "Укажите 0 или число от 20 до 500", Toast.LENGTH_LONG).show()
+                        } else {
+                            TorrentEngine.setRateLimits(
+                                context,
+                                downloadLimit.toIntOrNull()?.coerceAtLeast(0) ?: 0,
+                                uploadLimit.toIntOrNull()?.coerceAtLeast(0) ?: 0
+                            )
+                            TorrentEngine.setConnectionLimitOverride(context, requestedPeers)
+                            TorrentEngine.setWifiOnly(context, wifiOnly)
+                            Toast.makeText(context, "Настройки торрентов сохранены", Toast.LENGTH_SHORT).show()
+                        }
                     },
                     modifier = Modifier.fillMaxWidth()
-                ) { Text("Сохранить настройки загрузки") }
+                ) { Text("Сохранить настройки торрентов") }
                 Text(
                     "Папка загрузок: ${TorrentEngine.downloadDirectory(context).absolutePath}",
                     style = MaterialTheme.typography.labelSmall,
@@ -3175,6 +3199,17 @@ private fun SettingsScreen(
                                     },
                                     accent = source.integration != MediaSourceIntegration.MEDIA_ADAPTER_MISSING
                                 )
+                                OverflowActionsMenu(
+                                    actions = if (source.integration == MediaSourceIntegration.DIRECT_ADAPTER ||
+                                        source.integration == MediaSourceIntegration.AUTH_SETTINGS_ONLY
+                                    ) {
+                                        listOf("Настройки источника" to { selectedSettingsSection = source.id })
+                                    } else {
+                                        listOf("Почему не подключён" to {
+                                            Toast.makeText(context, source.notes, Toast.LENGTH_LONG).show()
+                                        })
+                                    }
+                                )
                             }
                             LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                                 items(source.types) { kind -> MetadataPill(kind.uppercase()) }
@@ -3223,6 +3258,32 @@ private fun SettingsScreen(
                                     checked = provider.enabled,
                                     onCheckedChange = { viewModel.setWebSearchProviderEnabled(provider.id, it) }
                                 )
+                                OverflowActionsMenu(
+                                    actions = buildList {
+                                        if (provider.enabled) {
+                                            add(
+                                                (if (TrackerSearchClient.supports(provider.id)) "Проверить поиск" else "Открыть поиск") to {
+                                                    if (TrackerSearchClient.supports(provider.id)) {
+                                                        viewModel.testWebSearchProvider(provider.id, trackerTestQuery)
+                                                    } else {
+                                                        openWebsiteSearch(context, provider, trackerTestQuery)
+                                                    }
+                                                }
+                                            )
+                                        } else {
+                                            add("Включить сайт" to {
+                                                viewModel.setWebSearchProviderEnabled(provider.id, true)
+                                            })
+                                        }
+                                        add("Изменить" to {
+                                            webEditingId = provider.id
+                                            webName = provider.name
+                                            webUrlTemplate = provider.searchUrlTemplate
+                                            webCookie = provider.cookie
+                                        })
+                                        add("Удалить" to { viewModel.removeWebSearchProvider(provider.id) })
+                                    }
+                                )
                             }
                             Text(provider.searchUrlTemplate, style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 3)
@@ -3233,37 +3294,6 @@ private fun SettingsScreen(
                                     color = if (status.startsWith("Ошибка")) MaterialTheme.colorScheme.error
                                     else MaterialTheme.colorScheme.primary
                                 )
-                            }
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                if (TrackerSearchClient.supports(provider.id)) {
-                                    OutlinedButton(
-                                        onClick = { viewModel.testWebSearchProvider(provider.id, trackerTestQuery) },
-                                        enabled = provider.enabled && trackerTestQuery.isNotBlank() &&
-                                            (testingWebSearchProviderId == null || testingWebSearchProviderId == provider.id)
-                                    ) {
-                                        if (testingWebSearchProviderId == provider.id) {
-                                            CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
-                                            Spacer(Modifier.width(6.dp))
-                                        }
-                                        Text(if (testingWebSearchProviderId == provider.id) "Проверка…" else "Тест поиска")
-                                    }
-                                } else {
-                                    OutlinedButton(
-                                        onClick = { openWebsiteSearch(context, provider, trackerTestQuery) },
-                                        enabled = provider.enabled && trackerTestQuery.isNotBlank()
-                                    ) { Text("Открыть поиск") }
-                                }
-                                OutlinedButton(
-                                    onClick = {
-                                        webEditingId = provider.id
-                                        webName = provider.name
-                                        webUrlTemplate = provider.searchUrlTemplate
-                                        webCookie = provider.cookie
-                                    }
-                                ) { Text("Изменить") }
-                                OutlinedButton(onClick = { viewModel.removeWebSearchProvider(provider.id) }) {
-                                    Icon(Icons.Default.DeleteOutline, contentDescription = "Удалить")
-                                }
                             }
                         }
                     }
@@ -3519,6 +3549,22 @@ private fun SettingsScreen(
                                 if (entry.isPrivate) "PRIVATE" else entry.type?.uppercase() ?: "PUBLIC",
                                 accent = entry.configured
                             )
+                            OverflowActionsMenu(
+                                actions = buildList {
+                                    if (entry.configured) {
+                                        add("Искать в этом индексаторе" to {
+                                            viewModel.searchJackettIndexer(entry.id, jackettQuery)
+                                        })
+                                        add("Проверить" to { viewModel.testJackettIndexer(entry.id) })
+                                    }
+                                    add((if (entry.configured) "Изменить настройки" else "Настроить") to {
+                                        viewModel.loadJackettIndexerConfig(entry.id)
+                                    })
+                                    entry.siteLink?.let { link ->
+                                        add("Открыть сайт" to { openExternal(context, link) })
+                                    }
+                                }
+                            )
                         }
                         Text(
                             if (entry.configured) "Настроен на сервере" else "Не настроен на сервере",
@@ -3545,44 +3591,6 @@ private fun SettingsScreen(
                         if (details.isNotEmpty()) {
                             Text(details.joinToString(" • "), style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            verticalAlignment = Alignment.CenterVertically) {
-                            if (entry.configured) {
-                                Button(
-                                    onClick = { viewModel.searchJackettIndexer(entry.id, jackettQuery) },
-                                    enabled = jackettQuery.isNotBlank() && !searchingSources
-                                ) {
-                                    Icon(Icons.Default.Search, contentDescription = null)
-                                    Spacer(Modifier.width(6.dp))
-                                    Text("Искать")
-                                }
-                                OutlinedButton(
-                                    onClick = { viewModel.testJackettIndexer(entry.id) },
-                                    enabled = testingJackettIndexerId == null
-                                ) {
-                                    if (testingJackettIndexerId == entry.id) {
-                                        CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
-                                    } else {
-                                        Text("Проверить")
-                                    }
-                                }
-                            }
-                            OutlinedButton(
-                                onClick = { viewModel.loadJackettIndexerConfig(entry.id) },
-                                enabled = !loadingJackettConfig
-                            ) {
-                                Icon(Icons.Default.Settings, contentDescription = null)
-                                Spacer(Modifier.width(5.dp))
-                                Text(if (entry.configured) "Изменить" else "Настроить")
-                            }
-                            entry.siteLink?.let { link ->
-                                OutlinedButton(onClick = { openExternal(context, link) }) {
-                                    Icon(Icons.Default.OpenInNew, contentDescription = null)
-                                    Spacer(Modifier.width(5.dp))
-                                    Text("Сайт")
-                                }
-                            }
                         }
                     }
                 }
@@ -3763,6 +3771,16 @@ private fun SettingsScreen(
                                 checked = indexer.enabled,
                                 onCheckedChange = { viewModel.setIndexerEnabled(indexer.id, it) }
                             )
+                            OverflowActionsMenu(
+                                actions = listOf(
+                                    "Проверить подключение" to { viewModel.testIndexer(indexer.id) },
+                                    "Пробный поиск" to {
+                                        viewModel.searchOneIndexer(indexer.id, manualQuery)
+                                    },
+                                    "Изменить" to { editIndexer(indexer) },
+                                    "Удалить" to { viewModel.removeIndexer(indexer.id) }
+                                )
+                            )
                         }
                         Text(indexer.searchUrlTemplate, style = MaterialTheme.typography.bodySmall, maxLines = 2)
                         Text(
@@ -3770,18 +3788,6 @@ private fun SettingsScreen(
                             style = MaterialTheme.typography.bodySmall,
                             color = if (statuses[indexer.id]?.startsWith("Ошибка") == true) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant
                         )
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            OutlinedButton(onClick = { viewModel.testIndexer(indexer.id) }) { Text("Тест") }
-                            OutlinedButton(
-                                onClick = { viewModel.searchOneIndexer(indexer.id, manualQuery) },
-                                enabled = manualQuery.isNotBlank() && !searchingSources
-                            ) { Text("Пробный поиск") }
-                            OutlinedButton(onClick = { editIndexer(indexer) }) { Text("Изменить") }
-                            OutlinedButton(onClick = { viewModel.removeIndexer(indexer.id) }) {
-                                Icon(Icons.Default.DeleteOutline, contentDescription = "Удалить")
-                                Text("Удалить")
-                            }
-                        }
                     }
                 }
             }
@@ -3873,6 +3879,32 @@ private fun SettingsScreen(
     }
 }
 
+
+@Composable
+private fun OverflowActionsMenu(
+    actions: List<Pair<String, () -> Unit>>
+) {
+    var expanded by remember { mutableStateOf(false) }
+    Box {
+        IconButton(onClick = { expanded = true }) {
+            Icon(Icons.Default.MoreVert, contentDescription = "Дополнительные действия")
+        }
+        DropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false }
+        ) {
+            actions.forEach { (label, action) ->
+                DropdownMenuItem(
+                    text = { Text(label) },
+                    onClick = {
+                        expanded = false
+                        action()
+                    }
+                )
+            }
+        }
+    }
+}
 
 @Composable
 private fun JackettConfigFieldEditor(

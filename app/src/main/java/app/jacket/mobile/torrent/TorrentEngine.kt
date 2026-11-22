@@ -136,10 +136,11 @@ object TorrentEngine {
 
         val (downloadLimit, uploadLimit) = rateLimits(context)
         val isLowRamDevice = context.getSystemService(ActivityManager::class.java)?.isLowRamDevice == true
+        val connectionOverride = connectionLimitOverride(context)
         val settings = SettingsPack.defaultSettings()
             .downloadRateLimit(downloadLimit)
             .uploadRateLimit(uploadLimit)
-            .connectionsLimit(TorrentSessionPolicy.connectionsLimit(isLowRamDevice))
+            .connectionsLimit(TorrentSessionPolicy.connectionsLimit(isLowRamDevice, connectionOverride))
         instance.start(org.libtorrent4j.SessionParams(settings))
         instance.startDht()
         manager = instance
@@ -392,6 +393,26 @@ object TorrentEngine {
     fun rateLimits(context: Context): Pair<Int, Int> {
         val prefs = context.applicationContext.getSharedPreferences(RATE_PREFS, Context.MODE_PRIVATE)
         return prefs.getInt(KEY_DOWNLOAD_KBPS, 0) to prefs.getInt(KEY_UPLOAD_KBPS, 0)
+    }
+
+    /** 0 means automatic device-aware limit; manual values are constrained to 20..500. */
+    fun connectionLimitOverride(context: Context): Int {
+        val value = context.applicationContext.getSharedPreferences(RATE_PREFS, Context.MODE_PRIVATE)
+            .getInt(KEY_CONNECTION_LIMIT_OVERRIDE, 0)
+        return value.takeIf { it == 0 || it in 20..500 } ?: 0
+    }
+
+    @Synchronized
+    fun setConnectionLimitOverride(context: Context, requested: Int) {
+        require(requested == 0 || requested in 20..500) {
+            "Лимит соединений должен быть 0 (авто) или от 20 до 500"
+        }
+        context.applicationContext.getSharedPreferences(RATE_PREFS, Context.MODE_PRIVATE).edit()
+            .putInt(KEY_CONNECTION_LIMIT_OVERRIDE, requested).apply()
+        val isLowRamDevice = context.getSystemService(ActivityManager::class.java)?.isLowRamDevice == true
+        manager?.applySettings(
+            SettingsPack().connectionsLimit(TorrentSessionPolicy.connectionsLimit(isLowRamDevice, requested))
+        )
     }
 
     fun isWifiOnly(context: Context): Boolean =
@@ -811,6 +832,7 @@ object TorrentEngine {
     private const val KEY_DOWNLOAD_KBPS = "download_kbps"
     private const val KEY_UPLOAD_KBPS = "upload_kbps"
     private const val KEY_WIFI_ONLY = "wifi_only"
+    private const val KEY_CONNECTION_LIMIT_OVERRIDE = "connection_limit_override"
     private const val MAX_SUBTITLE_TRACKS = 12
 }
 

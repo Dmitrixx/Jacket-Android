@@ -1,5 +1,6 @@
 package app.jacket.mobile.torrent
 
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -65,8 +66,20 @@ class PieceCompletionSignalTest {
     }
 
     @Test
-    fun lowRamDevicesUseLowerConnectionLimit() {
+    fun lowRamDevicesUseLowerAutomaticConnectionLimit() {
         assertTrue(TorrentSessionPolicy.connectionsLimit(true) < TorrentSessionPolicy.connectionsLimit(false))
         assertTrue(TorrentSessionPolicy.connectionsLimit(true) > 0)
+    }
+
+    @Test
+    fun manualConnectionLimitOverridesAutomaticDevicePolicy() {
+        assertEquals(120, TorrentSessionPolicy.connectionsLimit(true, 120))
+        assertEquals(350, TorrentSessionPolicy.connectionsLimit(false, 350))
+    }
+
+    @Test
+    fun invalidManualConnectionLimitFallsBackToDevicePolicy() {
+        assertEquals(80, TorrentSessionPolicy.connectionsLimit(true, 10))
+        assertEquals(200, TorrentSessionPolicy.connectionsLimit(false, 501))
     }
 }

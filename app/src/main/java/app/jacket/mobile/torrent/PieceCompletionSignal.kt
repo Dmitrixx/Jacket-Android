@@ -35,7 +35,8 @@ internal class PieceCompletionSignal {
     }
 }
 
-/** Conservative connection ceilings for memory-constrained Android TV boxes. */
+/** Conservative connection ceilings for phones and memory-constrained Android TV boxes. */
 internal object TorrentSessionPolicy {
-    fun connectionsLimit(isLowRamDevice: Boolean): Int = if (isLowRamDevice) 80 else 200
+    fun connectionsLimit(isLowRamDevice: Boolean, requestedOverride: Int = 0): Int =
+        requestedOverride.takeIf { it in 20..500 } ?: if (isLowRamDevice) 80 else 200
 }
