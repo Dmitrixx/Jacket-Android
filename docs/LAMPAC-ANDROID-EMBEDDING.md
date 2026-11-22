@@ -23,7 +23,7 @@ The embedded server must listen on **127.0.0.1:9118 only**. Remote Lampac remain
 
 ## Runtime diagnostics and credential handling
 
-Lampac provider diagnostics can contain request URLs, account identifiers, cookies or authorization headers. Jacket redacts common token, password, API-key, cookie, bearer and account-identifier fields before writing runtime logs, status text or foreground notifications. Keep this sanitization in the shared logging path; do not add a raw-output UI or diagnostic export. The redactor is a best-effort safety boundary, not a reason to write credentials to upstream logs deliberately.
+Lampac provider diagnostics can contain request URLs, account identifiers, cookies or authorization headers. Jacket redacts common token, password, API-key, cookie, bearer and account-identifier fields before writing runtime logs, status text or foreground notifications. Keep this sanitization in the shared logging path; do not add a raw-output UI or diagnostic export. The redactor is a best-effort safety boundary, not a reason to write credentials to upstream logs deliberately. Runtime status and bounded-log changes use atomic StateFlow updates, preventing concurrent process output and service status changes from dropping each other's snapshot fields.
 
 ## Runtime versions and storage
 
