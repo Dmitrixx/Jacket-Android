@@ -45,6 +45,21 @@ object LampacRuntimeArtifacts {
         "https://builds.dotnet.microsoft.com/dotnet/aspnetcore/Runtime/10.0.15/aspnetcore-runtime-10.0.15-linux-arm64.tar.gz"
 }
 
+private val lampacArtifactAllowedHosts = setOf(
+    "github.com",
+    "release-assets.githubusercontent.com",
+    "objects.githubusercontent.com",
+    "builds.dotnet.microsoft.com"
+)
+
+/** Accept only pinned HTTPS artifact hosts and the standard HTTPS port, including after redirects. */
+internal fun isAllowedLampacArtifactUri(uri: URI): Boolean =
+    uri.scheme.equals("https", true) &&
+        uri.host?.lowercase() in lampacArtifactAllowedHosts &&
+        (uri.port == -1 || uri.port == 443) &&
+        uri.rawUserInfo == null &&
+        uri.rawFragment.isNullOrBlank()
+
 private data class LampacArtifactSpec(
     val fileName: String,
     val url: String,
@@ -55,13 +70,6 @@ private data class LampacArtifactSpec(
 )
 
 private object LampacArtifactDownloader {
-    private val allowedHosts = setOf(
-        "github.com",
-        "release-assets.githubusercontent.com",
-        "objects.githubusercontent.com",
-        "builds.dotnet.microsoft.com"
-    )
-
     suspend fun download(
         spec: LampacArtifactSpec,
         directory: File,
@@ -92,10 +100,9 @@ private object LampacArtifactDownloader {
             while (true) {
                 context.ensureActive()
                 val uri = URI(activeUrl)
-                require(uri.scheme.equals("https", true) &&
-                    uri.host?.lowercase() in allowedHosts &&
-                    uri.rawUserInfo == null && uri.rawFragment.isNullOrBlank()
-                ) { "Загрузка заблокирована: недоверенный HTTPS-адрес" }
+                require(isAllowedLampacArtifactUri(uri)) {
+                    "Загрузка заблокирована: недоверенный HTTPS-адрес"
+                }
 
                 val connection = (URL(activeUrl).openConnection() as HttpURLConnection).apply {
                     requestMethod = "GET"
