@@ -4,6 +4,7 @@
 
 - Show the actual app version/build and persistent-signing status in Settings → About; add direct links to the main CI builds and the in-place update guide.
 - Publish the main-branch update APK only after validating the configured permanent keystore, alias and private-key password by signing and verifying a disposable probe. Missing or invalid signing secrets no longer break CI builds; the unsigned release is built for verification but not uploaded as an update package.
+- Run the Android CI workflow on `fix/**` branch pushes as well as PRs, so focused fixes can be checked before opening a review.
 - Keep the application ID unchanged and increment versionCode to 20. Compatible signed APKs update the installed app in place and preserve app-private settings, torrent queue and embedded Lampac data.
 
 ## 2.8.7
