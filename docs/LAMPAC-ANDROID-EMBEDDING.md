@@ -12,7 +12,7 @@ The embedded server must listen on **127.0.0.1:9118 only**. Remote Lampac remain
 
 - Pin oonid/pr at commit 3ba86577f1f393a5e4ff6a92b3d4de08bb35786f and include its standalone Android :proot-engine module. Only the engine Kotlin sources, JNI PTY and ARM64 native binaries are included; the upstream terminal UI, :session-core and :termlib are not.
 - Keep PRoot executables and its loader in Android's extracted native-library directory, then prepare the app-private PRoot prefix, home and cache.
-- Install an ARM64 Debian OCI rootfs via pr-cli install debian.
+- Install an ARM64 Debian OCI rootfs via pr-cli install debian; accept it only when `/etc/os-release` identifies Debian and `/bin/sh` plus `/usr/bin/apt-get` are executable.
 - Install ASP.NET Core Runtime 10.0.15 and Lampac NextGen 1.90.2 from pinned HTTPS URLs with SHA-512 / SHA-256 verification.
 - Extract and stage the Lampac payload under Debian /opt/lampac, validate required managed files, create an Android-specific init.conf, then atomically switch the installation directory.
 - Generate a conservative first-run config: bind to 127.0.0.1:9118, turn Chromium and openstat off, and skip optional browser/transcoding and unrelated server modules.
