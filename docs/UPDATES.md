@@ -2,6 +2,8 @@
 
 Jacket keeps the same Android package name (`app.jacket.mobile`) and increments `versionCode` for each app update. Android can update an installed copy in place and preserve its settings, torrent queue, private Debian rootfs, .NET runtime and Lampac files. Do not uninstall Jacket and do not clear its storage when applying a normal update.
 
+> Signing status at the 2.8.6 build: the CI log confirmed that persistent keystore secrets were not configured, so that artifact is a temporary-runner debug APK. Do not assume it can update an APK signed by a different runner. Do not uninstall or clear Jacket until a backup plan for the private Lampac runtime has been prepared.
+
 ## One-time persistent signing setup
 
 Android accepts an in-place APK update only when the new APK is signed with the same certificate as the installed APK. A CI debug key generated on a temporary runner is not persistent, so debug builds from separate CI runs may not update each other. Configure a permanent private keystore once; never commit it to this public repository.
