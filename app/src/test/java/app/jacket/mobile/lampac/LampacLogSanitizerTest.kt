@@ -32,11 +32,17 @@ class LampacLogSanitizerTest {
     }
 
     @Test
-    fun redactsEntireCookieHeader() {
-        val result = LampacLogSanitizer.sanitize("Cookie: session=private; refresh=hidden")
+    fun redactsSessionAndCookieValues() {
+        val source = "session_id=private-session&auth_token=private-auth • Cookie: session=private; refresh=hidden"
 
+        val result = LampacLogSanitizer.sanitize(source)
+
+        assertFalse(result.contains("private-session"))
+        assertFalse(result.contains("private-auth"))
         assertFalse(result.contains("session=private"))
         assertFalse(result.contains("refresh=hidden"))
+        assertTrue(result.contains("session_id=[REDACTED]"))
+        assertTrue(result.contains("auth_token=[REDACTED]"))
         assertTrue(result.contains("Cookie: [REDACTED]"))
     }
 
