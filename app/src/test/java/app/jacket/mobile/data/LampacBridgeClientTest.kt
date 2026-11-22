@@ -77,6 +77,97 @@ class LampacBridgeClientTest {
     }
 
     @Test
+    fun buildsJacRedUrlWithMovieOrSeriesCategoryAndYear() {
+        val movieUrl = LampacBridgeClient.buildJacRedSearchUrl(
+            LampacSettings(baseUrl = "http://127.0.0.1:9118", enabled = true),
+            "Бойцовский клуб 1999",
+            movie
+        )
+        assertTrue(movieUrl.startsWith("http://127.0.0.1:9118/api/v2.0/indexers/all/results?"))
+        assertTrue(movieUrl.contains("query="))
+        assertTrue(movieUrl.contains("is_serial=1"))
+        assertTrue(movieUrl.contains("year=1999"))
+
+        val seriesUrl = LampacBridgeClient.buildJacRedSearchUrl(
+            LampacSettings(baseUrl = "http://127.0.0.1:9118", enabled = true),
+            "Игра престолов",
+            series
+        )
+        assertTrue(seriesUrl.contains("is_serial=2"))
+    }
+
+    @Test
+    fun parsesJacRedMagnetsAndSameOriginTorrentResolverLinks() {
+        val rows = JSONArray()
+            .put(
+                JSONObject()
+                    .put("Title", "Бойцовский клуб 1080p")
+                    .put("Tracker", "Rutor")
+                    .put("MagnetUri", "magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567")
+                    .put("Details", "https://rutor.info/torrent/123")
+                    .put("Size", 2_000_000_000L)
+                    .put("Seeders", 42)
+                    .put("Peers", 7)
+                    .put("CategoryDesc", "Фильмы")
+                    .put("PublishDate", "2026-11-22")
+            )
+            .put(
+                JSONObject()
+                    .put("Title", "Бойцовский клуб remux")
+                    .put("Tracker", "Kinozal")
+                    .put("Link", "/kinozal/parsemagnet?id=456")
+            )
+            .put(
+                JSONObject()
+                    .put("Title", "Небезопасный внешний файл")
+                    .put("Tracker", "External")
+                    .put("Link", "https://other.example/torrent/789")
+            )
+            .put(
+                JSONObject()
+                    .put("Title", "Без магнита и ссылки")
+                    .put("Tracker", "Broken")
+            )
+
+        val results = LampacBridgeClient.parseJacRedResults(
+            rows,
+            "http://127.0.0.1:9118"
+        )
+
+        assertEquals(2, results.size)
+        val magnet = results.first()
+        assertEquals("Rutor", magnet.tracker)
+        assertEquals(MediaSourceType.TORRENT, magnet.sourceType)
+        assertTrue(magnet.magnetUri.orEmpty().startsWith("magnet:"))
+        assertEquals(2_000_000_000L, magnet.sizeBytes ?: -1L)
+        assertEquals(42, magnet.seeders ?: -1)
+        assertEquals("https://rutor.info/torrent/123", magnet.pageUrl)
+
+        val resolver = results.last()
+        assertEquals("Kinozal", resolver.tracker)
+        assertNull(resolver.magnetUri)
+        assertEquals("http://127.0.0.1:9118/kinozal/parsemagnet?id=456", resolver.downloadUrl)
+    }
+
+    @Test
+    fun rejectsMalformedMagnetsAndForeignJacRedResolverLinks() {
+        val rows = JSONArray()
+            .put(
+                JSONObject()
+                    .put("Title", "Invalid magnet")
+                    .put("MagnetUri", "magnet:?dn=no-info-hash")
+            )
+            .put(
+                JSONObject()
+                    .put("Title", "Foreign resolver")
+                    .put("Link", "https://other.example/parsemagnet?id=1")
+            )
+        assertTrue(
+            LampacBridgeClient.parseJacRedResults(rows, "https://lampac.example").isEmpty()
+        )
+    }
+
+    @Test
     fun buildsSeriesEventsAndLongPollUrlsWithRequestedEpisodeContext() {
         val settings = LampacSettings(
             baseUrl = "https://lampac.example",
