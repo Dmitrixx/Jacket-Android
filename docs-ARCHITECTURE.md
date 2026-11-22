@@ -136,6 +136,12 @@ Resume data is asynchronous and periodic: abruptly killing the process can lose 
 The JVM suite includes XML fixtures for RSS/Torznab, release-name heuristics, queue codec round-trips, Range parsing / response headers, byte-range-to-piece planning, forward-window and tail-prefetch deadlines, piece-completion signaling, frame-rate normalization, disk-cache LRU eviction, overlapping-range cache hits and route / Host policy checks. JNI torrent streaming, actual file-piece availability, Android foreground-service behavior and TV remote navigation require device-level acceptance tests.
 
 
+## Lampac bridge and local-network transport
+
+- Lampac runs as a separately managed .NET service; the Android app contains only the API client. The bridge requests `/lite/events`, polls `/lifeevents`, and resolves provider JSON routes for TMDB movie/episode cards.
+- Android Network Security Config permits cleartext at the platform layer because a user may configure an arbitrary private LAN IP. Every dynamic cleartext source client must still apply `LocalNetwork.isAllowedUrl()`: loopback/private/link-local addresses and approved local DNS suffixes only. Public destinations require HTTPS. This app-level policy is security-critical; do not add an unvalidated dynamic HTTP client.
+- Lampac provider and playback URLs are restricted to the configured origin. Stored Lampac account fields are encrypted with the existing Android Keystore-backed settings store; HTTP traffic on a trusted LAN is still unencrypted in transit, so remote use requires HTTPS.
+
 ## Consolidated source, stream and navigation safeguards
 
 - Built-in HTML tracker fetches validate the initial HTTPS URL, each manual redirect and every resolved detail/download URL. Cookies are attached only to the original tracker host. This hostname policy does not resolve and pin DNS addresses, so DNS rebinding remains a limitation.

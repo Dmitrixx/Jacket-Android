@@ -36,18 +36,14 @@ object LampacBridgeClient {
         require(!uri.host.isNullOrBlank() && uri.rawUserInfo == null) {
             "Укажите адрес сервера без логина и пароля в URL"
         }
-        val isHttps = uri.scheme.equals("https", true)
-        val isLoopbackHttp = uri.scheme.equals("http", true) &&
-            uri.host.equals("127.0.0.1", true)
-        require(isHttps || isLoopbackHttp) {
-            "Для удалённого Lampac нужен HTTPS. HTTP разрешён только для 127.0.0.1."
-        }
         require(uri.rawQuery.isNullOrBlank() && uri.rawFragment.isNullOrBlank() &&
             (uri.rawPath.isNullOrBlank() || uri.rawPath == "/")
         ) { "Укажите только адрес сервера, без пути, запроса и фрагмента" }
         val normalized = "${uri.scheme.lowercase()}://${uri.rawAuthority}".trimEnd('/')
+        // HTTPS is required for public servers. Cleartext is restricted by the shared
+        // policy to private/loopback/link-local addresses and explicitly local DNS names.
         require(LocalNetwork.isAllowedUrl(normalized)) {
-            "HTTP разрешён только для локального сервера. Для удалённого сервера используйте HTTPS."
+            "Для Lampac используйте HTTPS или HTTP-адрес локальной сети (например, http://192.168.1.50:9118)."
         }
         return normalized
     }

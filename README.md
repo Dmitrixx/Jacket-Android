@@ -1,4 +1,4 @@
-# Jacket — Android media center 2.7.0
+# Jacket — Android media center 2.8.0
 
 Jacket is a single Android application for phones, tablets and Android TV / Google TV. It combines a poster-based media catalog, a user-configurable indexer cabinet, an integrated BitTorrent engine and a loopback HTTP media server.
 
@@ -34,6 +34,21 @@ Tracker pages can change markup or require an account, CAPTCHA, Cloudflare or an
 ## Video source catalogue
 
 The source picker keeps the requested priority order: HDRezka, Filmix, ColdFilm, Baskino, Kinogo, VideoCDN, Collaps, Kinobase, CDNMovies and Lordfilm. Direct search/player adapters are implemented for Filmix and HDRezka. The other eight entries are catalogue descriptors only and remain visibly unconnected until a compatible, verified API or feed adapter is available. No live connector is claimed for Kinogo or Lordfilm.
+
+## Lampac bridge
+
+Jacket can connect to a **separately installed Lampac NextGen server**. Lampac is a .NET backend and is not embedded in the Android APK or started by Jacket. Its default HTTP port is `9118`; the official project documents Docker Compose and native Linux/Windows deployment.
+
+1. Install and configure Lampac on a server that is reachable from the Android device (for example, a home mini-PC, NAS or Linux server).
+2. In Jacket, open **Settings → Lampac bridge**, enter the server address and tap the connection-test button.
+3. For a home network, use a private address such as `http://192.168.1.50:9118` or a local hostname such as `http://lampac.lan:9118`. For remote access, use an HTTPS reverse proxy; public HTTP endpoints are rejected.
+4. Enable **Use in combined search**. Optional Lampac account email, UID and token are stored encrypted locally by Jacket. Do not place credentials in the server URL.
+
+The bridge uses Lampac's `/lite/events` and `/lifeevents` flow, then requests JSON from the listed provider routes. It currently resolves TMDB movie cards and the selected episode of TMDB series; matching stream results appear in Jacket's unified source picker and play through the built-in Media3 player.
+
+**Local-network security:** HTTP is not encrypted. Only use it on a trusted LAN. Jacket validates cleartext destinations against its local-network URL policy and pins provider/stream requests to the configured Lampac origin. Use HTTPS for access over the internet. Lampac account parameters are sent to the configured Lampac server as required by its API, so do not expose an HTTP instance to an untrusted network.
+
+Lampac's providers remain subject to the server's configuration, account entitlements and the provider's normal access checks. Jacket does not bypass CAPTCHA, DRM, paywalls or regional restrictions. A successful connection test verifies the server endpoint, not that every provider has working media for every title.
 
 ## Indexer cabinet and optional Jackett connector
 

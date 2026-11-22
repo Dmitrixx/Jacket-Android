@@ -2943,9 +2943,14 @@ private fun SettingsScreen(
                                 onValueChange = { lampacBaseUrl = it },
                                 modifier = Modifier.fillMaxWidth(),
                                 label = { Text("Адрес Lampac") },
-                                placeholder = { Text("https://lampac.example или http://127.0.0.1:9118") },
+                                placeholder = { Text("https://lampac.example или http://192.168.1.50:9118") },
                                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
                                 singleLine = true
+                            )
+                            Text(
+                                "HTTP доступен только в локальной сети. При HTTP данные аккаунта не шифруются — используйте доверенную домашнюю сеть; для доступа извне настройте HTTPS.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
