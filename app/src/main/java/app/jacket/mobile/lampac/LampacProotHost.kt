@@ -4,7 +4,6 @@ import android.content.Context
 import android.net.ConnectivityManager
 import android.os.Build
 import android.system.Os
-import android.system.OsConstants
 import id.or.oo.pr.engine.ProotHost
 import id.or.oo.pr.engine.ProotLauncher
 import java.io.File
@@ -39,13 +38,18 @@ class JacketProotHost(context: Context) : ProotHost {
 
     val nativeLibraryDir: File
         get() = File(appContext.applicationInfo.nativeLibraryDir)
+
+    /** OCI rootfs path created by `pr-cli install debian`; do not create it before install. */
+    val debianRootfsDir: File
+        get() = File(prefixDir, "var/lib/pr/containers/debian/rootfs")
 }
 
 data class ProotBootstrapResult(
     val prefixDir: File,
     val homeDir: File,
     val cacheDir: File,
-    val nativeLibraryDir: File
+    val nativeLibraryDir: File,
+    val debianRootfsDir: File
 )
 
 /**
@@ -101,7 +105,8 @@ object LampacProotBootstrap {
             prefixDir = host.prefixDir,
             homeDir = host.homeDir,
             cacheDir = host.cacheDir,
-            nativeLibraryDir = nativeDir
+            nativeLibraryDir = nativeDir,
+            debianRootfsDir = host.debianRootfsDir
         )
     }
 
