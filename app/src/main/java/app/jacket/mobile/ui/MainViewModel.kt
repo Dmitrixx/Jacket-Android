@@ -600,7 +600,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                             val jacRed = runCatching {
                                 LampacBridgeClient.searchJacRedTorrents(
                                     settings = lampacConfig,
-                                    query = catalogueQuery,
+                                    query = query,
                                     item = item
                                 )
                             }
