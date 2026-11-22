@@ -26,8 +26,8 @@ android {
         minSdk = 28
         // Embedded PRoot's tested Android integration currently targets API 35; compile against API 36.
         targetSdk = 35
-        versionCode = 20
-        versionName = "2.8.8"
+        versionCode = 21
+        versionName = "2.8.9"
         buildConfigField("boolean", "PERSISTENT_SIGNING_CONFIGURED", hasJacketReleaseSigning.toString())
         vectorDrawables { useSupportLibrary = true }
     }

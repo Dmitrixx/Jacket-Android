@@ -236,6 +236,14 @@ private object LampacZipInstaller {
         val stage = File(optDir, ".lampac-stage")
         val target = File(optDir, "lampac")
         val backup = File(optDir, ".lampac-backup")
+        // A Lampac runtime refresh must not silently discard the user's provider
+        // credentials, priorities, JacRed adapter configuration or custom sections.
+        val previousInitConfig = File(target, "init.conf").takeIf { it.isFile }?.let { file ->
+            require(file.length() in 1..LampacEmbeddedConfig.MAX_INIT_CONFIG_BYTES.toLong()) {
+                "Существующий init.conf Lampac пуст или превышает лимит 2 МиБ; обновление отменено для защиты настроек."
+            }
+            file.readText(Charsets.UTF_8)
+        }
         stage.deleteRecursively()
         backup.deleteRecursively()
 
@@ -331,7 +339,11 @@ private object LampacZipInstaller {
                 require(File(stage, "runtimes/references").isDirectory) {
                     "После распаковки отсутствуют зависимости runtimes/references"
                 }
-                LampacEmbeddedConfig.writeInitConfig(stage)
+                if (previousInitConfig == null) {
+                    LampacEmbeddedConfig.writeInitConfig(stage)
+                } else {
+                    LampacEmbeddedConfig.importInitConfig(stage, previousInitConfig)
+                }
                 File(stage, MARKER_FILE).writeText(LampacRuntimeArtifacts.LAMPAC_VERSION)
                 onProgress(totalBytes, totalBytes)
             }
@@ -444,6 +456,23 @@ class LampacRuntimeInstaller(context: android.content.Context) {
     }
 
     fun availableBytes(): Long = StatFs(appContext.filesDir.absolutePath).availableBytes
+
+    /** Read the private Lampac configuration for an explicit user export. */
+    fun readInitConfig(): String {
+        check(isInstalled()) { "Сначала установите встроенный Lampac" }
+        val file = File(host.debianRootfsDir, "opt/lampac/init.conf")
+        require(file.length() in 1..LampacEmbeddedConfig.MAX_INIT_CONFIG_BYTES.toLong()) {
+            "init.conf пуст или превышает лимит 2 МиБ"
+        }
+        return file.readText(Charsets.UTF_8)
+    }
+
+    /** Import the user\'s Lampac settings without changing the private listener. */
+    fun importInitConfig(content: String): File {
+        check(isInstalled()) { "Сначала установите встроенный Lampac" }
+        val serverDirectory = File(host.debianRootfsDir, "opt/lampac")
+        return LampacEmbeddedConfig.importInitConfig(serverDirectory, content)
+    }
 
     suspend fun install(
         onProgress: (LampacInstallProgress) -> Unit = {}

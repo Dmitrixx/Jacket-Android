@@ -92,7 +92,11 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.saveable.rememberSaveableStateHolder
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -2253,6 +2257,63 @@ private fun SettingsScreen(
     var lampacUid by remember(lampacSettings.uid) { mutableStateOf(lampacSettings.uid) }
     var lampacToken by remember(lampacSettings.token) { mutableStateOf(lampacSettings.token) }
     var lampacEnabled by remember(lampacSettings.enabled) { mutableStateOf(lampacSettings.enabled) }
+    var lampacConfigStatus by rememberSaveable { mutableStateOf("") }
+    val lampacConfigInstaller = remember(context) {
+        app.jacket.mobile.lampac.LampacRuntimeInstaller(context)
+    }
+    val settingsScope = rememberCoroutineScope()
+    val importLampacConfig = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) {
+            settingsScope.launch {
+                runCatching {
+                    val content = withContext(Dispatchers.IO) {
+                        context.contentResolver.openInputStream(uri)?.use { input ->
+                            val output = java.io.ByteArrayOutputStream()
+                            val buffer = ByteArray(8_192)
+                            var total = 0
+                            while (true) {
+                                val count = input.read(buffer)
+                                if (count < 0) break
+                                total += count
+                                require(total <= app.jacket.mobile.lampac.LampacEmbeddedConfig.MAX_INIT_CONFIG_BYTES) {
+                                    "Файл init.conf больше 2 МиБ"
+                                }
+                                output.write(buffer, 0, count)
+                            }
+                            output.toByteArray().toString(Charsets.UTF_8)
+                        } ?: error("Не удалось открыть init.conf")
+                    }
+                    withContext(Dispatchers.IO) { lampacConfigInstaller.importInitConfig(content) }
+                }.onSuccess {
+                    lampacConfigStatus = "Настройки Lampac импортированы. Перезапустите сервер, чтобы применить список модулей и параметры провайдеров."
+                    Toast.makeText(context, "Настройки Lampac импортированы", Toast.LENGTH_LONG).show()
+                }.onFailure { error ->
+                    lampacConfigStatus = error.message ?: "Не удалось импортировать init.conf"
+                    Toast.makeText(context, lampacConfigStatus, Toast.LENGTH_LONG).show()
+                }
+            }
+        }
+    }
+    val exportLampacConfig = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri ->
+        if (uri != null) {
+            settingsScope.launch {
+                runCatching {
+                    val content = withContext(Dispatchers.IO) { lampacConfigInstaller.readInitConfig() }
+                    withContext(Dispatchers.IO) {
+                        context.contentResolver.openOutputStream(uri)?.use { output ->
+                            output.write(content.toByteArray(Charsets.UTF_8))
+                        } ?: error("Не удалось создать файл init.conf")
+                    }
+                }.onSuccess {
+                    lampacConfigStatus = "Конфигурация сохранена. Файл содержит настройки и возможные токены провайдеров."
+                    Toast.makeText(context, "init.conf экспортирован", Toast.LENGTH_LONG).show()
+                }.onFailure { error ->
+                    lampacConfigStatus = error.message ?: "Не удалось экспортировать init.conf"
+                    Toast.makeText(context, lampacConfigStatus, Toast.LENGTH_LONG).show()
+                }
+            }
+        }
+    }
     var localLampacAutoConnectPending by rememberSaveable { mutableStateOf(false) }
     var localLampacStartupObserved by rememberSaveable { mutableStateOf(false) }
 
@@ -3120,6 +3181,40 @@ private fun SettingsScreen(
                                         Icon(Icons.Default.OpenInNew, contentDescription = null)
                                         Spacer(Modifier.width(8.dp))
                                         Text("Проверить соединение и подключить")
+                                    }
+                                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        OutlinedButton(
+                                            onClick = { importLampacConfig.launch(arrayOf("application/json", "text/plain")) },
+                                            enabled = localLampacInstalled && !lampacRuntimeBusy &&
+                                                lampacRuntime.phase != app.jacket.mobile.lampac.LampacRuntimePhase.RUNNING,
+                                            modifier = Modifier.weight(1f)
+                                        ) {
+                                            Icon(Icons.Default.Download, contentDescription = null)
+                                            Spacer(Modifier.width(6.dp))
+                                            Text("Импорт init.conf")
+                                        }
+                                        OutlinedButton(
+                                            onClick = { exportLampacConfig.launch("init.conf") },
+                                            enabled = localLampacInstalled && !lampacRuntimeBusy,
+                                            modifier = Modifier.weight(1f)
+                                        ) {
+                                            Icon(Icons.Default.OpenInNew, contentDescription = null)
+                                            Spacer(Modifier.width(6.dp))
+                                            Text("Экспорт init.conf")
+                                        }
+                                    }
+                                    Text(
+                                        "Остановите Lampac перед импортом. Импорт переносит настройки источников, приоритеты, параметры JacRed и пользовательские секции; включённые модули загружаются автоматически. Встроенный сервер остаётся на 127.0.0.1:9118, неподдерживаемые Android-модули отключены. Экспорт может содержать токены и пароли — храните файл конфиденциально.",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                    if (lampacConfigStatus.isNotBlank()) {
+                                        Text(
+                                            lampacConfigStatus,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = if (lampacConfigStatus.startsWith("Не ")) MaterialTheme.colorScheme.error
+                                            else MaterialTheme.colorScheme.secondary
+                                        )
                                     }
                                     if (lampacRuntime.logs.isNotEmpty()) {
                                         Surface(
