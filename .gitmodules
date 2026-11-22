@@ -1,0 +1,3 @@
+[submodule "third_party/oonid-pr"]
+	path = third_party/oonid-pr
+	url = https://github.com/oonid/pr.git
