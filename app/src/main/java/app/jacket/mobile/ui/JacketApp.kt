@@ -3271,6 +3271,38 @@ private fun SettingsScreen(
                 if (webSearchProviders.isEmpty()) {
                     item { MessageCard("Сайтов пока нет. Добавьте HTTPS-шаблон поиска выше.", false) }
                 }
+                item {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+                    ) {
+                        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text("Другие видеопровайдеры", style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold)
+                            Text(
+                                "Filmix и HDRezka настраиваются в своих разделах выше. Для Lampac доступны адрес собственного сервера и данные аккаунта; дополнительные RSS / Atom и Torznab-источники добавляются в каталоге торрент-источников.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            OutlinedButton(
+                                onClick = { selectedSettingsSection = "lampac" },
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Icon(Icons.Default.Tv, contentDescription = null)
+                                Spacer(Modifier.width(8.dp))
+                                Text("Настроить Lampac")
+                            }
+                            OutlinedButton(
+                                onClick = { selectedSettingsSection = "indexers" },
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Icon(Icons.Default.Download, contentDescription = null)
+                                Spacer(Modifier.width(8.dp))
+                                Text("Настроить RSS / Torznab / Jackett")
+                            }
+                        }
+                    }
+                }
             }
 
 
