@@ -119,7 +119,7 @@ object LampacBridgeClient {
      * from VOD /lite provider routes: it returns torrent magnets or same-origin
      * parseMagnet URLs that Jacket's existing torrent engine can consume.
      */
-    fun searchJacRedTorrents(
+    internal fun searchJacRedTorrents(
         settings: LampacSettings,
         query: String,
         item: CatalogItem
