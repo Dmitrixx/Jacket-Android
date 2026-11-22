@@ -38,6 +38,7 @@ class LampacEmbeddedConfigTest {
         assertTrue("TelegramAuth" in modules)
         assertTrue("TelegramAuthBot" in modules)
         assertFalse("JacRed" in modules)
+        assertEquals(".*", config.getJSONObject("BaseModule").getJSONArray("LoadModules").getString(0))
         val jacRed = config.getJSONObject("JacRed")
         assertEquals("jackett", jacRed.getString("typesearch"))
         assertFalse(jacRed.getBoolean("disableJackett"))
@@ -112,6 +113,80 @@ class LampacEmbeddedConfigTest {
             config.getJSONObject("JacRed").getJSONObject("Jackett")
                 .getJSONObject("Megapeer").getBoolean("enable")
         )
+    }
+
+    @Test
+    fun androidMigrationLoadsEnabledProvidersButKeepsUnsupportedModulesSkipped() {
+        val config = JSONObject(
+            """{"BaseModule":{"SkipModules":["JacRed"]},"Filmix":{"token":"private-token"},"Rezka":{"premium":true}}"""
+        )
+
+        assertTrue(LampacEmbeddedConfig.ensureAndroidModules(config))
+        val base = config.getJSONObject("BaseModule")
+        assertEquals(".*", base.getJSONArray("LoadModules").getString(0))
+        val skipped = base.getJSONArray("SkipModules")
+        val modules = (0 until skipped.length()).map { skipped.getString(it) }.toSet()
+        listOf("DLNA", "GStreamer", "Sync", "TimeCode", "TorrServer", "Tracks", "Transcoding")
+            .forEach { assertTrue("$it must remain excluded on Android", it in modules) }
+        assertFalse("JacRed must be active for torrent sources", "JacRed" in modules)
+        assertEquals("private-token", config.getJSONObject("Filmix").getString("token"))
+        assertTrue(config.getJSONObject("Rezka").getBoolean("premium"))
+        val listen = config.getJSONObject("listen")
+        assertEquals("127.0.0.1", listen.getString("ip"))
+        assertEquals(9118, listen.getInt("port"))
+    }
+
+    @Test
+    fun importInitConfigKeepsProviderSettingsAndForcesLocalListener() {
+        val directory = java.nio.file.Files.createTempDirectory("jacket-lampac-config").toFile()
+        try {
+            val imported = """
+                {
+                  "listen":{"ip":"0.0.0.0","port":80,"scheme":"http"},
+                  "BaseModule":{"SkipModules":["JacRed","GStreamer"]},
+                  "Filmix":{"token":"filmix-private","priority":7},
+                  "Rezka":{"premium":true,"token":"rezka-private"},
+                  "JacRed":{"typesearch":"webapi","webApiHost":"https://jacred.example"},
+                  "custom":{"keep":"yes"}
+                }
+            """.trimIndent()
+
+            val target = LampacEmbeddedConfig.importInitConfig(directory, imported)
+            val saved = JSONObject(target.readText(Charsets.UTF_8))
+            val listen = saved.getJSONObject("listen")
+            assertEquals("127.0.0.1", listen.getString("ip"))
+            assertEquals("127.0.0.1", listen.getString("localhost"))
+            assertEquals(9118, listen.getInt("port"))
+            assertEquals("http", listen.getString("scheme"))
+            assertEquals("filmix-private", saved.getJSONObject("Filmix").getString("token"))
+            assertEquals(7, saved.getJSONObject("Filmix").getInt("priority"))
+            assertTrue(saved.getJSONObject("Rezka").getBoolean("premium"))
+            assertEquals("rezka-private", saved.getJSONObject("Rezka").getString("token"))
+            assertEquals("webapi", saved.getJSONObject("JacRed").getString("typesearch"))
+            assertEquals("https://jacred.example", saved.getJSONObject("JacRed").getString("webApiHost"))
+            assertEquals("yes", saved.getJSONObject("custom").getString("keep"))
+            val skipped = saved.getJSONObject("BaseModule").getJSONArray("SkipModules")
+            assertFalse((0 until skipped.length()).any { skipped.optString(it) == "JacRed" })
+            assertEquals(".*", saved.getJSONObject("BaseModule").getJSONArray("LoadModules").getString(0))
+        } finally {
+            directory.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun invalidInitConfigDoesNotReplaceExistingConfiguration() {
+        val directory = java.nio.file.Files.createTempDirectory("jacket-lampac-invalid").toFile()
+        try {
+            val target = LampacEmbeddedConfig.importInitConfig(directory, """{"custom":{"value":"keep"}}""")
+            val before = target.readText(Charsets.UTF_8)
+            val error = runCatching {
+                LampacEmbeddedConfig.importInitConfig(directory, """{"listen":""")
+            }.exceptionOrNull()
+            assertTrue(error is java.io.IOException)
+            assertEquals(before, target.readText(Charsets.UTF_8))
+        } finally {
+            directory.deleteRecursively()
+        }
     }
 
     @Test
