@@ -3,7 +3,9 @@ import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { cp, mkdir, readFile, rm, writeFile, copyFile } from "node:fs/promises";
 
-const require = createRequire(import.meta.url);
+const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const sourceRoot = path.join(repoRoot, "third_party", "lampa-source");
+const require = createRequire(path.join(sourceRoot, "package.json"));
 const { rollup } = require("rollup");
 const { babel } = require("@rollup/plugin-babel");
 const commonjs = require("@rollup/plugin-commonjs");
@@ -13,8 +15,6 @@ const sass = require("sass");
 const autoprefixer = require("autoprefixer");
 const postcss = require("postcss");
 
-const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const sourceRoot = path.join(repoRoot, "third_party", "lampa-source");
 const outputRoot = path.join(repoRoot, "app", "src", "main", "assets", "lampa");
 const publicRoot = path.join(sourceRoot, "public");
 
