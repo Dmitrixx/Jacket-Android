@@ -11,7 +11,7 @@ android {
     defaultConfig {
         applicationId = "app.jacket.mobile"
         minSdk = 28
-        targetSdk = 36
+        targetSdk = 35
         versionCode = 12
         versionName = "2.8.0"
         vectorDrawables { useSupportLibrary = true }
