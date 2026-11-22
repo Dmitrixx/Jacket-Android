@@ -2,7 +2,7 @@
 
 Jacket keeps the same Android package name (`app.jacket.mobile`) and increments `versionCode` for each app update. Android can update an installed copy in place and preserve its settings, torrent queue, private Debian rootfs, .NET runtime and Lampac files. Do not uninstall Jacket and do not clear its storage when applying a normal update.
 
-> Signing status at the 2.8.6 build: the CI log confirmed that persistent keystore secrets were not configured, so that artifact is a temporary-runner debug APK. Do not assume it can update an APK signed by a different runner. Do not uninstall or clear Jacket until a backup plan for the private Lampac runtime has been prepared.
+> Main-branch CI now publishes the standard `Jacket-main-apk` artifact only when the persistent signing key is configured. If that artifact is missing, read the workflow summary and complete the one-time signing setup below. Temporary-runner debug APKs are not published as update packages.
 
 ## One-time persistent signing setup
 
@@ -45,6 +45,6 @@ GitHub Actions restores the key into the temporary runner directory and signs th
 3. Open the APK on the Android device and accept **Update** / **Install**. Do not uninstall the existing Jacket first.
 4. Keep `applicationId` unchanged and keep using the same keystore for every later build.
 
-If the currently installed app was signed with a temporary CI debug key, switching to the permanent release key may require one final uninstall/reinstall. After that, subsequent builds signed by the configured key install as updates and preserve app-private data.
+If the currently installed app was signed with a temporary CI debug key, switching to the permanent release key may require one final uninstall/reinstall because Android rejects APKs signed by a different certificate. This is not required for every update: after the installed copy and CI use the same permanent key, later builds install over the existing app and preserve app-private data.\n\n**Do not uninstall Jacket merely to test an update.** First try the signed APK. If Android reports a signature/package conflict, cancel the installation. In particular, do not remove an installation containing the embedded Lampac rootfs until its data has been safely backed up; a normal APK update preserves that private data, but uninstalling the app deletes it.
 
 The APK is a personal development build. Do not share the keystore, passwords, or signed APK with others.
