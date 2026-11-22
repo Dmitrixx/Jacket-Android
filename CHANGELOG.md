@@ -2,6 +2,9 @@
 
 ## 2.8.0
 
+- Add an optional on-device Lampac NextGen runtime for ARM64: private Debian + .NET 10 rootfs, checksum-pinned artifacts, bounded extraction, secure log redaction, start/stop controls and local-only binding at 127.0.0.1:9118.
+- Add PRoot JNI packaging, NDK/CMake CI setup and tests for artifact URL policy, runtime config, sanitized output and cancellation-safe state. Non-ARM64 devices keep the remote HTTPS Lampac connector.
+
 - Expand Lampac federation to dynamically discovered routes (up to 48) with four concurrent workers; retain per-provider errors and successful partial results while displaying the real provider name.
 - Route the eight optional video-source catalogue entries through Lampac modules when installed and enabled, without claiming every module exists on every server.
 

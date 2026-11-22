@@ -69,6 +69,10 @@ For a broader, server-maintained catalogue, connect your own Jackett endpoint: J
 
 Filmix and HDRezka use direct adapters. The eight additional video catalogue entries use Lampac's live provider catalogue when a matching module is installed and enabled on the configured server. The current bridge resolves TMDB movie and selected-series-episode cards, so TMDB metadata configuration is required for this path. Additional direct feeds can be configured as RSS / Atom or Torznab / Newznab indexers; website-only providers can be added as HTTPS search shortcuts. The app does not ship tracker credentials. CAPTCHA, anti-bot challenges, proprietary sign-in flows and interactive 2FA are not automated. A manually entered cookie may work where the source permits it.
 
+### Optional embedded Lampac runtime
+
+On ARM64 Android devices, Settings → Lampac can install Debian, .NET 10 and a pinned Lampac NextGen release into Jacket's private storage and start it on demand. The runtime requires around 1.5 GB of free storage and downloads a Lampac archive of about 480 MB plus the .NET runtime. It does not require root or Termux. The server binds only to 127.0.0.1:9118; it is not exposed to the LAN, does not auto-start after reboot, and the Android profile disables browser automation and heavy transcoding modules. The embedded server runs as a foreground service only after the user presses Install/Start. Non-ARM64 devices can still use a remote Lampac endpoint over HTTPS. See [the embedded runtime notes](docs/LAMPAC-ANDROID-EMBEDDING.md).
+
 ## User-configured website search
 
 Add up to 50 website search shortcuts with a name and an HTTPS URL template containing `{query}`. When a title is opened, Jacket shows an LAMPA-style source sheet; choosing a configured website opens its search URL in the external browser with the title and year encoded safely.

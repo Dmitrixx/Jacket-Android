@@ -11,7 +11,8 @@ android {
     defaultConfig {
         applicationId = "app.jacket.mobile"
         minSdk = 28
-        targetSdk = 36
+        // Embedded PRoot's tested Android integration currently targets API 35; compile against API 36.
+        targetSdk = 35
         versionCode = 12
         versionName = "2.8.0"
         vectorDrawables { useSupportLibrary = true }
@@ -48,6 +49,10 @@ android {
     testOptions { unitTests.isIncludeAndroidResources = true }
 
     packaging {
+        jniLibs {
+            // Extract PRoot helper binaries to nativeLibraryDir so Android's W^X policy permits execution.
+            useLegacyPackaging = true
+        }
         resources {
             // Keep META-INF/media3-ffmpeg-decoder/**: it carries the FFmpeg LGPL
             // text, NOTICE, build provenance and source-rebuild information.
@@ -57,6 +62,9 @@ android {
 }
 
 dependencies {
+    // Optional private ARM64 Lampac runtime; other ABIs continue to use remote Lampac.
+    implementation(project(":proot-engine"))
+
     // Compose 1.11.x line remains compatible with compileSdk 36.
     // Compose 1.12.x requires API 37, which is not yet present in the stable SDK repo.
     val composeBom = platform("androidx.compose:compose-bom:2026.06.00")
