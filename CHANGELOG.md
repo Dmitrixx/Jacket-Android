@@ -2,6 +2,8 @@
 
 ## 2.8.0
 
+- Validate Debian rootfs identity and executable `/bin/sh` + `/usr/bin/apt-get` before accepting a bootstrap; add wrong-distro and permission regression tests.
+
 - Apply atomic StateFlow mutations to embedded Lampac status and bounded logs so concurrent process output and service-status updates cannot overwrite one another; add a concurrent regression test.
 - Close a PRoot session if service cancellation arrives while its process is being created, preventing an orphan Lampac process during a rapid stop/start.
 - Reassemble complete Lampac PTY output lines before credential sanitization so split reads cannot bypass token/header redaction; cap oversized lines.
