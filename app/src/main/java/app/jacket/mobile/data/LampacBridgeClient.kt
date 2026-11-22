@@ -201,9 +201,11 @@ object LampacBridgeClient {
             magnet.any { it == '\r' || it == '\n' || it == '\u0000' } ||
             !magnet.startsWith("magnet:", ignoreCase = true)
         ) return null
-        val uri = runCatching { URI(magnet) }.getOrNull() ?: return null
-        if (!uri.scheme.equals("magnet", ignoreCase = true)) return null
-        val hasInfoHash = uri.rawQuery.orEmpty().split('&').any { part ->
+        val scheme = magnet.substringBefore(':')
+        if (!scheme.equals("magnet", ignoreCase = true)) return null
+        // java.net.URI treats magnet:?xt=... as an opaque URI and exposes no rawQuery.
+        val magnetQuery = magnet.substringAfter('?', "").substringBefore('#')
+        val hasInfoHash = magnetQuery.split('&').any { part ->
             val key = decode(part.substringBefore('=')).equals("xt", ignoreCase = true)
             val valuePart = decode(part.substringAfter('=', ""))
             key && (valuePart.startsWith("urn:btih:", ignoreCase = true) ||
