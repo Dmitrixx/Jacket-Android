@@ -4,6 +4,7 @@
 
 - Apply atomic StateFlow mutations to embedded Lampac status and bounded logs so concurrent process output and service-status updates cannot overwrite one another; add a concurrent regression test.
 - Restrict embedded runtime artifact downloads and every redirect to pinned HTTPS hosts on port 443; reject user-info, fragments, and nonstandard ports with URL-policy regression tests.
+- Validate the extracted .NET runtime before replacing an existing copy, and restore the previous runtime after a failed activation or an interrupted swap.
 
 - Bound actual bytes written while extracting each Lampac ZIP entry; abort on entry expansion mismatch or truncated payload, and check coroutine cancellation between chunks instead of trusting central-directory sizes alone.
 

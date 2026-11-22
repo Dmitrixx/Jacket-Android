@@ -133,4 +133,41 @@ class LampacRuntimeInstallerTest {
         assertTrue(checks == 1)
     }
 
+
+    @Test
+    fun dotnetInstallValidatesStagingBeforeReplacingCurrentRuntime() {
+        val command = buildDotnetInstallCommand("/data/user/0/app.jacket.mobile/files/lampac/dotnet runtime.tar.gz")
+
+        val stagedValidation = command.indexOf("/opt/dotnet.stage/dotnet --info")
+        val previousMove = command.indexOf("mv /opt/dotnet /opt/dotnet.previous")
+        val activation = command.indexOf("mv /opt/dotnet.stage /opt/dotnet")
+        val finalValidation = command.indexOf("/opt/dotnet/dotnet --info")
+
+        assertTrue(stagedValidation >= 0)
+        assertTrue(previousMove > stagedValidation)
+        assertTrue(activation > previousMove)
+        assertTrue(finalValidation > activation)
+        assertTrue(command.contains("mv /opt/dotnet.previous /opt/dotnet"))
+        assertTrue(command.contains("tar -xzf '/data/user/0/app.jacket.mobile/files/lampac/dotnet runtime.tar.gz'"))
+    }
+
+    @Test
+    fun dotnetInstallCommandRejectsEmptyOrNullBytePaths() {
+        var emptyRejected = false
+        try {
+            buildDotnetInstallCommand(" ")
+        } catch (_: IllegalArgumentException) {
+            emptyRejected = true
+        }
+        assertTrue(emptyRejected)
+
+        var nullByteRejected = false
+        try {
+            buildDotnetInstallCommand("runtime\\u0000.tar.gz")
+        } catch (_: IllegalArgumentException) {
+            nullByteRejected = true
+        }
+        assertTrue(nullByteRejected)
+    }
+
 }
