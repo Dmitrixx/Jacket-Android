@@ -347,6 +347,13 @@ private object LampacZipInstaller {
         String.format("%.1f ГБ", value / (1024.0 * 1024.0 * 1024.0))
 }
 
+/** True only when the PRoot Debian root contains the required base system tools. */
+internal fun isDebianRootfsReady(root: File): Boolean =
+    root.isDirectory &&
+        File(root, "etc/os-release").isFile &&
+        File(root, "bin/sh").exists() &&
+        File(root, "usr/bin/apt-get").isFile
+
 /**
  * Installs a private ARM64 Debian rootfs, ASP.NET Core 10 and a checksum-pinned
  * Lampac release. It intentionally does not call Lampac's systemd installer.
@@ -360,8 +367,10 @@ class LampacRuntimeInstaller(context: android.content.Context) {
 
     fun isInstalled(): Boolean {
         val root = host.debianRootfsDir
-        return File(root, "opt/dotnet/dotnet").isFile &&
+        return isDebianRootfsReady(root) &&
+            File(root, "opt/dotnet/dotnet").isFile &&
             File(root, "opt/lampac/Core.dll").isFile &&
+            File(root, "opt/lampac/Shared.dll").isFile &&
             File(root, "opt/lampac/init.conf").isFile
     }
 
@@ -393,13 +402,24 @@ class LampacRuntimeInstaller(context: android.content.Context) {
 
         send("prepare", "Подготавливаем PRoot…", 0, 0)
         val prepared = LampacProotBootstrap.prepare(host)
-        if (!prepared.debianRootfsDir.isDirectory) {
+        if (!isDebianRootfsReady(prepared.debianRootfsDir)) {
+            val containerDir = prepared.debianRootfsDir.parentFile
+            if (containerDir?.exists() == true) {
+                send("debian-repair", "Обнаружена незавершённая установка Debian. Удаляем повреждённый контейнер…", 0, 0)
+                val removeCode = commandRunner.execute(listOf("remove", "debian")) { line ->
+                    send("debian-repair", line.take(220), 0, 0)
+                }
+                check(removeCode == 0 || !containerDir.exists()) {
+                    "Не удалось безопасно очистить незавершённый контейнер Debian (код $removeCode). Повторите установку после освобождения памяти."
+                }
+            }
+
             send("debian", "Загружаем и устанавливаем Debian ARM64…", 0, 0)
             val result = commandRunner.installDebian { line ->
                 send("debian", line.take(220), 0, 0)
             }
-            check(result == 0 && prepared.debianRootfsDir.isDirectory) {
-                "Не удалось установить Debian в PRoot (код $result)"
+            check(result == 0 && isDebianRootfsReady(prepared.debianRootfsDir)) {
+                "Не удалось установить полноценный Debian ARM64 в PRoot (код $result)"
             }
         }
 
