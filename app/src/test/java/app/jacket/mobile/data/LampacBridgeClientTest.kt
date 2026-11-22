@@ -97,7 +97,7 @@ class LampacBridgeClientTest {
     }
 
     @Test
-    fun parsesJacRedMagnetsAndSameOriginTorrentResolverLinks() {
+    fun parsesJacRedMagnetsAndSameOriginDirectTorrentUrls() {
         val rows = JSONArray()
             .put(
                 JSONObject()
@@ -115,7 +115,13 @@ class LampacBridgeClientTest {
                 JSONObject()
                     .put("Title", "Бойцовский клуб remux")
                     .put("Tracker", "Kinozal")
-                    .put("Link", "/kinozal/parsemagnet?id=456")
+                    .put("Link", "/torrents/456.torrent")
+            )
+            .put(
+                JSONObject()
+                    .put("Title", "Не вызываем разборщик с авторизацией")
+                    .put("Tracker", "Kinozal")
+                    .put("Link", "/kinozal/parsemagnet?id=457")
             )
             .put(
                 JSONObject()
@@ -146,7 +152,7 @@ class LampacBridgeClientTest {
         val resolver = results.last()
         assertEquals("Kinozal", resolver.tracker)
         assertNull(resolver.magnetUri)
-        assertEquals("http://127.0.0.1:9118/kinozal/parsemagnet?id=456", resolver.downloadUrl)
+        assertEquals("http://127.0.0.1:9118/torrents/456.torrent", resolver.downloadUrl)
     }
 
     @Test
