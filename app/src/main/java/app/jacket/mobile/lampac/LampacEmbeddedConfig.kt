@@ -52,7 +52,9 @@ object LampacEmbeddedConfig {
         )
         .put(
             "BaseModule",
-            JSONObject().put("SkipModules", JSONArray(skippedModules))
+            JSONObject()
+                .put("SkipModules", JSONArray(skippedModules))
+                .put("LoadModules", JSONArray(listOf(".*")))
         )
         .put("chromium", JSONObject().put("enable", false))
         .put("openstat", JSONObject().put("enable", false))
@@ -113,10 +115,37 @@ object LampacEmbeddedConfig {
 
     /** Adds only Android-specific module exclusions and required local JacRed defaults. */
     internal fun ensureAndroidModules(config: JSONObject): Boolean {
-        var changed = ensureGStreamerSkipped(config)
+        var changed = ensureLocalListener(config)
+        if (ensureAllModulesLoadedWhenUnspecified(config)) changed = true
+        if (ensureGStreamerSkipped(config)) changed = true
         if (ensureUpstreamDefaultExclusions(config)) changed = true
         if (ensureJacRedConfigured(config)) changed = true
         return changed
+    }
+
+    /** Keep the embedded HTTP listener private even when a desktop init.conf is imported. */
+    internal fun ensureLocalListener(config: JSONObject): Boolean {
+        val listen = config.optJSONObject("listen") ?: JSONObject().also {
+            config.put("listen", it)
+        }
+        val before = listen.toString()
+        listen.put("version", true)
+            .put("ip", HOST)
+            .put("port", PORT)
+            .put("scheme", "http")
+            .put("localhost", HOST)
+        return before != listen.toString()
+    }
+
+    /** Lampac loads enabled modules selected by LoadModules, less SkipModules. */
+    internal fun ensureAllModulesLoadedWhenUnspecified(config: JSONObject): Boolean {
+        val baseModule = config.optJSONObject("BaseModule") ?: JSONObject().also {
+            config.put("BaseModule", it)
+        }
+        val loadModules = baseModule.optJSONArray("LoadModules")
+        if (loadModules != null && loadModules.length() > 0) return false
+        baseModule.put("LoadModules", JSONArray(listOf(".*")))
+        return true
     }
 
     /** init.conf replaces BaseModule.SkipModules; restore all upstream base.conf exclusions. */
@@ -226,6 +255,34 @@ object LampacEmbeddedConfig {
         writeConfigAtomically(target, buildJson())
         return target
     }
+
+    /**
+     * Imports a user-owned Lampac init.conf while enforcing the Android loopback-only
+     * listener and the native modules that the embedded runtime cannot safely load.
+     * Provider credentials, priorities, JacRed adapters and all other custom sections
+     * are retained as supplied by the user.
+     */
+    fun importInitConfig(serverDirectory: File, content: String): File {
+        val encoded = content.toByteArray(Charsets.UTF_8)
+        require(encoded.isNotEmpty() && encoded.size <= MAX_INIT_CONFIG_BYTES) {
+            "Файл init.conf должен быть непустым и не превышать 2 МиБ"
+        }
+        val config = try {
+            JSONObject(content)
+        } catch (error: Exception) {
+            throw IOException("Файл init.conf не является корректным JSON", error)
+        }
+        ensureAndroidModules(config)
+        if (!serverDirectory.exists() && !serverDirectory.mkdirs()) {
+            throw IOException("Не удалось создать каталог Lampac: ${serverDirectory.absolutePath}")
+        }
+        require(serverDirectory.isDirectory) { "Путь Lampac не является каталогом" }
+        val target = File(serverDirectory, "init.conf")
+        writeConfigAtomically(target, config.toString(2))
+        return target
+    }
+
+    const val MAX_INIT_CONFIG_BYTES = 2 * 1024 * 1024
 
     private fun writeConfigAtomically(target: File, content: String) {
         val atomic = AtomicFile(target)
