@@ -149,3 +149,48 @@ Embedded mode is ready for release only when:
 ## Current implementation status
 
 The repository currently has a remote Lampac API bridge only. The runtime manager, Debian userspace, embedded server process, install UI and physical-device validation are **not implemented yet**. An Android PRoot engine candidate has been identified and inspected, but it has not been integrated into Jacket or tested on a Jacket build. This design is the gate for the first runnable prototype, not a release claim.
+
+
+## Goal
+
+Make Lampac run inside Jacket on the Android phone, using Jacket's private storage and the same local API bridge. No separate Termux installation, PC, NAS or separate Lampac app. This is a personal-use development branch; no public APK or GitHub release is published.
+
+## Implemented in this draft
+
+- Pin the Android PRoot source as a Git submodule at `oonid/pr@3ba86577f1f393a5e4ff6a92b3d4de08bb35786f`.
+- Add a lean `:proot-engine` Android library wrapper. It compiles only the upstream PRoot engine Kotlin sources, native PTY JNI code and ARM64 engine binaries. The upstream terminal UI, `:session-core` and `:termlib` are deliberately not imported.
+- Add the module to Jacket and package PRoot's native executables in `nativeLibraryDir`, required by Android's W^X execution policy.
+- Add `JacketProotHost` and `LampacProotBootstrap`: create app-private prefix/home/cache directories, check ARM64 engine files, and link `pr-cli` / `proot` to the native executables.
+- Keep the existing `LampacBridgeClient` as the app-facing interface; the eventual embedded server must bind only to `127.0.0.1:9118`.
+- Disable public APK artifact uploads and public GitHub Release publishing in the personal-use build workflows.
+
+## Current limits — be explicit
+
+This is not yet a working Lampac server. The branch currently prepares the PRoot engine and app-private filesystem only. It does not yet install Debian, stage the .NET runtime or Lampac payload, start/stop the server, add a foreground service or provide a settings UI. No phone-side PRoot session or media playback has been verified.
+
+The initial PRoot module is ARM64-only. Other Jacket ABIs must continue to use a remote Lampac address or show embedded mode as unsupported.
+
+The upstream PRoot project documents targetSdk 35 compatibility. Jacket currently targets API 36, so PRoot must be validated on the actual target SDK and a physical Android 12 device before relying on the engine.
+
+## Payload and storage
+
+The current official Lampac release is 1.90.2. Its `lampac-nextgen.zip` asset is 480,375,787 bytes before extraction. The app must not silently download this blindly as the first setup step. The next implementation milestone is a reduced, integrity-checked ARM64 install profile that excludes browser/transcoding assets when they are disabled, reports exact download/storage sizes, and stages files transactionally.
+
+Use the current supported ASP.NET Core 10 runtime for ARM64 Linux, pinned by version and SHA-256. Do not invoke the upstream `install.sh` directly: it creates a system user, writes to system paths and registers systemd, which is not appropriate inside Jacket's app-private PRoot rootfs.
+
+The embedded first-run config must set `listen.ip=127.0.0.1`, `listen.port=9118`, and `chromium.enable=false`; browser-dependent and transcoding modules remain disabled until separately tested.
+
+## Licence / distribution
+
+Lampac NextGen is AGPL-3.0-only. The PRoot Android wrapper is MIT, but the native PRoot and `pr-cli` components are GPL-2.0-or-later / GPL-3.0-or-later. Keep the corresponding notices and source provenance. This work is for the user's private build; the workflow no longer publishes APK files or creates a public Release.
+
+## Validation gate
+
+1. Android CI compiles and tests the new PRoot module and existing Jacket app.
+2. On the actual ARM64 Android 12 handset, run `pr-cli install debian` from Jacket's app-private storage without root or Termux.
+3. Verify `dotnet --info` inside Debian using ASP.NET Core Runtime 10.
+4. Install a reduced Lampac 1.90.2 payload and launch `Core.dll` with loopback-only binding.
+5. Verify `/online.js`, `/lite/events`, `/lifeevents`, at least one non-browser provider and playback through the existing Jacket bridge.
+6. Test stop/restart, app process death, reboot behaviour, Android power restrictions, disk use, RAM and battery drain.
+
+Do not mark embedded Lampac complete until the device-side steps pass.
