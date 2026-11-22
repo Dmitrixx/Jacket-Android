@@ -8,7 +8,7 @@ import java.io.File
 class LampacRuntimeInstallerTest {
     @Test
     fun rejectsMissingOrPartialDebianRootfs() {
-        val root = createTempDirectory("jacket-debian-partial").toFile()
+        val root = java.nio.file.Files.createTempDirectory("jacket-debian-partial").toFile()
         try {
             assertFalse(isDebianRootfsReady(root))
 
@@ -25,7 +25,7 @@ class LampacRuntimeInstallerTest {
 
     @Test
     fun acceptsDebianRootfsOnlyWhenTheBaseSystemAndAptArePresent() {
-        val root = createTempDirectory("jacket-debian-ready").toFile()
+        val root = java.nio.file.Files.createTempDirectory("jacket-debian-ready").toFile()
         try {
             File(root, "etc").mkdirs()
             File(root, "etc/os-release").writeText("ID=debian")
