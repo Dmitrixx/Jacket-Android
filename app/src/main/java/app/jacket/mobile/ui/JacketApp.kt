@@ -4107,10 +4107,66 @@ private fun SettingsScreen(
                         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
                     ) {
                         Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Text("JACKET 2.8", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Black)
-                            Text("Единое приложение для Android, планшетов и Android TV.",
-                                color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text(
+                                "JACKET ${app.jacket.mobile.BuildConfig.VERSION_NAME}",
+                                style = MaterialTheme.typography.headlineSmall,
+                                fontWeight = FontWeight.Black
+                            )
+                            Text(
+                                "Сборка ${app.jacket.mobile.BuildConfig.VERSION_CODE} · Android / Android TV",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Text("Единое приложение для Android, планшетов и Android TV.")
                             Text("Встроены поиск и поддерживаемое воспроизведение Filmix/HDRezka, а также RSS / Atom и Torznab. Результаты всех подключённых источников объединяются в карточке фильма; трекер-пресеты открываются в браузере.")
+                            Text(
+                                if (app.jacket.mobile.BuildConfig.PERSISTENT_SIGNING_CONFIGURED) {
+                                    "Подпись обновлений: постоянный ключ настроен. Совместимые сборки можно устанавливать поверх приложения без удаления данных."
+                                } else {
+                                    "Подпись обновлений: постоянный ключ ещё не настроен. APK из разных запусков CI может не обновить установленную копию. Сначала настройте ключ по инструкции."
+                                },
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Text(
+                                "Обычное обновление устанавливается поверх Jacket. Не удаляйте приложение и не очищайте его данные: так сохраняются настройки, очередь торрентов и встроенный Lampac. Подпись новой сборки должна совпадать с подписью установленной версии.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Button(
+                                modifier = Modifier.fillMaxWidth(),
+                                onClick = {
+                                    runCatching {
+                                        context.startActivity(
+                                            Intent(
+                                                Intent.ACTION_VIEW,
+                                                Uri.parse("https://github.com/Dmitrixx/Jacket-Android/actions/workflows/android.yml?query=branch%3Amain")
+                                            )
+                                        )
+                                    }.onFailure {
+                                        Toast.makeText(context, "Не удалось открыть страницу обновлений", Toast.LENGTH_LONG).show()
+                                    }
+                                }
+                            ) {
+                                Text("Проверить обновление")
+                            }
+                            OutlinedButton(
+                                modifier = Modifier.fillMaxWidth(),
+                                onClick = {
+                                    runCatching {
+                                        context.startActivity(
+                                            Intent(
+                                                Intent.ACTION_VIEW,
+                                                Uri.parse("https://github.com/Dmitrixx/Jacket-Android/blob/main/docs/UPDATES.md")
+                                            )
+                                        )
+                                    }.onFailure {
+                                        Toast.makeText(context, "Не удалось открыть инструкцию", Toast.LENGTH_LONG).show()
+                                    }
+                                }
+                            ) {
+                                Text("Инструкция по обновлению без переустановки")
+                            }
                             Text("Jacket не извлекает медиапотоки с произвольных страниц и не обходит ограничения сайта.",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant)
