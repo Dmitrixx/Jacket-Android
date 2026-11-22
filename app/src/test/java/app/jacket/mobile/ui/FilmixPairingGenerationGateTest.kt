@@ -4,10 +4,10 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-class OperationGenerationGateTest {
+class FilmixPairingGenerationGateTest {
     @Test
     fun latestGenerationWins() {
-        val gate = OperationGenerationGate()
+        val gate = FilmixPairingGenerationGate()
         val first = gate.begin()
         val second = gate.begin()
 
@@ -17,7 +17,7 @@ class OperationGenerationGateTest {
 
     @Test
     fun invalidateMakesCurrentGenerationStale() {
-        val gate = OperationGenerationGate()
+        val gate = FilmixPairingGenerationGate()
         val current = gate.begin()
 
         gate.invalidate()

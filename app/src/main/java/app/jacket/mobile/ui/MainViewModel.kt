@@ -91,7 +91,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _filmixCorsProxyBase = MutableStateFlow(settings.filmixCorsProxyBase())
     val filmixCorsProxyBase: StateFlow<String> = _filmixCorsProxyBase.asStateFlow()
 
-    private val filmixPairingGeneration = OperationGenerationGate()
+    private val filmixPairingGeneration = FilmixPairingGenerationGate()
 
     private val _filmixCode = MutableStateFlow<String?>(null)
     val filmixCode: StateFlow<String?> = _filmixCode.asStateFlow()

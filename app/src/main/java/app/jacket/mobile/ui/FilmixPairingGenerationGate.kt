@@ -3,7 +3,7 @@ package app.jacket.mobile.ui
 import java.util.concurrent.atomic.AtomicLong
 
 /** Invalidates late results from a cancelled or replaced asynchronous operation. */
-internal class OperationGenerationGate {
+internal class FilmixPairingGenerationGate {
     private val generation = AtomicLong(0)
 
     fun begin(): Long = generation.incrementAndGet()
