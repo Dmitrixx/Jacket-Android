@@ -29,6 +29,11 @@ class LampacEmbeddedConfigTest {
         assertTrue("Transcoding" in modules)
         assertTrue("GStreamer" in modules)
         assertTrue("TorrServer" in modules)
+        assertFalse("JacRed" in modules)
+        val jacRed = config.getJSONObject("JacRed")
+        assertEquals("jackett", jacRed.getString("typesearch"))
+        assertFalse(jacRed.getBoolean("disableJackett"))
+        assertEquals("query", jacRed.getJSONObject("Jackett").getString("search_lang"))
     }
 
     @Test
@@ -46,6 +51,39 @@ class LampacEmbeddedConfigTest {
         assertEquals(2, skipped.length())
         assertEquals("Transcoding", skipped.getString(0))
         assertEquals("GStreamer", skipped.getString(1))
+    }
+
+    @Test
+    fun migrationEnablesJacRedAndPreservesOtherServerOptions() {
+        val config = JSONObject(
+            """{"BaseModule":{"SkipModules":["JacRed","Transcoding","GStreamer"]},"custom":{"keep":"yes"}}"""
+        )
+
+        assertTrue(LampacEmbeddedConfig.ensureAndroidModules(config))
+        assertFalse(LampacEmbeddedConfig.ensureAndroidModules(config))
+        val skip = config.getJSONObject("BaseModule").getJSONArray("SkipModules")
+        val modules = (0 until skip.length()).map { skip.getString(it) }
+        assertFalse(modules.any { it.equals("JacRed", true) })
+        assertTrue("Transcoding" in modules)
+        assertTrue("GStreamer" in modules)
+        assertEquals("yes", config.getJSONObject("custom").getString("keep"))
+        assertEquals("jackett", config.getJSONObject("JacRed").getString("typesearch"))
+        assertFalse(config.getJSONObject("JacRed").getBoolean("disableJackett"))
+    }
+
+    @Test
+    fun keepsExplicitJacRedConfigurationWhileRemovingItsModuleExclusion() {
+        val config = JSONObject(
+            """{"BaseModule":{"SkipModules":["JacRed"]},"JacRed":{"typesearch":"webapi","webApiHost":"https://jacred.example","disableJackett":true}}"""
+        )
+
+        assertTrue(LampacEmbeddedConfig.ensureJacRedConfigured(config))
+        val jacRed = config.getJSONObject("JacRed")
+        assertEquals("webapi", jacRed.getString("typesearch"))
+        assertTrue(jacRed.getBoolean("disableJackett"))
+        assertEquals("https://jacred.example", jacRed.getString("webApiHost"))
+        val skip = config.getJSONObject("BaseModule").getJSONArray("SkipModules")
+        assertFalse((0 until skip.length()).any { skip.optString(it) == "JacRed" })
     }
 
     @Test
