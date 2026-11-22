@@ -404,11 +404,24 @@ internal fun copyArchiveEntryBounded(
 }
 
 /** True only when the PRoot Debian root contains the required base system tools. */
-internal fun isDebianRootfsReady(root: File): Boolean =
-    root.isDirectory &&
-        File(root, "etc/os-release").isFile &&
-        File(root, "bin/sh").exists() &&
-        File(root, "usr/bin/apt-get").isFile
+internal fun isDebianRootfsReady(root: File): Boolean {
+    if (!root.isDirectory) return false
+    val osRelease = File(root, "etc/os-release")
+    if (!osRelease.isFile) return false
+
+    val distroId = runCatching {
+        osRelease.readLines()
+            .firstOrNull { it.startsWith("ID=") }
+            ?.substringAfter("ID=")
+            ?.trim()
+            ?.removeSurrounding("\"")
+            ?.removeSurrounding("'")
+    }.getOrNull()
+    if (!distroId.equals("debian", ignoreCase = true)) return false
+
+    return File(root, "bin/sh").canExecute() &&
+        File(root, "usr/bin/apt-get").canExecute()
+}
 
 /**
  * Installs a private ARM64 Debian rootfs, ASP.NET Core 10 and a checksum-pinned
