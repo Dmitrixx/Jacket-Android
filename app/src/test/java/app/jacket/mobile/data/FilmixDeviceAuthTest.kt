@@ -4,17 +4,20 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.net.URLDecoder
+import java.util.Base64
 
 class FilmixDeviceAuthTest {
     @Test
-    fun buildsTokenRequestWithKnownCompatibleAndroidFingerprint() {
+    fun buildsTokenRequestWithCurrentLampaAndroidFingerprint() {
         val url = FilmixDeviceAuth.buildTokenRequestUrl("0123456789abcdef")
         assertTrue(url.startsWith("https://filmixapp.cyou/api/v2/token_request?"))
         assertTrue(url.contains("user_dev_id=0123456789abcdef"))
-        assertTrue(url.contains("user_dev_name=go-filmix"))
+        assertTrue(url.contains("user_dev_name=Xiaomi"))
         assertTrue(url.contains("user_dev_vendor=Xiaomi"))
-        assertTrue(url.contains("user_dev_os=11"))
-        assertTrue(url.contains("user_dev_apk=2.0.9"))
+        assertTrue(url.contains("user_dev_os=14"))
+        assertTrue(url.contains("user_dev_apk=2.2.0"))
+        assertTrue(url.contains("app_lang=ru-RU"))
     }
 
     @Test
@@ -22,11 +25,12 @@ class FilmixDeviceAuthTest {
         val url = FilmixDeviceAuth.buildCheckUpdateUrl("https://filmixapp.cyou/api/v2")
         assertTrue(url.startsWith("https://filmixapp.cyou/api/v2/check_update?"))
         assertTrue(url.contains("user_dev_id=abcdef0123456789"))
-        assertTrue(url.contains("user_dev_name=go-filmix"))
+        assertTrue(url.contains("user_dev_name=Xiaomi"))
+        assertTrue(url.contains("app_lang=ru-RU"))
     }
 
     @Test
-    fun offersOnlyExplicitHttpsApiEndpointsAndOfficialActivationPage() {
+    fun offersOnlyExplicitHttpsApiEndpointsAndCurrentActivationPage() {
         assertTrue(FilmixDeviceAuth.apiBaseCandidates().all { it.startsWith("https://") })
         assertEquals(
             listOf(FilmixDeviceAuth.DEFAULT_API_BASE, FilmixDeviceAuth.ALTERNATE_API_BASE),
@@ -36,12 +40,49 @@ class FilmixDeviceAuthTest {
             FilmixDeviceAuth.ALTERNATE_API_BASE,
             FilmixDeviceAuth.normalizeApiBase("https://fxapp.biz/")
         )
-        assertTrue(FilmixDeviceAuth.ACTIVATION_URL.startsWith("https://filmix.my/"))
+        assertEquals("https://filmix.gg/consoles", FilmixDeviceAuth.ACTIVATION_URL)
+    }
+
+    @Test
+    fun buildsLampaCompatibleCorsProxyUrlAndOverridesFilmixUserAgent() {
+        val proxyUrl = FilmixDeviceAuth.buildCorsProxyUrl(
+            "https://filmixapp.cyou/api/v2/token_request?user_dev_token=private-token"
+        )
+        assertTrue(proxyUrl.startsWith("https://cors.jacred.stream/enc2/"))
+        assertTrue(proxyUrl.endsWith("/token_request?jacred.test"))
+        assertFalse(proxyUrl.contains("private-token"))
+
+        val encoded = proxyUrl.substringAfter("/enc2/").substringBefore('/')
+        val decoded = String(
+            Base64.getDecoder().decode(URLDecoder.decode(encoded, Charsets.UTF_8.name())),
+            Charsets.UTF_8
+        )
+        assertTrue(decoded.startsWith("param/User-Agent=okhttp%2F3.10.0/"))
+        assertTrue(decoded.contains("http://filmixapp.cyou/api/v2/token_request?user_dev_token=private-token"))
+    }
+
+    @Test
+    fun normalizesTheScreenshotCorsProxyAndRejectsCleartextProxy() {
+        assertEquals(
+            "https://cors.jacred.stream",
+            FilmixDeviceAuth.normalizeCorsProxyBase("https://cors.jacred.stream/")
+        )
+        assertEquals("", FilmixDeviceAuth.normalizeCorsProxyBase(""))
     }
 
     @Test(expected = IllegalArgumentException::class)
-    fun rejectsCleartextFilmixApi() {
-        FilmixDeviceAuth.normalizeApiBase("http://fxapp.biz/api/v2")
+    fun rejectsCleartextCorsProxy() {
+        FilmixDeviceAuth.normalizeCorsProxyBase("http://cors.jacred.stream/")
+    }
+
+    @Test(expected = IllegalArgumentException::class)
+    fun rejectsProxyUrlsContainingCredentials() {
+        FilmixDeviceAuth.normalizeCorsProxyBase("https://user:pass@cors.jacred.stream/")
+    }
+
+    @Test(expected = IllegalArgumentException::class)
+    fun rejectsDirectCleartextFilmixApi() {
+        FilmixDeviceAuth.normalizeApiBase("http://filmixapp.cyou/api/v2", allowCustomHost = true)
     }
 
     @Test(expected = IllegalArgumentException::class)
@@ -55,7 +96,7 @@ class FilmixDeviceAuthTest {
     }
 
     @Test
-    fun alternateApiUsesSameDeviceFingerprintAndV2Routes() {
+    fun alternateApiUsesTheSameDeviceFingerprintAndV2Routes() {
         val url = FilmixDeviceAuth.buildTokenRequestUrl(
             FilmixDeviceAuth.ALTERNATE_API_BASE,
             "0123456789abcdef"
@@ -101,7 +142,6 @@ class FilmixDeviceAuthTest {
         assertFalse(message.contains("certificate subject"))
     }
 
-
     @Test
     fun supportsAutoSelectionAndExplicitCustomHttpsHost() {
         val custom = "https://media.example/api/v2"
@@ -142,7 +182,6 @@ class FilmixDeviceAuthTest {
             if (candidate == custom) throw java.io.IOException("custom API offline")
             "activation-response"
         }
-
         assertEquals(FilmixDeviceAuth.DEFAULT_API_BASE, activeBase)
         assertEquals("activation-response", value)
         assertEquals(listOf(custom, FilmixDeviceAuth.DEFAULT_API_BASE), attempted)
