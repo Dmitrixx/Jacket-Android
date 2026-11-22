@@ -369,7 +369,7 @@ object LampacBridgeClient {
                 providerName = providerName,
                 streamUrl = safeStream,
                 pageUrl = providerUrl,
-                indexerId = providerId?.let { "lampac:$it" },
+                indexerId = "lampac:" + (providerId ?: providerSlugFromUrl(providerUrl)),
                 tracker = providerName,
                 sourceType = MediaSourceType.LAMPAC,
                 qualityLabel = quality,
@@ -378,6 +378,16 @@ object LampacBridgeClient {
             )
         }
         return result
+    }
+
+    /** Stable provider identity derived from the route path, never from a query parameter. */
+    internal fun providerSlugFromUrl(providerUrl: String): String {
+        val path = runCatching { URI(providerUrl).path.orEmpty() }.getOrDefault("")
+        val route = path.split('/').lastOrNull { it.isNotBlank() }.orEmpty()
+        return route.lowercase()
+            .filter { it.isLetterOrDigit() || it in "-_." }
+            .take(80)
+            .ifBlank { "provider" }
     }
 
     internal fun selectSeasonUrl(data: JSONArray?, targetSeason: Int): String? {

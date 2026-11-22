@@ -179,6 +179,21 @@ class LampacBridgeClientTest {
     }
 
     @Test
+    fun derivesProviderIdFromRoutePathWhenCallerDoesNotSupplyOne() {
+        val data = JSONArray().put(JSONObject().put("stream", "/watch/video.m3u8"))
+        val result = LampacBridgeClient.parsePlayableEntries(
+            data = data,
+            providerUrl = "https://lampac.example/lite/kinogo?rjson=true&token=ignored",
+            baseUrl = "https://lampac.example",
+            item = movie,
+            providerName = "Kinogo",
+            targetSeason = null,
+            targetEpisode = null
+        )
+        assertEquals("lampac:kinogo", result.single().indexerId)
+    }
+
+    @Test
     fun ignoresExternalOrMissingPlaybackStreams() {
         val data = JSONArray()
             .put(JSONObject().put("stream", "https://cdn.example/video.m3u8"))
