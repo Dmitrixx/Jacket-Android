@@ -2145,6 +2145,16 @@ private fun SettingsScreen(
     val lampacStatus by viewModel.lampacStatus.collectAsState()
     val isLampacBusy by viewModel.isLampacBusy.collectAsState()
     val context = LocalContext.current
+    val lampacRuntime by app.jacket.mobile.lampac.LampacRuntimeState.state.collectAsState()
+    val embeddedLampacSupported = app.jacket.mobile.lampac.LampacProotBootstrap.isSupportedOnThisDevice()
+    val localLampacInstalled = remember(context, lampacRuntime.phase) {
+        app.jacket.mobile.lampac.LampacRuntimeInstaller(context).isInstalled()
+    }
+    val lampacRuntimeBusy = lampacRuntime.phase in setOf(
+        app.jacket.mobile.lampac.LampacRuntimePhase.INSTALLING,
+        app.jacket.mobile.lampac.LampacRuntimePhase.STARTING,
+        app.jacket.mobile.lampac.LampacRuntimePhase.STOPPING
+    )
     val filteredJackettIndexers = remember(jackettIndexers, jackettCatalogQuery, jackettCatalogFilter) {
         val query = jackettCatalogQuery.trim().lowercase(Locale.ROOT)
         jackettIndexers.filter { entry ->
@@ -2911,6 +2921,120 @@ private fun SettingsScreen(
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
+                            Surface(
+                                modifier = Modifier.fillMaxWidth(),
+                                shape = RoundedCornerShape(18.dp),
+                                color = MaterialTheme.colorScheme.surface
+                            ) {
+                                Column(Modifier.padding(15.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
+                                    Text(
+                                        "ВСТРОЕННЫЙ СЕРВЕР НА ЭТОМ ТЕЛЕФОНЕ",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.primary,
+                                        fontWeight = FontWeight.Black,
+                                        letterSpacing = 1.sp
+                                    )
+                                    Text(
+                                        "Jacket может установить Debian, .NET 10 и Lampac NextGen прямо в своё закрытое хранилище. Termux, root и отдельный Lampac APK не нужны.",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                    Text(
+                                        when {
+                                            !embeddedLampacSupported -> "Встроенный режим требует ARM64. Для этого устройства используйте удалённый Lampac по HTTPS."
+                                            lampacRuntime.phase == app.jacket.mobile.lampac.LampacRuntimePhase.RUNNING -> "Сервер запущен: http://127.0.0.1:9118"
+                                            localLampacInstalled -> "Lampac и .NET установлены. Сервер сейчас остановлен."
+                                            else -> "Ещё не установлено. Установка загрузит около 480 МБ архива Lampac и дополнительный .NET Runtime."
+                                        },
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                    Text(
+                                        lampacRuntime.message,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = if (lampacRuntime.phase == app.jacket.mobile.lampac.LampacRuntimePhase.ERROR)
+                                            MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                    if (lampacRuntimeBusy) {
+                                        LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                                        lampacRuntime.progress?.let { Text("Готово: $it%") }
+                                    }
+                                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        Button(
+                                            onClick = {
+                                                if (localLampacInstalled) {
+                                                    app.jacket.mobile.lampac.LampacRuntimeService.start(context)
+                                                } else {
+                                                    app.jacket.mobile.lampac.LampacRuntimeService.installAndStart(context)
+                                                }
+                                            },
+                                            enabled = embeddedLampacSupported && !lampacRuntimeBusy,
+                                            modifier = Modifier.weight(1f)
+                                        ) {
+                                            Icon(
+                                                if (localLampacInstalled) Icons.Default.PlayArrow else Icons.Default.Download,
+                                                contentDescription = null
+                                            )
+                                            Spacer(Modifier.width(6.dp))
+                                            Text(
+                                                when {
+                                                    lampacRuntimeBusy -> "Выполняется…"
+                                                    localLampacInstalled -> "Запустить"
+                                                    else -> "Установить и запустить"
+                                                },
+                                                maxLines = 2
+                                            )
+                                        }
+                                        OutlinedButton(
+                                            onClick = { app.jacket.mobile.lampac.LampacRuntimeService.stop(context) },
+                                            enabled = lampacRuntime.phase in setOf(
+                                                app.jacket.mobile.lampac.LampacRuntimePhase.INSTALLING,
+                                                app.jacket.mobile.lampac.LampacRuntimePhase.STARTING,
+                                                app.jacket.mobile.lampac.LampacRuntimePhase.RUNNING
+                                            ),
+                                            modifier = Modifier.weight(1f)
+                                        ) {
+                                            Icon(Icons.Default.Stop, contentDescription = null)
+                                            Spacer(Modifier.width(6.dp))
+                                            Text("Остановить")
+                                        }
+                                    }
+                                    OutlinedButton(
+                                        onClick = {
+                                            lampacBaseUrl = app.jacket.mobile.lampac.LampacEmbeddedConfig.BASE_URL
+                                            lampacEnabled = true
+                                            viewModel.saveLampacSettings(
+                                                LampacSettings(
+                                                    baseUrl = app.jacket.mobile.lampac.LampacEmbeddedConfig.BASE_URL,
+                                                    accountEmail = lampacAccountEmail,
+                                                    uid = lampacUid,
+                                                    token = lampacToken,
+                                                    enabled = true
+                                                )
+                                            )
+                                        },
+                                        enabled = localLampacInstalled,
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        Icon(Icons.Default.Link, contentDescription = null)
+                                        Spacer(Modifier.width(8.dp))
+                                        Text("Подключить localhost к общему поиску")
+                                    }
+                                    if (lampacRuntime.logs.isNotEmpty()) {
+                                        Text(
+                                            lampacRuntime.logs.takeLast(4).joinToString("\n"),
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            maxLines = 5
+                                        )
+                                    }
+                                    Text(
+                                        "Перед установкой требуется примерно 1,5 ГБ свободной памяти. Сервер работает только на 127.0.0.1:9118; браузерная автоматизация и тяжёлое транскодирование отключены. Установка выполняется по нажатию, автоматического запуска после перезагрузки нет.",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
                             OutlinedTextField(
                                 value = lampacBaseUrl,
                                 onValueChange = { lampacBaseUrl = it },
