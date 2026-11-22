@@ -2117,6 +2117,8 @@ private fun SettingsScreen(
     val currentToken by viewModel.tmdbToken.collectAsState()
     val indexers by viewModel.customIndexers.collectAsState()
     val webSearchProviders by viewModel.webSearchProviders.collectAsState()
+    val webSearchStatuses by viewModel.webSearchStatuses.collectAsState()
+    val testingWebSearchProviderId by viewModel.testingWebSearchProviderId.collectAsState()
     val statuses by viewModel.indexerStatuses.collectAsState()
     val sourceResults by viewModel.sourceResults.collectAsState()
     val searchingSources by viewModel.isSearchingSources.collectAsState()
@@ -2218,6 +2220,7 @@ private fun SettingsScreen(
     var webName by rememberSaveable { mutableStateOf("") }
     var webUrlTemplate by rememberSaveable { mutableStateOf("") }
     var webCookie by rememberSaveable { mutableStateOf("") }
+    var trackerTestQuery by rememberSaveable { mutableStateOf("The Rookie") }
 
     var hdMirror by remember(hdRezkaSettings.mirror) {
         mutableStateOf(hdRezkaSettings.mirror)
@@ -3027,10 +3030,37 @@ private fun SettingsScreen(
                             fontWeight = FontWeight.Bold
                         )
                         Text(
-                            "Встроенные поддерживаемые трекеры показывают раздачи списком прямо в Jacket. Остальные сайты можно добавить как внешние поисковые ссылки.",
+                            "Встроенные парсеры: RuTracker, NNM-Club, Rutor, Kinozal, 1337x и The Pirate Bay. Для каждого можно включить/отключить поиск, изменить URL и Cookie и выполнить проверку прямо в Jacket. Остальные сайты работают как внешние поисковые ссылки.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
+                        Text(
+                            "Проверка трекера",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        OutlinedTextField(
+                            value = trackerTestQuery,
+                            onValueChange = { trackerTestQuery = it.take(120) },
+                            modifier = Modifier.fillMaxWidth(),
+                            label = { Text("Название фильма или раздачи") },
+                            placeholder = { Text("The Rookie") },
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search)
+                        )
+                        Text(
+                            "Для большого каталога откройте «Торрент-источники»: Jackett загружает список доступных индексаторов с вашего сервера, позволяет отфильтровать Public/Private и язык, а для приватных трекеров — заполнить отдельные поля авторизации.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        OutlinedButton(
+                            onClick = { selectedSettingsSection = "indexers" },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Icon(Icons.Default.Settings, contentDescription = null)
+                            Spacer(Modifier.width(8.dp))
+                            Text("Открыть каталог Jackett и RSS / Torznab")
+                        }
                         OutlinedButton(
                             onClick = { viewModel.restoreDefaultTrackerShortcuts() },
                             modifier = Modifier.fillMaxWidth()
@@ -3196,11 +3226,33 @@ private fun SettingsScreen(
                             }
                             Text(provider.searchUrlTemplate, style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 3)
+                            webSearchStatuses[provider.id]?.let { status ->
+                                Text(
+                                    status,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = if (status.startsWith("Ошибка")) MaterialTheme.colorScheme.error
+                                    else MaterialTheme.colorScheme.primary
+                                )
+                            }
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                OutlinedButton(
-                                    onClick = { openWebsiteSearch(context, provider, "Jacket test") },
-                                    enabled = provider.enabled
-                                ) { Text("Проверить") }
+                                if (TrackerSearchClient.supports(provider.id)) {
+                                    OutlinedButton(
+                                        onClick = { viewModel.testWebSearchProvider(provider.id, trackerTestQuery) },
+                                        enabled = provider.enabled && trackerTestQuery.isNotBlank() &&
+                                            (testingWebSearchProviderId == null || testingWebSearchProviderId == provider.id)
+                                    ) {
+                                        if (testingWebSearchProviderId == provider.id) {
+                                            CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+                                            Spacer(Modifier.width(6.dp))
+                                        }
+                                        Text(if (testingWebSearchProviderId == provider.id) "Проверка…" else "Тест поиска")
+                                    }
+                                } else {
+                                    OutlinedButton(
+                                        onClick = { openWebsiteSearch(context, provider, trackerTestQuery) },
+                                        enabled = provider.enabled && trackerTestQuery.isNotBlank()
+                                    ) { Text("Открыть поиск") }
+                                }
                                 OutlinedButton(
                                     onClick = {
                                         webEditingId = provider.id

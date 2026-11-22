@@ -65,7 +65,7 @@ No external Jackett or TorrServer process is started or packaged.
 - `.torrent` download actions from the indexer cabinet enqueue the file in Jacket's foreground torrent service. Release results remain native `SourceCard` items and do not navigate to the browser to display the list.
 - JSON import/export includes non-secret configuration only. Credentials must be entered again after import.
 
-The registry intentionally does not include tracker-specific HTML parsers or solve CAPTCHA, anti-bot checks or interactive 2FA. A user may supply a session cookie if the indexer's rules allow it.
+The direct RSS/Torznab indexer registry intentionally remains separate from the six built-in HTML tracker profiles (RuTracker, NNM-Club, Rutor, Kinozal, 1337x and The Pirate Bay). Built-in profiles can be enabled, disabled, edited and tested from Settings; a test runs the real parser and reports provider-specific errors. The optional Jackett catalogue remains the scalable path for a wider set of public/private providers and dynamically exposes each indexer's own configuration fields. The registry does not solve CAPTCHA, anti-bot checks or interactive 2FA. A user may supply a session cookie if the indexer's rules allow it.
 
 ## Torrent engine
 

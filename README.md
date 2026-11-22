@@ -60,7 +60,11 @@ Search templates include `{query}`; `{apikey}` is optional. Public indexers must
 
 Release labels such as 720p / 1080p / 2160p, HDR / DV, HEVC / x264 and common audio/dubbing tags are extracted heuristically from the release title. They are not authoritative tracker metadata. Filters operate on the current results and do not issue another request.
 
-The app does not ship tracker credentials. The built-in tracker adapters parse supported listing/detail markup only; user-added website shortcuts remain browser links. CAPTCHA, anti-bot challenges, proprietary sign-in flows and interactive 2FA are not automated. A manually entered cookie may work where the source permits it.
+The built-in tracker list contains RuTracker, NNM-Club, Rutor, Kinozal, 1337x and The Pirate Bay. Each profile can be enabled/disabled, edited (HTTPS search template and optional same-origin Cookie), and tested from Settings with a real in-app search; the test reports connection/parser errors separately from an empty result set. Internet Archive and user-added website shortcuts remain browser links. The default list is restored only by an explicit user action, preserving custom entries and avoiding silent activation of trackers.
+
+For a broader, server-maintained catalogue, connect your own Jackett endpoint: Jacket reads the indexer list from that server instead of hardcoding a snapshot. Filter public/private providers, language and configuration status, then open the selected indexer's dynamic auth fields and save them back to Jackett. This follows the centralised, parallel-search and per-private-tracker configuration approach described in the Habr overview, while keeping Jackett optional and external.
+
+Filmix, HDRezka and Lampac have separate source settings. Additional direct feeds can be configured as RSS / Atom or Torznab / Newznab indexers; website-only providers can be added as HTTPS search shortcuts. A catalogue descriptor without a verified adapter is visibly marked as unconnected rather than being presented as a working player integration. The app does not ship tracker credentials. CAPTCHA, anti-bot challenges, proprietary sign-in flows and interactive 2FA are not automated. A manually entered cookie may work where the source permits it.
 
 ## User-configured website search
 

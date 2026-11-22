@@ -7,6 +7,8 @@
 - Allow an explicitly user-entered HTTPS Filmix API host with strict URL/host validation, normal certificate validation and no cross-host token forwarding.
 
 - Added the native optional Jackett indexer catalogue, dynamic per-indexer configuration/testing, private-indexer support and richer torrent release cards. Jackett remains user-managed and is not bundled.
+- Added per-tracker in-app connection/parser checks for RuTracker, NNM-Club, Rutor, Kinozal, 1337x and The Pirate Bay; the settings screen now uses an editable test query and shows each provider's last result or error.
+- Made the sites-and-sources settings easier to navigate: direct links to the dynamic Jackett/RSS/Torznab catalogue and to Lampac settings, with explicit descriptions of Filmix/HDRezka/Lampac versus browser-only shortcuts.
 - Added Jackett WebUI password login; the administrator password is transient, while only the returned session Cookie is stored in encrypted local settings.
 - Extended release-title labels with CAMRip/TeleSync/TeleCine/SCR, 10-bit/Hi10P, HLG, HDR10+ and recognized dubbing studios; added an optional filter to hide screen-copy releases.
 - Added a ten-provider catalogue in priority order. Only Filmix and HDRezka have direct adapters; ColdFilm, Baskino, Kinogo, VideoCDN, Collaps, Kinobase, CDNMovies and Lordfilm remain unconnected descriptors pending a compatible verified integration.

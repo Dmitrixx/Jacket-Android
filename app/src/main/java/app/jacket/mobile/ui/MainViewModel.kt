@@ -66,6 +66,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private var jackettLoginJob: Job? = null
     private var jackettTestJob: Job? = null
     private var indexerTestJob: Job? = null
+    private var trackerTestJob: Job? = null
+    private var trackerTestGeneration: Long = 0L
     private var episodeJob: Job? = null
     private var filmixPairingJob: Job? = null
     private var hdRezkaLoginJob: Job? = null
@@ -78,6 +80,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _webSearchProviders = MutableStateFlow(settings.webSearchProviders())
     val webSearchProviders: StateFlow<List<WebSearchProvider>> = _webSearchProviders.asStateFlow()
+
+    private val _webSearchStatuses = MutableStateFlow<Map<String, String>>(emptyMap())
+    val webSearchStatuses: StateFlow<Map<String, String>> = _webSearchStatuses.asStateFlow()
+
+    private val _testingWebSearchProviderId = MutableStateFlow<String?>(null)
+    val testingWebSearchProviderId: StateFlow<String?> = _testingWebSearchProviderId.asStateFlow()
 
     private val _filmixToken = MutableStateFlow(settings.filmixToken())
     val filmixToken: StateFlow<String> = _filmixToken.asStateFlow()
@@ -1166,8 +1174,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun saveWebSearchProvider(provider: WebSearchProvider): Boolean {
         return try {
+            if (provider.id.isNotBlank()) cancelTrackerTest(provider.id)
             settings.saveWebSearchProvider(provider)
             _webSearchProviders.value = settings.webSearchProviders()
+            _webSearchStatuses.value = _webSearchStatuses.value - provider.id
             _message.value = "Сайт поиска сохранён"
             _isError.value = false
             true
@@ -1178,15 +1188,85 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun setWebSearchProviderEnabled(id: String, enabled: Boolean) {
+        if (!enabled) cancelTrackerTest(id)
         settings.setWebSearchProviderEnabled(id, enabled)
         _webSearchProviders.value = settings.webSearchProviders()
+        _webSearchStatuses.value = _webSearchStatuses.value - id
     }
 
     fun removeWebSearchProvider(id: String) {
+        cancelTrackerTest(id)
         settings.removeWebSearchProvider(id)
         _webSearchProviders.value = settings.webSearchProviders()
+        _webSearchStatuses.value = _webSearchStatuses.value - id
         _message.value = "Сайт поиска удалён"
         _isError.value = false
+    }
+
+    /**
+     * Runs the built-in parser against a real tracker endpoint. This is deliberately
+     * separate from opening a search shortcut in the browser: it verifies the
+     * configured URL, optional session cookie, current markup and result extraction.
+     */
+    fun testWebSearchProvider(id: String, query: String) {
+        val provider = _webSearchProviders.value.firstOrNull { it.id == id } ?: return
+        if (!provider.enabled) {
+            _webSearchStatuses.value = _webSearchStatuses.value + (id to "Источник отключён")
+            return
+        }
+        if (!TrackerSearchClient.supports(id)) {
+            _webSearchStatuses.value = _webSearchStatuses.value + (id to "Доступен только внешний поиск")
+            return
+        }
+        if (query.isBlank()) {
+            _webSearchStatuses.value = _webSearchStatuses.value + (id to "Введите проверочный запрос")
+            return
+        }
+
+        trackerTestGeneration += 1L
+        val generation = trackerTestGeneration
+        trackerTestJob?.cancel()
+        _testingWebSearchProviderId.value = id
+        _webSearchStatuses.value = _webSearchStatuses.value + (id to "Проверка подключения и разбора…")
+        trackerTestJob = viewModelScope.launch {
+            try {
+                val results = runInterruptible(Dispatchers.IO) {
+                    TrackerSearchClient.search(provider, query.trim())
+                }
+                if (generation == trackerTestGeneration) {
+                    _webSearchStatuses.value = _webSearchStatuses.value + (
+                        id to if (results.isEmpty()) "Подключён • раздач не найдено"
+                        else "Подключён • найдено раздач: ${results.size}"
+                    )
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                if (generation == trackerTestGeneration) {
+                    val safeMessage = error.message
+                        ?.replace(Regex("[\\r\\n\\t]+"), " ")
+                        ?.take(180)
+                        ?.ifBlank { null }
+                    _webSearchStatuses.value = _webSearchStatuses.value + (
+                        id to "Ошибка: ${safeMessage ?: error.javaClass.simpleName}"
+                    )
+                }
+            } finally {
+                if (generation == trackerTestGeneration) {
+                    _testingWebSearchProviderId.value = null
+                    trackerTestJob = null
+                }
+            }
+        }
+    }
+
+    private fun cancelTrackerTest(id: String) {
+        if (_testingWebSearchProviderId.value == id) {
+            trackerTestGeneration += 1L
+            trackerTestJob?.cancel()
+            trackerTestJob = null
+            _testingWebSearchProviderId.value = null
+        }
     }
 
     fun startFilmixPairing() {
