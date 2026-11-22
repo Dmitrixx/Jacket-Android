@@ -41,7 +41,9 @@ class LampacEmbeddedConfigTest {
         val jacRed = config.getJSONObject("JacRed")
         assertEquals("jackett", jacRed.getString("typesearch"))
         assertFalse(jacRed.getBoolean("disableJackett"))
-        assertEquals("query", jacRed.getJSONObject("Jackett").getString("search_lang"))
+        val jackett = jacRed.getJSONObject("Jackett")
+        assertEquals("query", jackett.getString("search_lang"))
+        assertTrue(jackett.getJSONObject("Megapeer").getBoolean("enable"))
     }
 
     @Test
@@ -79,6 +81,10 @@ class LampacEmbeddedConfigTest {
         assertEquals("yes", config.getJSONObject("custom").getString("keep"))
         assertEquals("jackett", config.getJSONObject("JacRed").getString("typesearch"))
         assertFalse(config.getJSONObject("JacRed").getBoolean("disableJackett"))
+        assertTrue(
+            config.getJSONObject("JacRed").getJSONObject("Jackett")
+                .getJSONObject("Megapeer").getBoolean("enable")
+        )
     }
 
     @Test
@@ -94,6 +100,18 @@ class LampacEmbeddedConfigTest {
         assertEquals("https://jacred.example", jacRed.getString("webApiHost"))
         val skip = config.getJSONObject("BaseModule").getJSONArray("SkipModules")
         assertFalse((0 until skip.length()).any { skip.optString(it) == "JacRed" })
+    }
+
+    @Test
+    fun migrationPreservesAnExplicitMegapeerDisabledChoice() {
+        val config = JSONObject(
+            """{"BaseModule":{"SkipModules":[]},"JacRed":{"Jackett":{"Megapeer":{"enable":false}}}}"""
+        )
+        LampacEmbeddedConfig.ensureAndroidModules(config)
+        assertFalse(
+            config.getJSONObject("JacRed").getJSONObject("Jackett")
+                .getJSONObject("Megapeer").getBoolean("enable")
+        )
     }
 
     @Test
