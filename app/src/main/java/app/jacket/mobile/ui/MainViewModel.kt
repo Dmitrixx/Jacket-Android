@@ -71,6 +71,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private var episodeJob: Job? = null
     private var filmixPairingJob: Job? = null
     private var hdRezkaLoginJob: Job? = null
+    private val hdRezkaOperationGeneration = OperationGenerationGate()
 
     private val _tmdbToken = MutableStateFlow(settings.tmdbToken())
     val tmdbToken: StateFlow<String> = _tmdbToken.asStateFlow()
@@ -1391,11 +1392,23 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun loginHdRezka(config: HdRezkaSettings) {
+    private fun beginHdRezkaOperation(status: String): Long {
+        val generation = hdRezkaOperationGeneration.begin()
         hdRezkaLoginJob?.cancel()
+        _isHdRezkaBusy.value = true
+        _hdRezkaStatus.value = status
+        return generation
+    }
+
+    private fun finishHdRezkaOperation(generation: Long) {
+        if (!hdRezkaOperationGeneration.isCurrent(generation)) return
+        _isHdRezkaBusy.value = false
+        hdRezkaLoginJob = null
+    }
+
+    fun loginHdRezka(config: HdRezkaSettings) {
+        val generation = beginHdRezkaOperation("Подключаемся к HDRezka по HTTPS…")
         hdRezkaLoginJob = viewModelScope.launch {
-            _isHdRezkaBusy.value = true
-            _hdRezkaStatus.value = "Подключаемся к HDRezka по HTTPS…"
             try {
                 settings.saveHdRezkaSettings(config.copy(cookie = "", connected = false))
                 val result = withContext(Dispatchers.IO) {
@@ -1403,6 +1416,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         config.mirror, config.login, config.password, config.allowCustomMirror
                     )
                 }
+                if (!hdRezkaOperationGeneration.isCurrent(generation)) return@launch
                 val saved = config.copy(
                     mirror = result.activeMirror,
                     cookie = result.cookieHeader,
@@ -1414,23 +1428,24 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Exception) {
-                _hdRezkaSettings.value = settings.hdRezkaSettings()
-                _hdRezkaStatus.value = HdRezkaLoginClient.userFriendlyError(error)
+                if (hdRezkaOperationGeneration.isCurrent(generation)) {
+                    _hdRezkaSettings.value = settings.hdRezkaSettings()
+                    _hdRezkaStatus.value = HdRezkaLoginClient.userFriendlyError(error)
+                }
             } finally {
-                _isHdRezkaBusy.value = false
+                finishHdRezkaOperation(generation)
             }
         }
     }
 
     fun checkHdRezkaMirror(mirror: String, allowCustomMirror: Boolean = false) {
-        hdRezkaLoginJob?.cancel()
+        val generation = beginHdRezkaOperation("Проверяем доступность зеркала HDRezka…")
         hdRezkaLoginJob = viewModelScope.launch {
-            _isHdRezkaBusy.value = true
-            _hdRezkaStatus.value = "Проверяем доступность зеркала HDRezka…"
             try {
                 val active = withContext(Dispatchers.IO) {
                     HdRezkaLoginClient.probeMirror(mirror, allowCustomMirror)
                 }
+                if (!hdRezkaOperationGeneration.isCurrent(generation)) return@launch
                 val current = settings.hdRezkaSettings()
                 settings.saveHdRezkaSettings(current.copy(mirror = active))
                 _hdRezkaSettings.value = settings.hdRezkaSettings()
@@ -1438,14 +1453,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (error: Exception) {
-                _hdRezkaStatus.value = HdRezkaLoginClient.userFriendlyError(error)
+                if (hdRezkaOperationGeneration.isCurrent(generation)) {
+                    _hdRezkaStatus.value = HdRezkaLoginClient.userFriendlyError(error)
+                }
             } finally {
-                _isHdRezkaBusy.value = false
+                finishHdRezkaOperation(generation)
             }
         }
     }
 
     fun disconnectHdRezka() {
+        hdRezkaOperationGeneration.invalidate()
+        hdRezkaLoginJob?.cancel()
+        hdRezkaLoginJob = null
+        _isHdRezkaBusy.value = false
         settings.disconnectHdRezka()
         _hdRezkaSettings.value = settings.hdRezkaSettings()
         _hdRezkaStatus.value = "Сессия удалена"
