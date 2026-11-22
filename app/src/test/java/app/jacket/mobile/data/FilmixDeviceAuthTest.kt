@@ -53,7 +53,7 @@ class FilmixDeviceAuthTest {
         assertTrue(proxyUrl.endsWith("/token_request?jacred.test"))
         assertFalse(proxyUrl.contains("private-token"))
 
-        val encoded = proxyUrl.substringAfter("/enc2/").substringBefore('/')
+        val encoded = proxyUrl.substringAfter("/enc2t/").substringBefore('/')
         val decoded = String(
             Base64.getDecoder().decode(URLDecoder.decode(encoded, Charsets.UTF_8.name())),
             Charsets.UTF_8
