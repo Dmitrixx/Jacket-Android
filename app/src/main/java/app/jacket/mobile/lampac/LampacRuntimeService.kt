@@ -155,7 +155,7 @@ class LampacRuntimeService : Service() {
                 val count = runCatching { session.read(buffer) }.getOrDefault(-1)
                 when {
                     count > 0 -> appendOutput(buffer, count)
-                    count < 0 && session.exitCode != null -> break
+                    count <= 0 && session.exitCode != null -> break
                     else -> delay(35)
                 }
             }
@@ -304,7 +304,7 @@ class LampacRuntimeService : Service() {
             .setContentIntent(openPending)
             .setOngoing(serverSession != null || operationJob?.isActive == true)
             .setOnlyAlertOnce(true)
-            .addAction(0, "Остановить", stopPending)
+            .addAction(R.drawable.ic_jacket, "Остановить", stopPending)
             .build()
     }
 
@@ -354,7 +354,7 @@ class LampacRuntimeService : Service() {
 
         fun stop(context: Context) {
             val intent = Intent(context, LampacRuntimeService::class.java).setAction(ACTION_STOP)
-            ContextCompat.startForegroundService(context, intent)
+            context.startService(intent)
         }
 
         private fun startForeground(context: Context, action: String) {
