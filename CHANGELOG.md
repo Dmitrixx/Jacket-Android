@@ -2,6 +2,11 @@
 
 ## 2.8.8
 
+- Load all installed Lampac provider modules whose own manifests enable them by defaulting `BaseModule.LoadModules` to `[".*"]`; keep Android-incompatible native, network-listener and transcoding modules excluded.
+- Add Settings → Lampac import/export for `init.conf`, preserving provider options, priorities, account fields, JacRed adapters and custom JSON sections while forcing the embedded listener to `127.0.0.1:9118`.
+- Preserve the existing Lampac `init.conf` when replacing the embedded runtime archive; add tests for config import, safe listener enforcement, custom settings retention and invalid-file rollback.
+- Keep Lampac source discovery dynamic (up to 96 routes) and include the full config-sync implementation in the normal signed, in-place-updatable APK build.
+
 - Show the actual app version/build and persistent-signing status in Settings → About; add direct links to the main CI builds and the in-place update guide.
 - Publish the normal main-branch APK artifact only when the permanent user-owned signing key is configured. Stop labelling temporary-runner debug APKs as update packages, preventing failed in-place installs caused by certificate mismatches.
 - Keep the application ID unchanged and increment versionCode to 20. Compatible signed APKs update the installed app in place and preserve app-private settings, torrent queue and embedded Lampac data.
