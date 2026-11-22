@@ -53,6 +53,7 @@ class LampacRuntimeService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val action = intent?.action ?: ACTION_START
         if (action == ACTION_STOP) {
+            startAsForeground("Останавливаем Lampac…")
             stopServer()
             return START_NOT_STICKY
         }
