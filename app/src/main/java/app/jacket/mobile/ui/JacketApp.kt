@@ -3008,7 +3008,7 @@ private fun SettingsScreen(
                             Text("Lampac • единый каталог провайдеров", style = MaterialTheme.typography.headlineSmall,
                                 fontWeight = FontWeight.Bold)
                             Text(
-                                "Lampac — это серверный источник, а не отдельная вкладка каталога. После подключения Jacket автоматически получает доступные провайдеры Online (70+ источников VOD, аниме и региональных групп) через /lite/events и /lifeevents, проверяет их параллельно и объединяет результаты с Filmix, HDRezka и торрентами. Результаты появляются в карточке TMDB-фильма или выбранного эпизода → «Источники». Ничего добавлять вручную по одному не нужно.",
+                                "Lampac — это серверный источник, а не отдельная вкладка каталога. После подключения Jacket получает доступные Online-провайдеры (70+ VOD, аниме и региональных источников) через /lite/events и /lifeevents. Отдельно встроенный JacRed ищет раздачи через включённые адаптеры Rutor, Kinozal, NNM-Club, RuTracker, Toloka и другие. Результаты объединяются с Filmix, HDRezka и остальными торрентами в карточке TMDB-фильма или выбранного эпизода → «Источники». Сайты с требованием входа остаются под обычной авторизацией пользователя; CAPTCHA и защитные проверки не обходятся.",
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
