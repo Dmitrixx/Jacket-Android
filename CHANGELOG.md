@@ -2,6 +2,7 @@
 
 ## 2.8.0
 
+- Seed the built-in tracker/site list on first launch and one-time migration. Existing custom entries, disabled presets and encrypted Cookie sessions are preserved; manual restore remains explicit and re-enables built-in presets.
 - Update Filmix device pairing to the current Lampa-compatible Android fingerprint and profile-confirmed activation; guard replacement/cancelled pairing operations against stale responses.
 - Make the optional HTTPS Filmix relay user-configured and blank by default. The settings screen warns that a relay operator can see the decoded device token and profile requests.
 

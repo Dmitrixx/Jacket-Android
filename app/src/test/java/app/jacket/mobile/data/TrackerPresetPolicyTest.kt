@@ -37,4 +37,71 @@ class TrackerPresetPolicyTest {
         assertEquals(false, merged.first { it.id == "custom" }.enabled)
         assertEquals("My indexer", merged.first { it.id == "custom" }.name)
     }
+
+    @Test
+    fun firstRunSeedingAddsMissingPresetsWithoutOverwritingExistingSettings() {
+        val savedDisabled = WebSearchProvider(
+            id = "tracker-rutor",
+            name = "My Rutor profile",
+            searchUrlTemplate = "https://rutor.info/search/{query}",
+            enabled = false,
+            cookie = "saved-session"
+        )
+        val custom = WebSearchProvider(
+            id = "custom",
+            name = "My site",
+            searchUrlTemplate = "https://example.org/search?q={query}",
+            enabled = false
+        )
+        val defaults = listOf(
+            savedDisabled.copy(name = "Rutor default", enabled = true, cookie = ""),
+            WebSearchProvider(
+                id = "tracker-kinozal",
+                name = "Kinozal",
+                searchUrlTemplate = "https://kinozal.tv/browse.php?s={query}"
+            )
+        )
+        val seeded = seedTrackerShortcutsOnce(
+            current = listOf(savedDisabled, custom),
+            defaults = defaults,
+            limit = 50,
+            alreadySeeded = false
+        )
+
+        assertEquals(3, seeded.size)
+        assertEquals("My Rutor profile", seeded.first { it.id == "tracker-rutor" }.name)
+        assertEquals(false, seeded.first { it.id == "tracker-rutor" }.enabled)
+        assertEquals("saved-session", seeded.first { it.id == "tracker-rutor" }.cookie)
+        assertEquals(false, seeded.first { it.id == "custom" }.enabled)
+        assertTrue(seeded.any { it.id == "tracker-kinozal" })
+    }
+
+    @Test
+    fun completedSeedDoesNotSilentlyReAddSitesRemovedByTheUser() {
+        val remaining = listOf(
+            WebSearchProvider(
+                id = "custom",
+                name = "My site",
+                searchUrlTemplate = "https://example.org/search?q={query}"
+            )
+        )
+        val defaults = listOf(
+            WebSearchProvider(
+                id = "tracker-rutor",
+                name = "Rutor",
+                searchUrlTemplate = "https://rutor.info/search/{query}"
+            )
+        )
+
+        assertEquals(
+            remaining,
+            seedTrackerShortcutsOnce(
+                current = remaining,
+                defaults = defaults,
+                limit = 50,
+                alreadySeeded = true
+            )
+        )
+    }
+
 }

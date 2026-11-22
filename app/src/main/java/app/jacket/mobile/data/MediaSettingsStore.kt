@@ -33,6 +33,21 @@ internal fun mergeTrackerShortcuts(
     return (reEnabled + defaults).distinctBy { it.id }.take(limit)
 }
 
+/**
+ * Seeds built-in shortcuts once without overwriting an existing user's edits,
+ * disabled state or encrypted Cookie. A later explicit restore is handled
+ * separately by [mergeTrackerShortcuts].
+ */
+internal fun seedTrackerShortcutsOnce(
+    current: List<WebSearchProvider>,
+    defaults: List<WebSearchProvider>,
+    limit: Int,
+    alreadySeeded: Boolean
+): List<WebSearchProvider> {
+    if (alreadySeeded) return current.take(limit)
+    return (current + defaults).distinctBy { it.id }.take(limit)
+}
+
 class MediaSettingsStore(context: Context) {
     private val preferences = context.applicationContext.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
 
@@ -321,17 +336,38 @@ class MediaSettingsStore(context: Context) {
         saveIndexers(indexers().filterNot { it.id == id })
     }
 
+    /**
+     * Adds missing built-in sites on first launch / one-time migration. Existing
+     * user settings win, including a deliberately disabled preset and its Cookie.
+     */
     @Synchronized
-    fun webSearchProviders(): List<WebSearchProvider> = readWebSearchProviders()
+    fun webSearchProviders(): List<WebSearchProvider> {
+        val current = readWebSearchProviders()
+        val alreadySeeded = preferences.getBoolean(KEY_TRACKER_PRESETS_SEEDED, false)
+        val providers = seedTrackerShortcutsOnce(
+            current,
+            DEFAULT_TRACKER_SHORTCUTS,
+            MAX_WEB_SEARCH_PROVIDERS,
+            alreadySeeded
+        )
+        if (!alreadySeeded) {
+            saveWebSearchProviders(providers)
+            preferences.edit { putBoolean(KEY_TRACKER_PRESETS_SEEDED, true) }
+            return readWebSearchProviders()
+        }
+        return providers
+    }
 
+    /** Explicit restore also re-enables built-in presets and preserves custom sites. */
     @Synchronized
     fun restoreDefaultTrackerShortcuts(): List<WebSearchProvider> {
         val merged = mergeTrackerShortcuts(
-            webSearchProviders(),
+            readWebSearchProviders(),
             DEFAULT_TRACKER_SHORTCUTS,
             MAX_WEB_SEARCH_PROVIDERS
         )
         saveWebSearchProviders(merged)
+        preferences.edit { putBoolean(KEY_TRACKER_PRESETS_SEEDED, true) }
         return readWebSearchProviders()
     }
 
