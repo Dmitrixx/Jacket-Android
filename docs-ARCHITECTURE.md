@@ -1,4 +1,4 @@
-# Jacket 2.8.7 — architecture
+# Jacket 2.8.8 — architecture
 
 ## Runtime layout
 
@@ -143,6 +143,7 @@ Resume data is asynchronous and periodic: abruptly killing the process can lose 
 
 ## Local storage and secrets
 
+- CI validates the configured permanent signing keystore, alias and private-key password by signing and verifying a temporary probe before Gradle receives signing credentials. Missing or invalid signing configuration keeps verification builds unsigned and skips update-APK publication; secret values are not logged.
 - TMDB token, indexer API key, Basic credentials and cookies use AES/GCM with an Android Keystore-held key.
 - Exported indexer JSON deliberately excludes secrets.
 - Queue/resume files, poster cache, playback positions, favorites and history remain in app-private storage.
