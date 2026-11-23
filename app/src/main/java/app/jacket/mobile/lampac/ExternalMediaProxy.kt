@@ -24,7 +24,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 /**
  * Local HTTP compatibility proxy for external Android media players.
  *
- * Lampac 1.90.2's BaseMod middleware rejects HEAD before the /ts/* route is
+ * Lampac 1.90.2's BaseMod middleware rejects HEAD before the TorrServer media route is
  * reached, while VLC and other players commonly probe media with HEAD first.
  * This loopback-only proxy converts that probe to GET, returns its headers
  * without a body, and forwards subsequent GET/Range requests unchanged.
