@@ -282,7 +282,7 @@ private class LampaAndroidBridge(
      * This method is called on WebView's JavaScript bridge thread. Intent creation and
      * package resolution are safe there; startActivity is posted to the main thread.
      * Returning false lets Lampa keep its built-in HTML5 player when the URL is not
-     * eligible or no installed application accepts video/*.
+     * eligible or no installed application accepts the video MIME type.
      */
     @JavascriptInterface
     fun openExternalPlayer(rawUrl: String?, rawData: String?): Boolean {
