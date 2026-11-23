@@ -20,8 +20,11 @@
     }
 
     function loadLampacPlugin() {
+        if (window.__JACKET_LAMPAC_PLUGIN_LOADED__) {
+            reportLampacState('connected');
+            return;
+        }
         reportLampacState('connecting');
-        if (window.__JACKET_LAMPAC_PLUGIN_LOADED__) return;
 
         var script = document.createElement('script');
         script.async = true;
