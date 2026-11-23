@@ -89,7 +89,11 @@ fun LampaWebViewScreen(
                     }
 
                     if (uri.scheme.equals("https", true)) {
-                        openExternal(context, uri)
+                        if (uri.path.orEmpty().endsWith(".torrent", ignoreCase = true)) {
+                            handleTorrent(context, uri.toString(), "")
+                        } else {
+                            openExternal(context, uri)
+                        }
                         return true
                     }
 
