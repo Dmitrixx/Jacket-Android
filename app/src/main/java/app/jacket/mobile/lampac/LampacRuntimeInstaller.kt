@@ -445,7 +445,7 @@ internal fun copyArchiveEntryBounded(
  * official full archive and all module files replace any previously filtered
  * payload. The updater still carries forward init.conf and provider settings.
  */
-internal fun isCompleteLampacRuntime(root: File, expectedVersion: String): Boolean {
+internal fun isLampacRuntimePayloadReady(root: File, expectedVersion: String): Boolean {
     val lampac = File(root, "opt/lampac")
     val marker = File(lampac, ".lampa-lampac-version")
     val markerVersion = runCatching { marker.readText(Charsets.UTF_8).trim() }.getOrNull()
@@ -456,6 +456,20 @@ internal fun isCompleteLampacRuntime(root: File, expectedVersion: String): Boole
         isLampacPlaywrightPackageReady(lampac) &&
         markerVersion == expectedVersion
 }
+
+internal fun isLampacNodeReady(root: File): Boolean =
+    File(root, "usr/bin/node").canExecute()
+
+internal fun isCompleteLampacRuntime(root: File, expectedVersion: String): Boolean =
+    isLampacRuntimePayloadReady(root, expectedVersion) && isLampacNodeReady(root)
+
+/** A lightweight repair for older installs: it adds only ARM64 Node.js. */
+internal fun buildLampacNodeInstallCommand(): String =
+    "export DEBIAN_FRONTEND=noninteractive && " +
+        "apt-get update && " +
+        "apt-get install -y --no-install-recommends nodejs && " +
+        "test -x /usr/bin/node && node --version && " +
+        "apt-get clean && rm -rf /var/lib/apt/lists/*"
 
 /**
  * The official generic Lampac release is published from an x64 Linux runner.
@@ -566,14 +580,35 @@ class LampacRuntimeInstaller(context: android.content.Context) {
         check(LampacProotBootstrap.isSupportedOnThisDevice()) {
             "Встроенный Lampac пока доступен только на ARM64. Удалённый сервер можно подключить по HTTPS."
         }
+
+        send("prepare", "Подготавливаем PRoot…", 0, 0)
+        val prepared = LampacProotBootstrap.prepare(host)
+
+        // Newer APKs may add an ARM64 runtime prerequisite without changing the
+        // Lampac payload. Repair that in place before requiring space for a
+        // second 480 MB archive or replacing the user's existing init.conf.
+        if (isDebianRootfsReady(prepared.debianRootfsDir) &&
+            isLampacRuntimePayloadReady(prepared.debianRootfsDir, LampacRuntimeArtifacts.LAMPAC_VERSION) &&
+            !isLampacNodeReady(prepared.debianRootfsDir)
+        ) {
+            send("nodejs-migration", "Добавляем ARM64 Node.js для Playwright без повторной загрузки Lampac…", 0, 0)
+            val nodeInstall = commandRunner.runAsRoot(buildLampacNodeInstallCommand()) { line ->
+                send("nodejs-migration", line.take(220), 0, 0)
+            }
+            check(nodeInstall == 0 && isLampacNodeReady(prepared.debianRootfsDir)) {
+                "Не удалось добавить ARM64 Node.js для Playwright (код $nodeInstall)"
+            }
+            val existingServer = File(prepared.debianRootfsDir, "opt/lampac")
+            send("installed", "ARM64 Node.js добавлен. Существующий Lampac и настройки сохранены.", 1, 1)
+            return@withContext existingServer
+        }
+
         val requiredBeforeDownload = LampacRuntimeArtifacts.LAMPAC_BYTES +
             4L * 1024L * 1024L * 1024L
         check(availableBytes() >= requiredBeforeDownload) {
             "Для установки полного Lampac нужно не менее 4,5 ГБ свободного места во внутренней памяти телефона."
         }
 
-        send("prepare", "Подготавливаем PRoot…", 0, 0)
-        val prepared = LampacProotBootstrap.prepare(host)
         val legacyInitConfig = readLegacyLampacInitConfig(host.prefixDir)
         if (!isDebianRootfsReady(prepared.debianRootfsDir)) {
             val containerDir = prepared.debianRootfsDir.parentFile
