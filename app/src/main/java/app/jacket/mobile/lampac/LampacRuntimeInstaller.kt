@@ -427,6 +427,23 @@ internal fun copyArchiveEntryBounded(
     return copied
 }
 
+/**
+ * A complete install is only accepted when it carries the new Lampa marker.
+ * Older Jacket/Lampac installs are intentionally reinstalled once so the
+ * official full archive and all module files replace any previously filtered
+ * payload. The updater still carries forward init.conf and provider settings.
+ */
+internal fun isCompleteLampacRuntime(root: File, expectedVersion: String): Boolean {
+    val lampac = File(root, "opt/lampac")
+    val marker = File(lampac, ".lampa-lampac-version")
+    val markerVersion = runCatching { marker.readText(Charsets.UTF_8).trim() }.getOrNull()
+    return File(root, "opt/dotnet/dotnet").isFile &&
+        File(lampac, "Core.dll").isFile &&
+        File(lampac, "Shared.dll").isFile &&
+        File(lampac, "init.conf").isFile &&
+        markerVersion == expectedVersion
+}
+
 /** True only when the PRoot Debian root contains the required base system tools. */
 internal fun isDebianRootfsReady(root: File): Boolean {
     if (!root.isDirectory) return false
@@ -461,10 +478,7 @@ class LampacRuntimeInstaller(context: android.content.Context) {
     fun isInstalled(): Boolean {
         val root = host.debianRootfsDir
         return isDebianRootfsReady(root) &&
-            File(root, "opt/dotnet/dotnet").isFile &&
-            File(root, "opt/lampac/Core.dll").isFile &&
-            File(root, "opt/lampac/Shared.dll").isFile &&
-            File(root, "opt/lampac/init.conf").isFile
+            isCompleteLampacRuntime(root, LampacRuntimeArtifacts.LAMPAC_VERSION)
     }
 
     fun availableBytes(): Long = StatFs(appContext.filesDir.absolutePath).availableBytes

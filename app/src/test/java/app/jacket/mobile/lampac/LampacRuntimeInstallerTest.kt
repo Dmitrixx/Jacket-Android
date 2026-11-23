@@ -10,6 +10,30 @@ import java.io.IOException
 
 class LampacRuntimeInstallerTest {
     @Test
+    fun oldTrimmedLampacInstallIsMarkedForOneTimeFullReplacement() {
+        val root = java.nio.file.Files.createTempDirectory("lampa-runtime-migration").toFile()
+        try {
+            val oldInstall = File(root, "opt/lampac")
+            val dotnet = File(root, "opt/dotnet/dotnet")
+            oldInstall.mkdirs()
+            dotnet.parentFile?.mkdirs()
+            dotnet.writeText("dotnet")
+            File(oldInstall, "Core.dll").writeText("core")
+            File(oldInstall, "Shared.dll").writeText("shared")
+            File(oldInstall, "init.conf").writeText("{}")
+            File(oldInstall, ".jacket-lampac-version").writeText("1.90.2")
+
+            assertFalse(isCompleteLampacRuntime(root, "1.90.2"))
+
+            File(oldInstall, ".lampa-lampac-version").writeText("1.90.2")
+            assertTrue(isCompleteLampacRuntime(root, "1.90.2"))
+            assertFalse(isCompleteLampacRuntime(root, "1.90.3"))
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
     fun archivePathStripsOnlyTheCoreApplicationDirectory() {
         assertTrue(lampacArchiveRelativePath("lampac/Core.dll", "lampac/") == "Core.dll")
         assertTrue(

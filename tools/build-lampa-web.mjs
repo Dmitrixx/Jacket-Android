@@ -29,6 +29,7 @@ for (const required of [
 }
 
 await rm(outputRoot, { recursive: true, force: true });
+await rm(path.join(sourceRoot, "dest"), { recursive: true, force: true });
 await mkdir(outputRoot, { recursive: true });
 await cp(publicRoot, outputRoot, { recursive: true });
 
