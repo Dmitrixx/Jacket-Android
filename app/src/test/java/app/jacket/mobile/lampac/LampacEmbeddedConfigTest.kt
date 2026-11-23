@@ -19,6 +19,7 @@ class LampacEmbeddedConfigTest {
         assertEquals(0, base.getJSONArray("SkipModules").length())
         assertTrue(config.getJSONObject("chromium").getBoolean("enable"))
         assertEquals("/usr/bin/chromium", config.getJSONObject("chromium").getString("executablePath"))
+        assertEquals(listOf("--no-sandbox"), config.getJSONObject("chromium").getJSONArray("Args").toStrings())
         assertTrue(config.getJSONObject("openstat").getBoolean("enable"))
     }
 
@@ -32,7 +33,9 @@ class LampacEmbeddedConfigTest {
                     .put("LoadModules", JSONArray(listOf("Filmix")))
                     .put("SkipModules", JSONArray(listOf("GStreamer", "DLNA", "TorrServer")))
             )
-            .put("chromium", JSONObject().put("enable", false))
+            .put("chromium", JSONObject()
+                .put("enable", false)
+                .put("Args", JSONArray(listOf("--disable-gpu", "--no-sandbox"))))
             .put("Filmix", JSONObject().put("token", "preserve-token").put("priority", 8))
             .put("custom", JSONObject().put("keep", true))
 
@@ -44,6 +47,10 @@ class LampacEmbeddedConfigTest {
         assertEquals(listOf(".*"), base.getJSONArray("LoadModules").toStrings())
         assertEquals(0, base.getJSONArray("SkipModules").length())
         assertFalse(normalized.getJSONObject("chromium").getBoolean("enable"))
+        assertEquals(
+            listOf("--disable-gpu", "--no-sandbox"),
+            normalized.getJSONObject("chromium").getJSONArray("Args").toStrings()
+        )
         assertEquals("preserve-token", normalized.getJSONObject("Filmix").getString("token"))
         assertEquals(8, normalized.getJSONObject("Filmix").getInt("priority"))
         assertTrue(normalized.getJSONObject("custom").getBoolean("keep"))
@@ -63,6 +70,11 @@ class LampacEmbeddedConfigTest {
         assertEquals(listOf(".*"), base.getJSONArray("LoadModules").toStrings())
         assertEquals(0, base.getJSONArray("SkipModules").length())
         assertFalse(config.getJSONObject("SomeProvider").getBoolean("enable"))
+        assertEquals(
+            listOf("--no-sandbox"),
+            config.getJSONObject("chromium").getJSONArray("Args").toStrings()
+        )
+        assertFalse(LampacEmbeddedConfig.ensureAndroidModules(config))
     }
 
     private fun JSONArray.toStrings(): List<String> =
