@@ -10,12 +10,12 @@ import android.os.Looper
 import android.view.View
 import android.view.ViewGroup
 import android.webkit.JavascriptInterface
+import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
-import android.webkit.WebChromeClient
 import android.widget.FrameLayout
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
@@ -26,61 +26,32 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.unit.dp
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import app.jacket.mobile.BuildConfig
-import app.jacket.mobile.data.LocalNetwork
-import app.jacket.mobile.torrent.TorrentDownloadService
-import app.jacket.mobile.torrent.PlaybackProgressStore
-import app.jacket.mobile.torrent.PlaybackSubtitle
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.suspendCancellableCoroutine
-import org.json.JSONArray
-import org.json.JSONObject
-import kotlin.coroutines.resume
 import java.io.ByteArrayInputStream
-import java.net.URI
 
-private const val LAMPA_LOCAL_ORIGIN = "http://127.0.0.1:9118"
+private const val LAMPA_ORIGIN = "http://127.0.0.1:9118"
 private const val LAMPA_ASSET_PREFIX = "/app/"
-
-data class LampaPlaybackRequest(
-    val id: String,
-    val title: String,
-    val url: String,
-    val progressKey: String,
-    val initialPositionMs: Long,
-    val subtitles: List<PlaybackSubtitle> = emptyList(),
-    val headers: Map<String, String> = emptyMap(),
-    val isTorrent: Boolean = false
-)
 
 @Composable
 fun LampaWebViewScreen(
     modifier: Modifier = Modifier,
-    onBack: () -> Unit,
-    playbackRequest: LampaPlaybackRequest? = null,
-    onPlaybackCommandSent: (String) -> Unit = {},
-    onPlaybackError: (String, String) -> Unit = { _, _ -> },
-    onPlaybackClosed: (String) -> Unit = {}
+    onBack: () -> Unit
 ) {
     val context = LocalContext.current
-    val lampaPlayerOpen = remember { mutableStateOf(false) }
-    val lampacStatus = remember { mutableStateOf("Lampac: ожидаем подключение") }
+    val playerOpen = remember { mutableStateOf(false) }
+    val lampacStatus = remember { mutableStateOf("Lampac: ожидание подключения") }
     val currentOnBack by rememberUpdatedState(onBack)
-    val currentOnPlaybackCommandSent by rememberUpdatedState(onPlaybackCommandSent)
-    val currentOnPlaybackError by rememberUpdatedState(onPlaybackError)
-    val currentOnPlaybackClosed by rememberUpdatedState(onPlaybackClosed)
     val chromeClient = remember(context) {
         context.findActivity()?.let(::LampaFullscreenChromeClient)
     }
@@ -95,9 +66,7 @@ fun LampaWebViewScreen(
             settings.mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
             settings.setSupportMultipleWindows(false)
             settings.javaScriptCanOpenWindowsAutomatically = false
-            // Do not add Lampa's "lampa_client" marker: it selects the native
-            // Android player path. Without it Lampa uses its own WebView player.
-            settings.userAgentString = settings.userAgentString + " Jacket-Lampa/1"
+            settings.userAgentString = settings.userAgentString + " Lampa-Android/1"
             isVerticalScrollBarEnabled = false
             isHorizontalScrollBarEnabled = false
             isFocusable = true
@@ -108,10 +77,8 @@ fun LampaWebViewScreen(
                 LampaAndroidBridge(
                     context.applicationContext,
                     onExit = { currentOnBack() },
-                    onPlayerOpenChanged = { isOpen -> lampaPlayerOpen.value = isOpen },
-                    onLampacStateChanged = { state -> lampacStatus.value = state },
-                    onPlaybackError = { id, message -> currentOnPlaybackError(id, message) },
-                    onPlaybackClosed = { id -> currentOnPlaybackClosed(id) }
+                    onPlayerOpenChanged = { playerOpen.value = it },
+                    onLampacStateChanged = { lampacStatus.value = it }
                 ),
                 "AndroidJS"
             )
@@ -121,7 +88,7 @@ fun LampaWebViewScreen(
                 override fun shouldInterceptRequest(
                     view: WebView?,
                     request: WebResourceRequest
-                ): WebResourceResponse? = interceptLocalAsset(context, request)
+                ): WebResourceResponse? = interceptLampaAsset(context, request)
 
                 override fun shouldOverrideUrlLoading(
                     view: WebView?,
@@ -129,21 +96,7 @@ fun LampaWebViewScreen(
                 ): Boolean {
                     val uri = request.url
                     if (isLocalLampaOrigin(uri)) return false
-
-                    if (uri.scheme.equals("magnet", true)) {
-                        handleTorrent(context, uri.toString(), "")
-                        return true
-                    }
-
-                    if (uri.scheme.equals("https", true)) {
-                        if (uri.path.orEmpty().endsWith(".torrent", ignoreCase = true)) {
-                            handleTorrent(context, uri.toString(), "")
-                        } else {
-                            openExternal(context, uri)
-                        }
-                        return true
-                    }
-
+                    openExternal(context, uri)
                     return true
                 }
 
@@ -154,40 +107,28 @@ fun LampaWebViewScreen(
                 ) {
                     super.onReceivedError(view, request, error)
                     if (request?.isForMainFrame == true) {
-                        Toast.makeText(context, "Не удалось открыть интерфейс Lampa", Toast.LENGTH_LONG).show()
+                        Toast.makeText(
+                            context,
+                            "Не удалось открыть встроенный интерфейс Lampa",
+                            Toast.LENGTH_LONG
+                        ).show()
                     }
                 }
             }
 
-            loadUrl("$LAMPA_LOCAL_ORIGIN/app/index.html")
+            loadUrl("$LAMPA_ORIGIN/app/index.html")
         }
-    }
-
-    LaunchedEffect(playbackRequest?.id) {
-        val request = playbackRequest ?: return@LaunchedEffect
-        val script = buildLampaPlaybackScript(request)
-        for (attempt in 0 until 120) {
-            val dispatched = runCatching {
-                webView.evaluateJavascriptBoolean(script)
-            }.getOrDefault(false)
-            if (dispatched) {
-                currentOnPlaybackCommandSent(request.id)
-                return@LaunchedEffect
-            }
-            delay(250)
-        }
-        currentOnPlaybackError(request.id, "Интерфейс Lampa не успел подготовить плеер")
     }
 
     BackHandler(enabled = true) {
         when {
             chromeClient?.hideCustomView() == true -> Unit
-            lampaPlayerOpen.value -> {
+            playerOpen.value -> {
                 webView.evaluateJavascript(
                     "if (window.Lampa && Lampa.Player && Lampa.Player.opened()) Lampa.Player.close();",
                     null
                 )
-                lampaPlayerOpen.value = false
+                playerOpen.value = false
             }
             webView.canGoBack() -> webView.goBack()
             else -> onBack()
@@ -197,7 +138,7 @@ fun LampaWebViewScreen(
     DisposableEffect(webView) {
         onDispose {
             chromeClient?.hideCustomView()
-            lampaPlayerOpen.value = false
+            playerOpen.value = false
             webView.stopLoading()
             webView.removeJavascriptInterface("AndroidJS")
             webView.destroy()
@@ -213,10 +154,10 @@ fun LampaWebViewScreen(
         Text(
             text = lampacStatus.value,
             modifier = Modifier
-                .align(Alignment.TopEnd)
-                .padding(top = 10.dp, end = 12.dp)
+                .align(Alignment.TopStart)
+                .padding(top = 10.dp, start = 12.dp)
                 .background(
-                    MaterialTheme.colorScheme.surface.copy(alpha = 0.88f),
+                    MaterialTheme.colorScheme.surface.copy(alpha = 0.82f),
                     RoundedCornerShape(14.dp)
                 )
                 .padding(horizontal = 10.dp, vertical = 6.dp),
@@ -226,94 +167,10 @@ fun LampaWebViewScreen(
     }
 }
 
-
-private fun buildLampaPlaybackScript(request: LampaPlaybackRequest): String {
-    val subtitles = JSONArray().apply {
-        request.subtitles.forEach { subtitle ->
-            put(
-                JSONObject()
-                    .put("url", subtitle.url)
-                    .put("label", subtitle.label)
-                    .put("language", subtitle.language ?: "")
-            )
-        }
-    }
-    val data = JSONObject()
-        .put("url", request.url)
-        .put("title", request.title.ifBlank { "Видео" })
-        .put("subtitles", subtitles)
-        .put("_jacketPlaybackId", request.id)
-        .put("_jacketProgressKey", request.progressKey)
-        .put(
-            "timeline",
-            JSONObject()
-                .put("time", request.initialPositionMs.coerceAtLeast(0L) / 1000.0)
-                .put("percent", if (request.initialPositionMs > 0L) 1 else 0)
-        )
-
-    return """
-        (function(data) {
-            if (!window.__JACKET_ANDROID_BRIDGE_READY__ ||
-                !window.Lampa || !Lampa.Player ||
-                typeof Lampa.Player.play !== 'function') return false;
-            var playbackId = data._jacketPlaybackId;
-            var progressKey = data._jacketProgressKey;
-            delete data._jacketPlaybackId;
-            delete data._jacketProgressKey;
-            data.timeline = data.timeline || {};
-            data.timeline.handler = function(percent, time, duration) {
-                try {
-                    if (window.AndroidJS && AndroidJS.savePlaybackProgress) {
-                        AndroidJS.savePlaybackProgress(
-                            progressKey,
-                            Number(time) || 0,
-                            Number(duration) || 0
-                        );
-                    }
-                } catch (error) {
-                    console.warn('Jacket: playback progress could not be saved', error);
-                }
-            };
-            window.__JACKET_PENDING_PLAYBACK_ID__ = playbackId;
-            window.__JACKET_ACTIVE_PLAYBACK_ID__ = null;
-            window.__JACKET_PLAYBACK_ERROR_SENT__ = null;
-            try {
-                Lampa.Player.play(data);
-                window.setTimeout(function() {
-                    if (window.__JACKET_PENDING_PLAYBACK_ID__ === playbackId) {
-                        window.__JACKET_PENDING_PLAYBACK_ID__ = null;
-                        try {
-                            AndroidJS.onJacketPlaybackError(
-                                playbackId,
-                                'Lampa не начала воспроизведение'
-                            );
-                        } catch (error) {}
-                    }
-                }, 15000);
-                return true;
-            } catch (error) {
-                window.__JACKET_PENDING_PLAYBACK_ID__ = null;
-                console.error('Jacket: could not start the Lampa player', error);
-                try {
-                    AndroidJS.onJacketPlaybackError(
-                        playbackId,
-                        error && error.message ? error.message : 'Lampa отказала в запуске плеера'
-                    );
-                } catch (bridgeError) {}
-                return true;
-            }
-        })($data);
-    """.trimIndent().replace("\$data", data.toString())
-}
-
-private suspend fun WebView.evaluateJavascriptBoolean(script: String): Boolean =
-    suspendCancellableCoroutine { continuation ->
-        evaluateJavascript(script) { result ->
-            if (continuation.isActive) continuation.resume(result == "true")
-        }
-    }
-
-private fun interceptLocalAsset(context: Context, request: WebResourceRequest): WebResourceResponse? {
+private fun interceptLampaAsset(
+    context: Context,
+    request: WebResourceRequest
+): WebResourceResponse? {
     val uri = request.url
     if (!isLocalLampaOrigin(uri)) return null
     val path = Uri.decode(uri.path.orEmpty())
@@ -321,23 +178,22 @@ private fun interceptLocalAsset(context: Context, request: WebResourceRequest): 
 
     val relative = path.removePrefix(LAMPA_ASSET_PREFIX).ifBlank { "index.html" }
     val segments = relative.split('/')
-    if (segments.any { it == ".." || it == "." }) {
-        return errorResponse(403, "Forbidden")
+    if (segments.any { it == ".." || it == "." || it.isBlank() }) {
+        return textResponse(403, "Forbidden")
     }
 
-    val assetPath = "lampa/$relative"
     return try {
-        val mime = mimeType(relative)
+        val mime = lampaMimeType(relative)
         WebResourceResponse(
             mime.first,
             mime.second,
             200,
             "OK",
             mapOf("Cache-Control" to "no-store"),
-            context.assets.open(assetPath)
+            context.assets.open("lampa/$relative")
         )
     } catch (_: Exception) {
-        errorResponse(404, "Not Found")
+        textResponse(404, "Not Found")
     }
 }
 
@@ -346,27 +202,28 @@ private fun isLocalLampaOrigin(uri: Uri): Boolean =
         uri.host.equals("127.0.0.1", true) &&
         (uri.port == 9118 || uri.port == -1)
 
-private fun mimeType(path: String): Pair<String, String?> = when (path.substringAfterLast('.', "").lowercase()) {
-    "html", "htm" -> "text/html" to "UTF-8"
-    "js", "mjs" -> "application/javascript" to "UTF-8"
-    "css" -> "text/css" to "UTF-8"
-    "json", "map" -> "application/json" to "UTF-8"
-    "svg" -> "image/svg+xml" to null
-    "png" -> "image/png" to null
-    "jpg", "jpeg" -> "image/jpeg" to null
-    "webp" -> "image/webp" to null
-    "gif" -> "image/gif" to null
-    "woff" -> "font/woff" to null
-    "woff2" -> "font/woff2" to null
-    "ttf" -> "font/ttf" to null
-    "eot" -> "application/vnd.ms-fontobject" to null
-    "mp3" -> "audio/mpeg" to null
-    "mp4" -> "video/mp4" to null
-    "webm" -> "video/webm" to null
-    else -> "application/octet-stream" to null
-}
+private fun lampaMimeType(path: String): Pair<String, String?> =
+    when (path.substringAfterLast('.', "").lowercase()) {
+        "html", "htm" -> "text/html" to "UTF-8"
+        "js", "mjs" -> "application/javascript" to "UTF-8"
+        "css" -> "text/css" to "UTF-8"
+        "json", "map" -> "application/json" to "UTF-8"
+        "svg" -> "image/svg+xml" to null
+        "png" -> "image/png" to null
+        "jpg", "jpeg" -> "image/jpeg" to null
+        "webp" -> "image/webp" to null
+        "gif" -> "image/gif" to null
+        "woff" -> "font/woff" to null
+        "woff2" -> "font/woff2" to null
+        "ttf" -> "font/ttf" to null
+        "eot" -> "application/vnd.ms-fontobject" to null
+        "mp3" -> "audio/mpeg" to null
+        "mp4" -> "video/mp4" to null
+        "webm" -> "video/webm" to null
+        else -> "application/octet-stream" to null
+    }
 
-private fun errorResponse(status: Int, reason: String) = WebResourceResponse(
+private fun textResponse(status: Int, reason: String) = WebResourceResponse(
     "text/plain",
     "UTF-8",
     status,
@@ -379,22 +236,12 @@ private class LampaAndroidBridge(
     private val context: Context,
     private val onExit: () -> Unit,
     private val onPlayerOpenChanged: (Boolean) -> Unit,
-    private val onLampacStateChanged: (String) -> Unit,
-    private val onPlaybackError: (String, String) -> Unit,
-    private val onPlaybackClosed: (String) -> Unit
+    private val onLampacStateChanged: (String) -> Unit
 ) {
     private val mainHandler = Handler(Looper.getMainLooper())
 
     @JavascriptInterface
-    fun appVersion(): String = "Jacket-${BuildConfig.VERSION_NAME}-${BuildConfig.VERSION_CODE}"
-
-    @JavascriptInterface
-    fun openTorrentLink(rawLink: String?, rawExtra: String?) {
-        val link = rawLink?.trim().orEmpty()
-        val metadata = runCatching { JSONObject(rawExtra.orEmpty()) }.getOrDefault(JSONObject())
-        val title = metadata.optString("title").ifBlank { "Раздача из Lampa" }.take(180)
-        mainHandler.post { handleTorrent(context, link, title) }
-    }
+    fun appVersion(): String = "Lampa-\${BuildConfig.VERSION_NAME}-\${BuildConfig.VERSION_CODE}"
 
     @JavascriptInterface
     fun setPlayerOpen(isOpen: Boolean) {
@@ -404,10 +251,10 @@ private class LampaAndroidBridge(
     @JavascriptInterface
     fun setLampacState(rawState: String?) {
         val state = when (rawState) {
-            "connected" -> "Lampac: плагин загружен"
+            "connected" -> "Lampac: подключён"
             "connecting" -> "Lampac: подключение…"
-            "unavailable" -> "Lampac: /online.js недоступен"
-            else -> "Lampac: ожидаем подключение"
+            "unavailable" -> "Lampac: сервер не отвечает"
+            else -> "Lampac: ожидание подключения"
         }
         mainHandler.post { onLampacStateChanged(state) }
     }
@@ -418,36 +265,13 @@ private class LampaAndroidBridge(
     }
 
     @JavascriptInterface
-    fun savePlaybackProgress(rawKey: String?, positionSeconds: Double, durationSeconds: Double) {
-        val key = rawKey?.take(160)?.takeIf { it.isNotBlank() } ?: return
-        fun toMillis(seconds: Double): Long =
-            if (seconds.isFinite()) (seconds.coerceIn(0.0, 86_400_000.0) * 1000.0).toLong() else 0L
-        val positionMs = toMillis(positionSeconds)
-        val durationMs = toMillis(durationSeconds)
-        mainHandler.post {
-            runCatching { PlaybackProgressStore(context).save(key, positionMs, durationMs) }
-        }
-    }
-
-    @JavascriptInterface
-    fun onJacketPlaybackError(rawId: String?, rawMessage: String?) {
-        val id = rawId?.take(80)?.takeIf { it.isNotBlank() } ?: return
-        val message = rawMessage?.replace(Regex("[\\r\\n\\t]+"), " ")?.take(180)
-            ?.ifBlank { "Ошибка HTML5-плеера" } ?: "Ошибка HTML5-плеера"
-        mainHandler.post { onPlaybackError(id, message) }
-    }
-
-    @JavascriptInterface
-    fun onJacketPlaybackClosed(rawId: String?) {
-        val id = rawId?.take(80)?.takeIf { it.isNotBlank() } ?: return
-        mainHandler.post { onPlaybackClosed(id) }
+    fun openTorrentLink(rawLink: String?, rawExtra: String?) {
+        openExternalLink(rawLink)
     }
 
     @JavascriptInterface
     fun openYoutube(rawUrl: String?) {
-        rawUrl?.let { safeExternalUrl(it) }?.let { uri ->
-            mainHandler.post { openExternal(context, uri) }
-        }
+        openExternalLink(rawUrl)
     }
 
     @JavascriptInterface
@@ -456,48 +280,32 @@ private class LampaAndroidBridge(
     @JavascriptInterface
     fun getAdvertisingId(): String = ""
 
-    private fun notify(message: String) {
-        mainHandler.post {
-            Toast.makeText(context, message, Toast.LENGTH_LONG).show()
-        }
+    private fun openExternalLink(raw: String?) {
+        val uri = raw?.let(::safeExternalUri) ?: return
+        mainHandler.post { openExternal(context, uri) }
     }
 }
 
-
-private fun handleTorrent(context: Context, link: String, title: String) {
-    if (link.startsWith("magnet:", true)) {
-        val query = runCatching { URI(link).rawSchemeSpecificPart }.getOrNull().orEmpty()
-        if (!query.contains("urn:btih:", true) && !query.contains("urn:btmh:", true)) {
-            Toast.makeText(context, "Некорректная magnet-ссылка", Toast.LENGTH_LONG).show()
-            return
-        }
-        TorrentDownloadService.add(context, link, title.ifBlank { "Magnet из Lampa" })
-        Toast.makeText(context, "Торрент добавлен в очередь Jacket", Toast.LENGTH_SHORT).show()
-        return
-    }
-
-    val uri = runCatching { Uri.parse(link) }.getOrNull() ?: return
-    val isTorrentFile = uri.path.orEmpty().endsWith(".torrent", true)
-    if (isTorrentFile && LocalNetwork.isAllowedUrl(link)) {
-        TorrentDownloadService.addTorrentUrl(context, link, title.ifBlank { "Торрент из Lampa" })
-        Toast.makeText(context, "Торрент добавлен в очередь Jacket", Toast.LENGTH_SHORT).show()
-    } else {
-        safeExternalUrl(link)?.let { openExternal(context, it) }
-    }
-}
-
-private fun safeExternalUrl(raw: String): Uri? = runCatching {
+private fun safeExternalUri(raw: String): Uri? = runCatching {
     val uri = Uri.parse(raw.trim())
-    require(uri.scheme.equals("https", true))
-    require(!uri.host.isNullOrBlank() && uri.userInfo == null)
+    when (uri.scheme?.lowercase()) {
+        "https" -> require(!uri.host.isNullOrBlank() && uri.userInfo == null)
+        "magnet" -> require(
+            uri.schemeSpecificPart.contains("urn:btih:", true) ||
+                uri.schemeSpecificPart.contains("urn:btmh:", true)
+        )
+        else -> error("Unsupported external URI scheme")
+    }
     uri
 }.getOrNull()
 
 private fun openExternal(context: Context, uri: Uri) {
     runCatching {
-        context.startActivity(Intent(Intent.ACTION_VIEW, uri).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        context.startActivity(
+            Intent(Intent.ACTION_VIEW, uri).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        )
     }.onFailure {
-        Toast.makeText(context, "Не удалось открыть ссылку", Toast.LENGTH_LONG).show()
+        Toast.makeText(context, "Не удалось открыть внешнюю ссылку", Toast.LENGTH_LONG).show()
     }
 }
 
@@ -507,10 +315,6 @@ private tailrec fun Context.findActivity(): Activity? = when (this) {
     else -> null
 }
 
-/**
- * Lets Lampa's own HTML5 video element use Android WebView fullscreen mode.
- * The video stays in Lampa; no stream is sent to Jacket's Media3 player.
- */
 private class LampaFullscreenChromeClient(
     private val activity: Activity
 ) : WebChromeClient() {

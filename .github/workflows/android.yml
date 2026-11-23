@@ -1,4 +1,4 @@
-name: Android CI
+name: Lampa Android CI
 
 on:
   push:
@@ -101,12 +101,12 @@ jobs:
           apk="$(find app/build/outputs/apk/release -type f -iname '*universal*.apk' -print -quit)"
           build_kind="signed-release"
           if [[ -z "$apk" ]]; then
-            echo "Universal APK not found. Available APK files:" >&2
+            echo "Lampa universal APK not found. Available APK files:" >&2
             find app/build/outputs/apk -type f -name '*.apk' -print >&2 || true
             exit 1
           fi
           mkdir -p dist
-          output="dist/Jacket-${version_name}-main-${GITHUB_SHA:0:7}-universal-${build_kind}.apk"
+          output="dist/Lampa-${version_name}-main-${GITHUB_SHA:0:7}-universal-${build_kind}.apk"
           cp "$apk" "$output"
           sha256sum "$output" > "$output.sha256"
 
@@ -114,8 +114,8 @@ jobs:
         if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && steps.restore_signing.outputs.ready == 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: Jacket-main-apk
-          path: dist/Jacket-*.apk*
+          name: Lampa-main-apk
+          path: dist/Lampa-*.apk*
           if-no-files-found: error
           retention-days: 14
           compression-level: 0

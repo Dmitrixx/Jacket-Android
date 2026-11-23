@@ -1,3 +1,6 @@
 [submodule "third_party/oonid-pr"]
 	path = third_party/oonid-pr
 	url = https://github.com/oonid/pr.git
+[submodule "third_party/lampac-source"]
+	path = third_party/lampac-source
+	url = https://github.com/lampac-nextgen/lampac.git

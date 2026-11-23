@@ -135,7 +135,7 @@ class LampacRuntimeService : Service() {
         )
         updateNotification("Запускаем Lampac…")
         try {
-            val host = JacketProotHost(applicationContext)
+            val host = LampaProotHost(applicationContext)
             LampacProotBootstrap.prepare(host)
             // Existing installs keep their original init.conf across APK updates.
             // Apply the safe Android module profile before launching Core.dll.
@@ -257,7 +257,7 @@ class LampacRuntimeService : Service() {
                 readTimeout = 1_200
                 requestMethod = "GET"
                 instanceFollowRedirects = false
-                setRequestProperty("User-Agent", "Jacket-Android/${BuildConfig.VERSION_NAME}")
+                setRequestProperty("User-Agent", "Lampa-Android/${BuildConfig.VERSION_NAME}")
             }
         }.getOrNull() ?: return false
         return try {
@@ -345,13 +345,13 @@ class LampacRuntimeService : Service() {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
         return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setSmallIcon(R.drawable.ic_jacket)
-            .setContentTitle("Jacket • Lampac")
+            .setSmallIcon(R.drawable.ic_lampa)
+            .setContentTitle("Lampa • Lampac")
             .setContentText(LampacLogSanitizer.sanitize(status).take(140))
             .setContentIntent(openPending)
             .setOngoing(serverSession != null || operationJob?.isActive == true)
             .setOnlyAlertOnce(true)
-            .addAction(R.drawable.ic_jacket, "Остановить", stopPending)
+            .addAction(R.drawable.ic_lampa, "Остановить", stopPending)
             .build()
     }
 
@@ -362,7 +362,7 @@ class LampacRuntimeService : Service() {
                 "Встроенный Lampac",
                 NotificationManager.IMPORTANCE_LOW
             ).apply {
-                description = "Статус локального медиасервера Jacket"
+                description = "Статус локального медиасервера Lampa"
                 setShowBadge(false)
             }
             getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
@@ -385,7 +385,7 @@ class LampacRuntimeService : Service() {
     }
 
     companion object {
-        private const val CHANNEL_ID = "jacket-lampac-runtime"
+        private const val CHANNEL_ID = "lampa-lampac-runtime"
         private const val NOTIFICATION_ID = 4412
         private const val NOTIFICATION_UPDATE_INTERVAL_MS = 1_000L
 

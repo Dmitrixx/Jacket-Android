@@ -75,26 +75,16 @@ await writeFile(path.join(outputRoot, "css", "app.css"), prefixedCss.css, "utf8"
 const indexPath = path.join(outputRoot, "index.html");
 let html = await readFile(indexPath, "utf8");
 html = html.replace("http://www.youtube.com/iframe_api", "https://www.youtube.com/iframe_api");
-const configScript = `<script>
-window.lampa_settings = window.lampa_settings || {};
-window.lampa_settings.socket_use = false;
-window.lampa_settings.account_use = false;
-window.lampa_settings.account_sync = false;
-window.lampa_settings.plugins_use = false;
-window.lampa_settings.plugins_store = false;
-window.lampa_settings.torrents_use = true;
-window.lampa_settings.disable_features = Object.assign(
-    {},
-    window.lampa_settings.disable_features || {},
-    { ads: true, install_proxy: true, remote_configuration: true }
-);
-window.__JACKET_LAMPAC_URL__ = "http://127.0.0.1:9118";
-</script>`;
+
 const appScriptTag = '<script src="app.js"></script>';
 if (!html.includes(appScriptTag)) {
-  throw new Error("Lampa public/index.html no longer contains the expected app.js entry point");
+  throw new Error("The upstream Lampa index no longer has the expected app.js entry point");
 }
-html = html.replace(appScriptTag, configScript + "\n" + appScriptTag);
+const bridgeScript = [
+  '<script>window.__LAMPA_LAMPAC_URL__ = "http://127.0.0.1:9118";</script>',
+  '<script src="plugins/modification.js"></script>'
+].join("\n");
+html = html.replace(appScriptTag, appScriptTag + "\n" + bridgeScript);
 await writeFile(indexPath, html, "utf8");
 
 const modificationSource = path.join(repoRoot, "lampa-android", "modification.js");
@@ -116,6 +106,6 @@ await writeFile(
 const appJs = await readFile(path.join(outputRoot, "app.js"));
 const css = await readFile(path.join(outputRoot, "css", "app.css"));
 if (appJs.length < 100_000 || css.length < 20_000) {
-  throw new Error(`Lampa build output looks incomplete (app.js=${appJs.length}, app.css=${css.length})`);
+  throw new Error("The built Lampa web assets appear incomplete");
 }
-console.log(`Lampa Android assets ready: app.js=${appJs.length}, app.css=${css.length}`);
+console.log("Complete Lampa web assets: app.js=" + appJs.length + ", app.css=" + css.length);

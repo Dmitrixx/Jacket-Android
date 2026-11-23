@@ -1,78 +1,35 @@
-# Embedded Lampac runtime inside Jacket
+# Full Lampac NextGen on Android
 
-**Status:** embedded runtime code is present on the personal-use development branch. Android CI and physical-device validation are still required; this is not yet a confirmed working install.
+## Architecture
 
-## Goal
+The app contains the complete upstream Lampa web client and a minimal Android WebView host. Lampac NextGen runs as a local .NET 10 process inside an app-private ARM64 Debian PRoot root filesystem.
 
-Run Lampac NextGen on the same Android device as Jacket. No Termux, root access, separate Lampac APK, PC or NAS is required. The existing LampacBridgeClient remains the only bridge used by the catalogue and player.
+- Lampa UI: third_party/lampa-source, compiled into APK assets.
+- Lampac source: third_party/lampac-source, pinned to the commit for release 1.90.2.
+- Runtime payload: official full lampac-nextgen.zip release asset, checksum-verified before extraction.
+- Local endpoint: http://127.0.0.1:9118.
+- Runtime data and init.conf: filesDir/lampac, preserved across app upgrades.
+- Process lifecycle: user-started foreground LampacRuntimeService.
 
-The embedded server must listen on **127.0.0.1:9118 only**. Remote Lampac remains available for devices where the embedded ARM64 engine is unsupported.
+The Android application ID remains app.jacket.mobile so the new build updates the existing installation instead of creating a second app or losing private data. The displayed name is Lampa.
 
-## What is now implemented in the draft branch
+## Complete upstream payload
 
-- Pin oonid/pr at commit 3ba86577f1f393a5e4ff6a92b3d4de08bb35786f and include its standalone Android :proot-engine module. Only the engine Kotlin sources, JNI PTY and ARM64 native binaries are included; the upstream terminal UI, :session-core and :termlib are not.
-- Keep PRoot executables and its loader in Android's extracted native-library directory, then prepare the app-private PRoot prefix, home and cache.
-- Install an ARM64 Debian OCI rootfs via pr-cli install debian; accept it only when `/etc/os-release` identifies Debian and `/bin/sh` plus `/usr/bin/apt-get` are executable.
-- Install ASP.NET Core Runtime 10.0.15 and Lampac NextGen 1.90.2 from pinned HTTPS URLs with SHA-512 / SHA-256 verification.
-- Extract and stage the Lampac payload under Debian /opt/lampac, validate required managed files, create an Android-specific init.conf, then atomically switch the installation directory.
-- Generate a first-run config with `BaseModule.LoadModules: [".*"]` so all installed modules whose own manifests enable them are eligible for loading. Bind only to 127.0.0.1:9118, turn Chromium and openstat off, enable JacRed and exclude Android-incompatible modules such as GStreamer, DLNA, TorrServer, Transcoding, Sync and TimeCode.
-- Add a foreground service with install, start, stop, health-check and bounded log state. The startup path also retains and closes a just-created PTY session if cancellation races with process creation. It starts only after an explicit user action; there is no boot receiver or automatic startup.
-- Add Settings controls for install/start, stop, status, recent output, and connecting http://127.0.0.1:9118 to Jacket's existing Lampac bridge.
-- Keep the remote Lampac address and account settings as a fallback.
-- Add Settings → Lampac import/export for `init.conf`. Import preserves the user's provider/module options, priorities, account fields, JacRed adapter configuration and unrelated custom JSON sections, while enforcing the embedded loopback listener and Android-specific module exclusions. Import is available only when the local server is stopped. Export warns that the file may contain access tokens and passwords.
-- Preserve the prior `init.conf` when replacing the Lampac runtime archive; do not reset a user's provider setup during an installer refresh.
-- Disable public APK uploads and public GitHub Release publishing in this personal-use workflow.
+The installer retrieves the full official Lampac release archive and does not exclude or delete upstream module directories. The archive is checked for size, SHA-256, traversal paths, excessive expansion and incomplete ZIP entries before activation.
 
-## Provider discovery and configuration transfer
+The ARM64 Debian environment installs ASP.NET Core Runtime 10, Google Chrome/Chromium, FFmpeg/FFprobe, GStreamer plugins and tools, ImageMagick, Xvfb, fonts and the native libraries used by the upstream deployment.
 
-Lampac's enabled provider modules are loaded through `BaseModule.LoadModules: [".*"]`; each individual module's own `enable` setting and the Android `SkipModules` list still determine whether it can run. Jacket discovers the available VOD routes per TMDB title using `/lite/events` and `/lifeevents`, then queries the discovered routes with a bounded worker pool (up to 96 provider routes, four concurrent requests). The event endpoints return route templates, not complete provider requests: Jacket must forward the title, year, TMDB ID, IMDb/Kinopoisk IDs and movie/series context to each `/lite/{provider}` request. It resolves the external IDs through Lampac's `/externalids` endpoint (cached by Lampac) and includes the selected season/episode for series. Without these query parameters, providers that require IMDb/Kinopoisk IDs or a title can return HTTP 503 or empty results. Results are not hard-coded to a fixed site list. Actual availability still depends on the module files present in the Lampac installation, module configuration, account entitlements and the provider's current service response.
+A fresh init.conf loads every module with an empty SkipModules array. Existing configs retain provider credentials and custom sections; previous app-added module exclusions are cleared. Explicit choices such as chromium.enable=false remain intact. The local HTTP listener is kept on loopback.
 
-To reuse a Lampac installation configured outside Jacket, export its `init.conf` and choose Settings → Lampac → Import `init.conf`. The import keeps provider options, priorities, tokens, JacRed settings and custom config sections. It deliberately overwrites only the listening endpoint to `127.0.0.1:9118` and keeps Android-incompatible native/network modules excluded. Custom module binaries or source files in a separate `mods/` directory are not contained in `init.conf` and are not copied by this import. Stop the embedded server before importing, then start it again. Exported `init.conf` may contain credentials; do not share it publicly.
+The module package is complete. Individual features can still require user accounts, provider availability, Linux networking, multicast, browser sandbox support or native services that vary between Android devices.
 
-## Runtime diagnostics and credential handling
+## Device constraints
 
-Lampac provider diagnostics can contain request URLs, account identifiers, cookies or authorization headers. PTY output is reassembled into bounded complete lines before redaction, so credentials split across native read buffers are still sanitized. Jacket redacts common token, password, API-key, cookie, bearer and account-identifier fields before writing runtime logs, status text or foreground notifications. Keep this sanitization in the shared logging path; do not add a raw-output UI or diagnostic export. The redactor is a best-effort safety boundary, not a reason to write credentials to upstream logs deliberately. Runtime status and bounded-log changes use atomic StateFlow updates, preventing concurrent process output and service status changes from dropping each other's snapshot fields.
+- Embedded PRoot is ARM64-only.
+- The server is loopback-only; it is not advertised as a LAN server.
+- Several gigabytes of free internal storage are required for Debian, Lampac, .NET, Chromium and media dependencies.
+- Playback remains in Lampa's own WebView player. No Jacket-native Media3 player or custom torrent engine is included.
 
-## Runtime versions and storage
+## Validation
 
-The pinned Lampac 1.90.2 archive is 480,375,787 bytes before extraction. The installer also downloads the ASP.NET Core 10.0.15 ARM64 runtime. The preflight requires at least 1.5 GB free before downloading; after the archive is downloaded, the ZIP installer calculates the uncompressed size and checks that additional free space is available before extracting. A real device may need more than the preflight minimum, depending on the release archive and Debian package state.
-
-Both payloads are verified before use. Downloads are staged as temporary files and moved into place only after the checksum matches. The .NET runtime is unpacked to a staging directory and checked with `dotnet --info` before the existing runtime is replaced; failed activation restores the previous directory. Every redirect is revalidated against the pinned HTTPS host allowlist and standard port 443; user-info, fragments, and non-HTTPS URLs are rejected. ZIP extraction rejects traversal paths, bounds file count and declared expansion size, verifies the actual uncompressed byte count of every entry against its central-directory size and per-entry limit, observes cancellation between copy chunks, and stages into a temporary directory before replacing the current Lampac directory.
-
-The upstream Lampac system installer is deliberately not run: it writes system users, host paths and systemd units that do not belong inside Jacket's app-private PRoot rootfs.
-
-## Android and ABI constraints
-
-The embedded PRoot module is currently **ARM64-only**. Other ABIs can continue using a remote Lampac server.
-
-Jacket compiles against API 36 but targets API 35 in this branch to match the PRoot project's documented and tested targetSdk 35 execution path. PRoot relies on its loader in nativeLibraryDir to work around Android's app-data executable restrictions. Moving the app target to API 36 is not assumed safe until the PRoot engine has been validated there.
-
-The Android 12 handset still requires a physical test. CI can verify source compilation and packaging, but cannot validate Android's SELinux, PRoot syscall behaviour, DNS, actual process lifetime, memory pressure or media playback on the phone.
-
-## Disabled capabilities in the first profile
-
-Chromium/browser automation, Playwright-dependent providers, transcoding, TorrServer, catalog-related extras, DLNA, sync, time-code, tracks and web logs are not part of the initial embedded profile. Provider availability must reflect these disabled features; Jacket must not claim full upstream Lampac parity.
-
-The initial config intentionally prioritizes the no-browser API path used by Jacket. Modules will be enabled only after provider/API and playback tests.
-
-## Upstream TLS caveat
-
-The pinned Lampac source configures its internal `proxy`, `proxyRedirect` and `proxyimg` HTTP clients with `RemoteCertificateValidationCallback` that accepts all certificate results. Those upstream proxy paths therefore do not enforce server-certificate validation. This is inherited upstream behavior, not a Jacket setting, and this integration does not patch it.
-
-The embedded listener is restricted to `127.0.0.1:9118` and must not be exposed to Wi-Fi/LAN or the public internet. Use this only on a trusted device/network, avoid entering sensitive third-party credentials into Lampac modules, and treat returned media URLs as untrusted.
-
-## Licence and personal use
-
-Lampac NextGen is AGPL-3.0-only. The PRoot Android wrapper is MIT, while its PRoot and pr-cli native components have GPL-2.0-or-later / GPL-3.0-or-later licensing. Source provenance and notices are retained. This branch is for a personal build; it does not publish APKs or create public releases. Any future redistribution would require a full corresponding-source and licence-compliance review.
-
-## Validation still required
-
-1. A green Android CI run for the current branch: lint, unit tests, debug build and release build.
-2. On the actual ARM64 Android 12 phone, start Debian from Jacket's private files directory without root or Termux.
-3. Run dotnet --info inside Debian and verify the ASP.NET Core Runtime 10.0.15 installation.
-4. Launch Core.dll and verify /online.js, /lite/events and /lifeevents.
-5. Verify the server is reachable from Jacket through loopback but is not reachable from another device on the Wi-Fi network.
-6. Test at least one supported non-browser provider and a real playback route.
-7. Test stop/restart, interrupted installation, low storage, app process death, Android background restrictions, RAM, disk use, heat and battery drain.
-
-**Do not mark embedded Lampac complete until CI and the on-device checks pass.**
+CI can build the Android shell and test configuration helpers. A physical ARM64 Android device must still be used to verify Debian setup, .NET startup, Chromium automation, GStreamer, FFmpeg, module loading, provider requests, playback, stop/restart, storage pressure and battery/RAM use. Do not claim every module works on Android until these tests pass.

@@ -110,7 +110,7 @@ private object LampacArtifactDownloader {
                     readTimeout = 90_000
                     instanceFollowRedirects = false
                     setRequestProperty("Accept", "application/octet-stream")
-                    setRequestProperty("User-Agent", "Jacket-Android/2.8 (private Lampac installer)")
+                    setRequestProperty("User-Agent", "Lampa-Android/3.0 (private Lampac installer)")
                 }
 
                 try {
@@ -217,10 +217,10 @@ private object LampacArtifactDownloader {
 
 private object LampacZipInstaller {
     private const val MAX_FILES = 120_000
-    private const val MAX_UNCOMPRESSED_BYTES = 3L * 1024L * 1024L * 1024L
+    private const val MAX_UNCOMPRESSED_BYTES = 10L * 1024L * 1024L * 1024L
     private const val MAX_ENTRY_BYTES = 512L * 1024L * 1024L
     private const val RESERVED_BYTES = 256L * 1024L * 1024L
-    private const val MARKER_FILE = ".jacket-lampac-version"
+    private const val MARKER_FILE = ".lampa-lampac-version"
 
     suspend fun install(
         archive: File,
@@ -441,7 +441,7 @@ internal fun isDebianRootfsReady(root: File): Boolean {
  */
 class LampacRuntimeInstaller(context: android.content.Context) {
     private val appContext = context.applicationContext
-    private val host = JacketProotHost(appContext)
+    private val host = LampaProotHost(appContext)
     private val commands = LampacProotCommands(host)
     private val commandRunner = LampacProotCommandRunner(commands)
     private val downloads = File(appContext.filesDir, "lampac/downloads")
@@ -493,9 +493,9 @@ class LampacRuntimeInstaller(context: android.content.Context) {
             "Встроенный Lampac пока доступен только на ARM64. Удалённый сервер можно подключить по HTTPS."
         }
         val requiredBeforeDownload = LampacRuntimeArtifacts.LAMPAC_BYTES +
-            1024L * 1024L * 1024L
+            4L * 1024L * 1024L * 1024L
         check(availableBytes() >= requiredBeforeDownload) {
-            "Для установки Lampac нужно не менее 1,5 ГБ свободного места во внутренней памяти телефона."
+            "Для установки полного Lampac нужно не менее 4,5 ГБ свободного места во внутренней памяти телефона."
         }
 
         send("prepare", "Подготавливаем PRoot…", 0, 0)
@@ -525,7 +525,15 @@ class LampacRuntimeInstaller(context: android.content.Context) {
         val apt = commandRunner.runAsRoot(
             "export DEBIAN_FRONTEND=noninteractive && " +
                 "apt-get update && " +
-                "apt-get install -y --no-install-recommends ca-certificates curl libicu-dev libssl-dev zlib1g tar && " +
+                "apt-get install -y --no-install-recommends ca-certificates curl fontconfig libicu-dev libssl-dev zlib1g tar " +
+                "ffmpeg imagemagick xvfb fonts-liberation libjpeg-dev libpng-dev libwebp-dev libnspr4 libnss3 " +
+                "gstreamer1.0-libav gstreamer1.0-plugins-bad gstreamer1.0-plugins-base gstreamer1.0-plugins-base-apps " +
+                "gstreamer1.0-plugins-good gstreamer1.0-plugins-ugly gstreamer1.0-tools " +
+                "libgstreamer-plugins-base1.0-0 libgstreamer1.0-0 && " +
+                "curl -fSL --retry 3 https://dl.google.com/linux/direct/google-chrome-stable_current_arm64.deb -o /tmp/google-chrome-stable.deb && " +
+                "apt-get install -y --no-install-recommends /tmp/google-chrome-stable.deb && " +
+                "ln -sf /usr/bin/google-chrome-stable /usr/bin/chromium && " +
+                "rm -f /tmp/google-chrome-stable.deb && " +
                 "apt-get clean && rm -rf /var/lib/apt/lists/*"
         ) { line -> send("packages", line.take(220), 0, 0) }
         check(apt == 0) { "Не удалось установить системные библиотеки Debian (код $apt)" }
