@@ -77,6 +77,7 @@ fun LampaWebViewScreen(
     val lampaPlayerOpen = remember { mutableStateOf(false) }
     val lampacStatus = remember { mutableStateOf("Lampac: ожидаем подключение") }
     val currentOnBack by rememberUpdatedState(onBack)
+    val currentOnPlaybackCommandSent by rememberUpdatedState(onPlaybackCommandSent)
     val currentOnPlaybackError by rememberUpdatedState(onPlaybackError)
     val currentOnPlaybackClosed by rememberUpdatedState(onPlaybackClosed)
     val chromeClient = remember(context) {
@@ -169,12 +170,12 @@ fun LampaWebViewScreen(
                 webView.evaluateJavascriptBoolean(script)
             }.getOrDefault(false)
             if (dispatched) {
-                onPlaybackCommandSent(request.id)
+                currentOnPlaybackCommandSent(request.id)
                 return@LaunchedEffect
             }
             delay(250)
         }
-        onPlaybackError(request.id, "Интерфейс Lampa не успел подготовить плеер")
+        currentOnPlaybackError(request.id, "Интерфейс Lampa не успел подготовить плеер")
     }
 
     BackHandler(enabled = true) {
