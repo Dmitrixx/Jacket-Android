@@ -493,9 +493,9 @@ internal fun buildLampacOfflineDpkgCommand(command: String): String {
         "mkdir -p /usr/local/bin; " +
         "if [ -e \"\$backup\" ] || [ -L \"\$backup\" ]; then rm -f \"\$shim\"; mv \"\$backup\" \"\$shim\"; fi; " +
         "if [ -e \"\$shim\" ] || [ -L \"\$shim\" ]; then mv \"\$shim\" \"\$backup\"; fi; " +
-        "printf '#!/bin/sh\\\\nexit 0\\\\n' > \"\$shim\"; " +
+        "printf '#!/bin/sh\\nexit 0\\n' > \"\$shim\"; " +
         "chmod 755 \"\$shim\"; " +
-        "export PATH=/usr/local/bin:\\$PATH; " +
+        "export PATH=/usr/local/bin:\$PATH; " +
         "hash -r 2>/dev/null || true; " +
         "restore_systemd_machine_id_setup() { rm -f \"\$shim\"; if [ -e \"\$backup\" ] || [ -L \"\$backup\" ]; then mv \"\$backup\" \"\$shim\"; fi; }; " +
         "trap 'restore_systemd_machine_id_setup' EXIT; " +
