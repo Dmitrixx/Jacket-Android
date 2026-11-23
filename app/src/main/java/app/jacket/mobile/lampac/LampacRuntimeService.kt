@@ -13,6 +13,7 @@ import android.os.IBinder
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
+import app.jacket.mobile.BuildConfig
 import app.jacket.mobile.MainActivity
 import app.jacket.mobile.R
 import id.or.oo.pr.engine.ProotLauncher
@@ -256,7 +257,7 @@ class LampacRuntimeService : Service() {
                 readTimeout = 1_200
                 requestMethod = "GET"
                 instanceFollowRedirects = false
-                setRequestProperty("User-Agent", "Jacket-Android/2.8.2")
+                setRequestProperty("User-Agent", "Jacket-Android/${BuildConfig.VERSION_NAME}")
             }
         }.getOrNull() ?: return false
         return try {
