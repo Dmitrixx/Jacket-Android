@@ -6,7 +6,7 @@
 (function () {
     var base = window.__JACKET_LAMPAC_URL__ || 'http://127.0.0.1:9118';
     var attempts = 0;
-    var maxAttempts = 60;
+    var maxAttempts = 90;
     var timer = null;
 
     function loadLampacPlugin() {

@@ -32,9 +32,13 @@ embedded Lampac server. This lets the Lampa plugin load
 `http://127.0.0.1:9118/online.js` without enabling mixed-content HTTP access to
 arbitrary public sites.
 
-Jacket's modification script retries the Lampac plugin while the local server
-is stopped and loads it once `/online.js` becomes available. Starting Lampac
-does not require reinstalling the APK.
+When the user opens the Lampa tab, Jacket automatically starts an already
+installed embedded Lampac runtime as a foreground service. It does not silently
+download or install the large runtime; first-time installation remains an
+explicit action in Settings → Lampac. The modification script retries loading
+the Lampac plugin while the local server is starting and loads it once
+`/online.js` becomes available. There is no boot-time server start, and no APK
+reinstallation is needed to start or stop Lampac.
 
 Playback stays inside Lampa: the WebView deliberately does not identify itself
 with Lampa's `lampa_client` marker, so Lampa selects its own HTML5/WebView
