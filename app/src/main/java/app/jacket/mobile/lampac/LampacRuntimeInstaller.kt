@@ -490,10 +490,10 @@ internal fun buildLampacOfflineDpkgCommand(command: String): String {
         "set -e; " +
         "postinst=/var/lib/dpkg/info/systemd.postinst; " +
         "backup=/tmp/lampa-systemd.postinst.original; " +
-        "restore_systemd_postinst() { if [ -f \"$backup\" ]; then cp -p \"$backup\" \"$postinst\"; rm -f \"$backup\"; fi; }; " +
-        "if [ -f \"$backup\" ] && [ -f \"$postinst\" ]; then cp -p \"$backup\" \"$postinst\"; rm -f \"$backup\"; fi; " +
-        "if [ -f \"$postinst\" ] && grep -q 'systemd-machine-id-setup' \"$postinst\"; then " +
-        "cp -p \"$postinst\" \"$backup\"; sed -i 's/systemd-machine-id-setup/true/g' \"$postinst\"; fi; " +
+        "restore_systemd_postinst() { if [ -f \"\$backup\" ]; then cp -p \"\$backup\" \"\$postinst\"; rm -f \"\$backup\"; fi; }; " +
+        "if [ -f \"\$backup\" ] && [ -f \"\$postinst\" ]; then cp -p \"\$backup\" \"\$postinst\"; rm -f \"\$backup\"; fi; " +
+        "if [ -f \"\$postinst\" ] && grep -q 'systemd-machine-id-setup' \"\$postinst\"; then " +
+        "cp -p \"\$postinst\" \"\$backup\"; sed -i 's/systemd-machine-id-setup/true/g' \"\$postinst\"; fi; " +
         "trap 'restore_systemd_postinst' EXIT; " +
         "dpkg --root=/ --configure -a; " +
         "restore_systemd_postinst; " +
