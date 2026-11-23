@@ -281,7 +281,10 @@ if (!builtAppJs.includes("lampa-android")) {
 if (!builtAppJs.includes("openExternalPlayer")) {
   throw new Error("The external Android player integration is missing from the Lampa bundle");
 }
-if (!builtAppJs.includes("Torserver.toPlayUrl(torrentData.url)")) {
+if (
+  !builtAppJs.includes("toPlayUrl(torrentData.url)") ||
+  !builtAppJs.includes("openExternalPlayer")
+) {
   throw new Error("The external Android torrent handoff is missing from the Lampa bundle");
 }
 if (appJs.length < 100_000 || css.length < 20_000) {
