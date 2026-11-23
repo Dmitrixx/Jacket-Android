@@ -1,17 +1,22 @@
 package app.jacket.mobile.ui
 
+import android.app.Activity
 import android.content.Context
+import android.content.ContextWrapper
 import android.content.Intent
 import android.net.Uri
 import android.os.Handler
 import android.os.Looper
 import android.view.View
+import android.view.ViewGroup
 import android.webkit.JavascriptInterface
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.webkit.WebChromeClient
+import android.widget.FrameLayout
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.fillMaxSize
@@ -35,6 +40,9 @@ fun LampaWebViewScreen(
     onBack: () -> Unit
 ) {
     val context = LocalContext.current
+    val chromeClient = remember(context) {
+        context.findActivity()?.let(::LampaFullscreenChromeClient)
+    }
     val webView = remember(context) {
         WebView(context).apply {
             settings.javaScriptEnabled = true
@@ -60,6 +68,7 @@ fun LampaWebViewScreen(
                 "AndroidJS"
             )
 
+            webChromeClient = chromeClient ?: WebChromeClient()
             webViewClient = object : WebViewClient() {
                 override fun shouldInterceptRequest(
                     view: WebView?,
@@ -103,11 +112,16 @@ fun LampaWebViewScreen(
     }
 
     BackHandler(enabled = true) {
-        if (webView.canGoBack()) webView.goBack() else onBack()
+        when {
+            chromeClient?.hideCustomView() == true -> Unit
+            webView.canGoBack() -> webView.goBack()
+            else -> onBack()
+        }
     }
 
     DisposableEffect(webView) {
         onDispose {
+            chromeClient?.hideCustomView()
             webView.stopLoading()
             webView.removeJavascriptInterface("AndroidJS")
             webView.destroy()
@@ -260,5 +274,68 @@ private fun openExternal(context: Context, uri: Uri) {
         context.startActivity(Intent(Intent.ACTION_VIEW, uri).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
     }.onFailure {
         Toast.makeText(context, "Не удалось открыть ссылку", Toast.LENGTH_LONG).show()
+    }
+}
+
+private tailrec fun Context.findActivity(): Activity? = when (this) {
+    is Activity -> this
+    is ContextWrapper -> baseContext.findActivity()
+    else -> null
+}
+
+/**
+ * Lets Lampa's own HTML5 video element use Android WebView fullscreen mode.
+ * The video stays in Lampa; no stream is sent to Jacket's Media3 player.
+ */
+private class LampaFullscreenChromeClient(
+    private val activity: Activity
+) : WebChromeClient() {
+    private var customView: View? = null
+    private var customViewCallback: CustomViewCallback? = null
+    private var previousSystemUiVisibility: Int = 0
+
+    override fun onShowCustomView(view: View?, callback: CustomViewCallback?) {
+        val fullscreenView = view ?: run {
+            callback?.onCustomViewHidden()
+            return
+        }
+        val decor = activity.window.decorView as? FrameLayout
+        if (decor == null || customView != null) {
+            callback?.onCustomViewHidden()
+            return
+        }
+
+        previousSystemUiVisibility = decor.systemUiVisibility
+        customView = fullscreenView
+        customViewCallback = callback
+        decor.addView(
+            fullscreenView,
+            FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
+            )
+        )
+        decor.systemUiVisibility = previousSystemUiVisibility or
+            View.SYSTEM_UI_FLAG_FULLSCREEN or
+            View.SYSTEM_UI_FLAG_HIDE_NAVIGATION or
+            View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY or
+            View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN or
+            View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+        fullscreenView.requestFocus()
+    }
+
+    override fun onHideCustomView() {
+        hideCustomView()
+    }
+
+    fun hideCustomView(): Boolean {
+        val fullscreenView = customView ?: return false
+        val decor = activity.window.decorView as? FrameLayout
+        decor?.removeView(fullscreenView)
+        decor?.systemUiVisibility = previousSystemUiVisibility
+        customView = null
+        customViewCallback?.onCustomViewHidden()
+        customViewCallback = null
+        return true
     }
 }
