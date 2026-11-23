@@ -1,5 +1,12 @@
 # Changelog
 
+## 3.0.3 — PRoot systemd machine-id shim
+
+- Use a temporary `/usr/local/bin/systemd-machine-id-setup` shim for the complete dpkg/apt transaction, including package upgrades and post-install scripts.
+- Keep a valid persistent machine-id in the app-private Debian rootfs.
+- Restore any pre-existing helper after the transaction, including on command failure.
+- Avoid editing Debian's `systemd.postinst` file, which may be replaced when apt unpacks or upgrades the systemd package.
+
 ## 3.0.2 — PRoot systemd post-install repair
 
 - Provision a persistent machine-id inside the private Debian rootfs before package configuration.
