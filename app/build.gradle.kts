@@ -4,6 +4,7 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
+// Keep the established secret names so the existing private keystore remains usable.
 val releaseSigningStoreFile = System.getenv("JACKET_SIGNING_STORE_FILE")
 val releaseSigningStorePassword = System.getenv("JACKET_SIGNING_STORE_PASSWORD")
 val releaseSigningKeyAlias = System.getenv("JACKET_SIGNING_KEY_ALIAS")
@@ -40,11 +41,12 @@ tasks.named("preBuild").configure {
 }
 
 android {
+    // Keep the legacy namespace and application ID: the installed APK uses this package.
     namespace = "app.jacket.mobile"
     compileSdk = 36
 
     defaultConfig {
-        // Keep the existing package ID for an in-place update that preserves app data.
+        // Do not change without an explicit migration plan for existing installs and app data.
         applicationId = "app.jacket.mobile"
         minSdk = 28
         targetSdk = 35
@@ -66,7 +68,7 @@ android {
 
     signingConfigs {
         if (hasReleaseSigning) {
-            create("jacketRelease") {
+            create("lampaRelease") {
                 storeFile = file(requireNotNull(releaseSigningStoreFile))
                 storePassword = releaseSigningStorePassword
                 keyAlias = releaseSigningKeyAlias
@@ -80,7 +82,7 @@ android {
             isMinifyEnabled = true
             isShrinkResources = true
             if (hasReleaseSigning) {
-                signingConfig = signingConfigs.getByName("jacketRelease")
+                signingConfig = signingConfigs.getByName("lampaRelease")
             }
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
