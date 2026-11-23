@@ -1,5 +1,12 @@
 # Changelog
 
+## 3.0.5 — PRoot systemd-sysusers kernel compatibility
+
+- Divert `/usr/bin/systemd-sysusers` to an app-managed success stub before dpkg recovery and package installation.
+- Address the systemd 260 `STATX_MNT_ID` dependency, which is unavailable on the POCO F3's Android 4.19 kernel and is surfaced as a misleading missing `basic.conf` error.
+- Keep systemd-managed service account provisioning disabled in the app-private rootfs; the Android app starts Lampac directly and does not run systemd daemons.
+- Preserve the Debian rootfs, Lampac files and provider configuration during retry.
+
 ## 3.0.4 — PRoot systemd divert
 
 - Replace `/usr/bin/systemctl` and `/usr/bin/systemd-machine-id-setup` with permanent stubs before `dpkg --configure`. Debian maintainer scripts call those absolute paths, so the previous PATH shim never ran, and PRoot's `statx` failure (`Protocol driver not attached`, apt exit 100) aborted installation of the full Lampac runtime.
