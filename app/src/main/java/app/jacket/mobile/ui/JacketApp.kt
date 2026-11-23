@@ -144,6 +144,7 @@ import java.time.OffsetDateTime
 import java.time.ZonedDateTime
 import java.time.format.DateTimeFormatter
 import java.util.Locale
+import java.util.UUID
 
 private const val TAB_HOME = 0
 private const val TAB_MOVIES = 1
@@ -166,6 +167,8 @@ fun JacketApp(viewModel: MainViewModel) {
     var playerSubtitles by remember { mutableStateOf(emptyList<app.jacket.mobile.torrent.PlaybackSubtitle>()) }
     var playerHeaders by remember { mutableStateOf(emptyMap<String, String>()) }
     var isTorrentPlayback by rememberSaveable { mutableStateOf(false) }
+    var pendingLampaPlayback by remember { mutableStateOf<LampaPlaybackRequest?>(null) }
+    var activeLampaPlayback by remember { mutableStateOf<LampaPlaybackRequest?>(null) }
 
     val context = LocalContext.current
     val screenStateHolder = rememberSaveableStateHolder()
@@ -177,14 +180,58 @@ fun JacketApp(viewModel: MainViewModel) {
 
     LaunchedEffect(torrentPlayback) {
         torrentPlayback?.let { request ->
-            playerTitle = request.title
-            playerUrl = request.url
-            playerProgressKey = request.progressKey
-            playerInitialPosition = request.initialPositionMs
-            playerSubtitles = request.subtitles
-            playerHeaders = emptyMap()
-            isTorrentPlayback = true
+            pendingLampaPlayback = LampaPlaybackRequest(
+                id = UUID.randomUUID().toString(),
+                title = request.title,
+                url = request.url,
+                progressKey = request.progressKey,
+                initialPositionMs = request.initialPositionMs,
+                subtitles = request.subtitles,
+                isTorrent = true
+            )
+            activeLampaPlayback = null
+            playerUrl = null
+            showDownloads = false
+            showSettings = false
+            selectedTab = TAB_LAMPA
+            viewModel.closeDetails()
         }
+    }
+
+    fun onLampaPlaybackCommandSent(id: String) {
+        pendingLampaPlayback?.takeIf { it.id == id }?.let { request ->
+            activeLampaPlayback = request
+            pendingLampaPlayback = null
+        }
+    }
+
+    fun onLampaPlaybackError(id: String, message: String) {
+        val request = activeLampaPlayback?.takeIf { it.id == id }
+            ?: pendingLampaPlayback?.takeIf { it.id == id }
+            ?: return
+        activeLampaPlayback = null
+        pendingLampaPlayback = null
+        playerTitle = request.title
+        playerUrl = request.url
+        playerProgressKey = request.progressKey
+        playerInitialPosition = request.initialPositionMs
+        playerSubtitles = request.subtitles
+        playerHeaders = request.headers
+        isTorrentPlayback = request.isTorrent
+        Toast.makeText(
+            context,
+            "Lampa не смогла воспроизвести поток. Переключаю на совместимый плеер.",
+            Toast.LENGTH_LONG
+        ).show()
+    }
+
+    fun onLampaPlaybackClosed(id: String) {
+        val request = activeLampaPlayback?.takeIf { it.id == id }
+            ?: pendingLampaPlayback?.takeIf { it.id == id }
+            ?: return
+        activeLampaPlayback = null
+        pendingLampaPlayback = null
+        if (request.isTorrent) TorrentDownloadService.stopPlayback(context)
     }
 
     fun closePlayer() {
@@ -196,6 +243,8 @@ fun JacketApp(viewModel: MainViewModel) {
         playerSubtitles = emptyList()
         playerHeaders = emptyMap()
         isTorrentPlayback = false
+        pendingLampaPlayback = null
+        activeLampaPlayback = null
     }
 
     // Android TV remotes dispatch Back through the system dispatcher; unwind the current screen first.
@@ -291,15 +340,25 @@ fun JacketApp(viewModel: MainViewModel) {
                 showSettings = true
             },
             onPlay = { title, url, headers, subtitles ->
-                playerTitle = title
-                playerUrl = url
-                playerProgressKey = PlaybackProgressStore.urlKey(url)
-                playerInitialPosition = PlaybackProgressStore(context).position(playerProgressKey!!)
-                playerSubtitles = subtitles
-                playerHeaders = headers.filterKeys {
-                    it.equals("Referer", true) || it.equals("User-Agent", true)
-                }
+                val progressKey = PlaybackProgressStore.urlKey(url)
+                pendingLampaPlayback = LampaPlaybackRequest(
+                    id = UUID.randomUUID().toString(),
+                    title = title,
+                    url = url,
+                    progressKey = progressKey,
+                    initialPositionMs = PlaybackProgressStore(context).position(progressKey),
+                    subtitles = subtitles,
+                    headers = headers.filterKeys {
+                        it.equals("Referer", true) || it.equals("User-Agent", true)
+                    }
+                )
+                activeLampaPlayback = null
+                playerUrl = null
                 isTorrentPlayback = false
+                showDownloads = false
+                showSettings = false
+                viewModel.closeDetails()
+                selectedTab = TAB_LAMPA
             }
         )
         return
@@ -403,6 +462,10 @@ fun JacketApp(viewModel: MainViewModel) {
                     onShowMovies = { selectedTab = TAB_MOVIES },
                     onDownloads = { showDownloads = true },
                     onLampaBack = { selectedTab = TAB_HOME },
+                    playbackRequest = pendingLampaPlayback,
+                    onPlaybackCommandSent = ::onLampaPlaybackCommandSent,
+                    onPlaybackError = ::onLampaPlaybackError,
+                    onPlaybackClosed = ::onLampaPlaybackClosed
                 )
             }
         } else {
@@ -413,6 +476,10 @@ fun JacketApp(viewModel: MainViewModel) {
                 onShowMovies = { selectedTab = TAB_MOVIES },
                 onDownloads = { showDownloads = true },
                 onLampaBack = { selectedTab = TAB_HOME },
+                playbackRequest = pendingLampaPlayback,
+                onPlaybackCommandSent = ::onLampaPlaybackCommandSent,
+                onPlaybackError = ::onLampaPlaybackError,
+                onPlaybackClosed = ::onLampaPlaybackClosed
             )
         }
         }
@@ -473,7 +540,11 @@ private fun MainTabContent(
     modifier: Modifier,
     onShowMovies: () -> Unit,
     onDownloads: () -> Unit,
-    onLampaBack: () -> Unit
+    onLampaBack: () -> Unit,
+    playbackRequest: LampaPlaybackRequest?,
+    onPlaybackCommandSent: (String) -> Unit,
+    onPlaybackError: (String, String) -> Unit,
+    onPlaybackClosed: (String) -> Unit
 ) {
     val loading by viewModel.isLoading.collectAsState()
     val tabStateHolder = rememberSaveableStateHolder()
@@ -508,7 +579,11 @@ private fun MainTabContent(
             )
             TAB_LAMPA -> LampaWebViewScreen(
                 modifier = modifier,
-                onBack = onLampaBack
+                onBack = onLampaBack,
+                playbackRequest = playbackRequest,
+                onPlaybackCommandSent = onPlaybackCommandSent,
+                onPlaybackError = onPlaybackError,
+                onPlaybackClosed = onPlaybackClosed
             )
             else -> LibraryScreen(
                 viewModel = viewModel,
