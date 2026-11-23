@@ -39,7 +39,7 @@ class LampacRuntimeStateTest {
         statusWriter.join()
 
         val snapshot = LampacRuntimeState.state.value
-        assertEquals(80, snapshot.logs.size)
+        assertEquals(160, snapshot.logs.size)
         assertEquals("entry-599", snapshot.logs.last())
         assertEquals(LampacRuntimePhase.RUNNING, snapshot.phase)
         assertEquals("status-599", snapshot.message)
