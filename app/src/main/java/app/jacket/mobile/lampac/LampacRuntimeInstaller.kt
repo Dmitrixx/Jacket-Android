@@ -441,9 +441,9 @@ internal fun copyArchiveEntryBounded(
 
 /**
  * A complete install is only accepted when it carries the new Lampa marker.
- * Older Jacket/Lampac installs are intentionally reinstalled once so the
- * official full archive and all module files replace any previously filtered
- * payload. The updater still carries forward init.conf and provider settings.
+ * Earlier embedded Lampac installations are intentionally replaced once so
+ * the official full archive and all module files replace any filtered payload.
+ * The updater still carries forward init.conf and provider settings.
  */
 internal fun isLampacRuntimePayloadReady(root: File, expectedVersion: String): Boolean {
     val lampac = File(root, "opt/lampac")
