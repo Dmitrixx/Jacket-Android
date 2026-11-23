@@ -42,10 +42,19 @@ class LampacRuntimeInstallerTest {
             playwrightIndex.writeText("// Playwright package index")
 
             assertFalse(isLampacPlaywrightPackageReady(oldInstall))
-            assertFalse(isCompleteLampacRuntime(root, "1.90.2"))
+            assertFalse(isLampacRuntimePayloadReady(root, "1.90.2"))
 
             File(oldInstall, ".playwright/package/cli.js").writeText("// Playwright driver entry")
             assertTrue(isLampacPlaywrightPackageReady(oldInstall))
+            assertTrue(isLampacRuntimePayloadReady(root, "1.90.2"))
+            assertFalse(isLampacNodeReady(root))
+            assertFalse(isCompleteLampacRuntime(root, "1.90.2"))
+
+            val node = File(root, "usr/bin/node")
+            node.parentFile?.mkdirs()
+            node.writeText("#!/bin/sh\necho node")
+            assertTrue(node.setExecutable(true))
+            assertTrue(isLampacNodeReady(root))
             assertTrue(isCompleteLampacRuntime(root, "1.90.2"))
             assertFalse(isCompleteLampacRuntime(root, "1.90.3"))
         } finally {
@@ -288,6 +297,16 @@ class LampacRuntimeInstallerTest {
         assertTrue(checks == 1)
     }
 
+
+    @Test
+    fun existingLampacCanInstallMissingNodeWithoutDownloadingTheServerAgain() {
+        val command = buildLampacNodeInstallCommand()
+
+        assertTrue(command.contains("apt-get install -y --no-install-recommends nodejs"))
+        assertTrue(command.contains("test -x /usr/bin/node"))
+        assertTrue(command.contains("node --version"))
+        assertTrue(command.contains("apt-get clean"))
+    }
 
     @Test
     fun arm64RuntimeUsesDebianNodeForThePortablePlaywrightDriver() {
