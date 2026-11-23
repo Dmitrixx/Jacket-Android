@@ -19,7 +19,15 @@ import android.webkit.WebChromeClient
 import android.widget.FrameLayout
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.unit.dp
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.remember
@@ -44,6 +52,7 @@ fun LampaWebViewScreen(
 ) {
     val context = LocalContext.current
     val lampaPlayerOpen = remember { mutableStateOf(false) }
+    val lampacStatus = remember { mutableStateOf("Lampac: ожидаем подключение") }
     val chromeClient = remember(context) {
         context.findActivity()?.let(::LampaFullscreenChromeClient)
     }
@@ -68,9 +77,12 @@ fun LampaWebViewScreen(
             scrollBarStyle = View.SCROLLBARS_INSIDE_OVERLAY
 
             addJavascriptInterface(
-                LampaAndroidBridge(context.applicationContext, onBack) { isOpen ->
-                    lampaPlayerOpen.value = isOpen
-                },
+                LampaAndroidBridge(
+                    context.applicationContext,
+                    onBack,
+                    onPlayerOpenChanged = { isOpen -> lampaPlayerOpen.value = isOpen },
+                    onLampacStateChanged = { state -> lampacStatus.value = state }
+                ),
                 "AndroidJS"
             )
 
@@ -146,11 +158,26 @@ fun LampaWebViewScreen(
         }
     }
 
-    AndroidView(
-        factory = { webView },
-        modifier = modifier.fillMaxSize(),
-        update = { it.requestFocus() }
-    )
+    Box(modifier = modifier.fillMaxSize()) {
+        AndroidView(
+            factory = { webView },
+            modifier = Modifier.fillMaxSize(),
+            update = { it.requestFocus() }
+        )
+        Text(
+            text = lampacStatus.value,
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .padding(top = 10.dp, end = 12.dp)
+                .background(
+                    MaterialTheme.colorScheme.surface.copy(alpha = 0.88f),
+                    RoundedCornerShape(14.dp)
+                )
+                .padding(horizontal = 10.dp, vertical = 6.dp),
+            color = MaterialTheme.colorScheme.onSurface,
+            style = MaterialTheme.typography.labelSmall
+        )
+    }
 }
 
 private fun interceptLocalAsset(context: Context, request: WebResourceRequest): WebResourceResponse? {
@@ -218,7 +245,8 @@ private fun errorResponse(status: Int, reason: String) = WebResourceResponse(
 private class LampaAndroidBridge(
     private val context: Context,
     private val onBack: () -> Unit,
-    private val onPlayerOpenChanged: (Boolean) -> Unit
+    private val onPlayerOpenChanged: (Boolean) -> Unit,
+    private val onLampacStateChanged: (String) -> Unit
 ) {
     private val mainHandler = Handler(Looper.getMainLooper())
 
@@ -236,6 +264,17 @@ private class LampaAndroidBridge(
     @JavascriptInterface
     fun setPlayerOpen(isOpen: Boolean) {
         mainHandler.post { onPlayerOpenChanged(isOpen) }
+    }
+
+    @JavascriptInterface
+    fun setLampacState(rawState: String?) {
+        val state = when (rawState) {
+            "connected" -> "Lampac: подключён"
+            "connecting" -> "Lampac: подключение…"
+            "unavailable" -> "Lampac: сервер не отвечает"
+            else -> "Lampac: ожидаем подключение"
+        }
+        mainHandler.post { onLampacStateChanged(state) }
     }
 
     @JavascriptInterface
