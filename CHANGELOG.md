@@ -1,5 +1,12 @@
 # Changelog
 
+## 3.0.12 — Open Lampa streams in an external Android player
+
+- Send Lampa media streams to Android's system video-app chooser by default inside the installed app.
+- Pass the title, available request headers, playback position, playlist and subtitle URLs to compatible external players.
+- Keep Lampa's HTML5 player as a fallback when the URL is unsupported or no installed video application can handle it.
+- Keep external-player handoff restricted to the app's private `Lampa-Android` WebView marker; browser playback is unchanged.
+
 ## 3.0.11 — Avoid the false MediaStationX hint in the embedded app
 
 - Keep the upstream Android APK recommendation in Chrome and Media Station X.
