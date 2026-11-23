@@ -4,6 +4,7 @@
  * It loads the embedded Lampac Lampa plugin from the loopback-only server.
  */
 (function () {
+    window.__JACKET_ANDROID_BRIDGE_READY__ = false;
     var base = window.__JACKET_LAMPAC_URL__ || 'http://127.0.0.1:9118';
     var attempts = 0;
     var maxAttempts = 90;
@@ -103,6 +104,9 @@
             AndroidJS.setPlayerOpen(false);
         });
         AndroidJS.setPlayerOpen(Boolean(player.opened && player.opened()));
+        // Mark ready only after start/close listeners exist; otherwise an immediate
+        // Kotlin playback request could start before lifecycle callbacks are attached.
+        window.__JACKET_ANDROID_BRIDGE_READY__ = true;
     }
 
     function reportPlaybackFailure(playbackId, message) {
@@ -161,7 +165,6 @@
 
     observeLampaPlayer();
     observeVideoErrors();
-    window.__JACKET_ANDROID_BRIDGE_READY__ = true;
 
     window.addEventListener('beforeunload', function () {
         if (timer) window.clearTimeout(timer);
