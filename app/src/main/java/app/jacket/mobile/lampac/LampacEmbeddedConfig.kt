@@ -9,8 +9,9 @@ import java.io.IOException
 /**
  * Android bootstrap defaults for the complete upstream Lampac server.
  *
- * No Android-specific module exclusions are written. The full release package,
- * upstream module manifests and the user's configuration determine capabilities.
+ * Android does not impose a hardcoded module exclusion list. The full release
+ * package and upstream manifests define availability; user choices are saved
+ * as exact exclusions in BaseModule.SkipModules.
  */
 object LampacEmbeddedConfig {
     const val HOST = "127.0.0.1"
