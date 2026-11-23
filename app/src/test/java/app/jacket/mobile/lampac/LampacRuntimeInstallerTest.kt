@@ -308,6 +308,7 @@ class LampacRuntimeInstallerTest {
 
         listOf(packageCommand, nodeRepairCommand).forEach { command ->
             assertTrue(command.startsWith(offlineEnvironment))
+            assertEquals(1, command.split("dpkg --root=/ --configure -a").size - 1)
             assertTrue(command.contains("dpkg --root=/ --configure -a;"))
             assertTrue(command.contains("sed -i 's/systemd-machine-id-setup/true/g'"))
             assertTrue(command.contains("backup=/tmp/lampa-systemd.postinst.original"))
