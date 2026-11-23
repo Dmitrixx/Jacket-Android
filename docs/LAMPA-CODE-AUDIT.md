@@ -24,7 +24,7 @@ Do not delete or prune upstream Lampa plugins or Lampac module directories as pa
 ## Compatibility items intentionally retained
 
 - Android `applicationId` and Gradle `namespace` remain `app.jacket.mobile`. This is the existing installed package identifier needed for an in-place APK update with private app data preserved. It is not a remaining Jacket feature.
-- GitHub Actions signing secret and environment names beginning with `JACKET_ ` remain unchanged so the already configured persistent keystore can still sign updates. The internal Gradle signing-config name and temporary keystore path use Lampa naming.
+- GitHub Actions signing secret and environment names beginning with `JACKET_` remain unchanged so the already configured persistent keystore can still sign updates. The internal Gradle signing-config name and temporary keystore path use Lampa naming.
 - Lampac installer migration code continues to recognize previous Debian rootfs layouts and preserve `init.conf` and provider credentials while replacing incomplete/filtered runtime payloads.
 
 ## Result
