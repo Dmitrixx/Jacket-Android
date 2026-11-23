@@ -463,9 +463,37 @@ internal fun isLampacNodeReady(root: File): Boolean =
 internal fun isCompleteLampacRuntime(root: File, expectedVersion: String): Boolean =
     isLampacRuntimePayloadReady(root, expectedVersion) && isLampacNodeReady(root)
 
+/**
+ * Debian Forky runs under PRoot, not as the Android host's init system.
+ * Tell Debian maintainer scripts to operate on the offline container root:
+ * systemd then uses --root=/ for unit/machine-id setup instead of querying
+ * Android's kernel or trying to contact a system manager that is not running.
+ */
+private const val LAMPAC_OFFLINE_DPKG_ENV =
+    "export DEBIAN_FRONTEND=noninteractive DPKG_ROOT=/ SYSTEMD_OFFLINE=1 && "
+
+internal fun buildLampacSystemPackagesInstallCommand(): String =
+    LAMPAC_OFFLINE_DPKG_ENV +
+        "dpkg --root=/ --configure -a && " +
+        "apt-get update && " +
+        "apt-get install -y --no-install-recommends ca-certificates curl fontconfig libicu78 libssl-dev zlib1g tar nodejs " +
+        "ffmpeg imagemagick xvfb libjpeg-dev libpng-dev libwebp-dev libnspr4 " +
+        "gstreamer1.0-libav gstreamer1.0-plugins-bad gstreamer1.0-plugins-base gstreamer1.0-plugins-base-apps " +
+        "gstreamer1.0-plugins-good gstreamer1.0-plugins-ugly gstreamer1.0-tools " +
+        "libgstreamer-plugins-base1.0-0 libgstreamer1.0-0 && " +
+        "curl -fSL --retry 3 https://dl.google.com/linux/direct/google-chrome-stable_current_arm64.deb -o /tmp/google-chrome-stable.deb && " +
+        "test \"$(dpkg-deb -f /tmp/google-chrome-stable.deb Architecture)\" = arm64 && " +
+        "apt-get install -y --no-install-recommends /tmp/google-chrome-stable.deb && " +
+        "ln -sf /usr/bin/google-chrome-stable /usr/bin/chromium && " +
+        "rm -f /tmp/google-chrome-stable.deb && " +
+        "test -x /usr/bin/node && node --version && " +
+        "test -x /usr/bin/chromium && chromium --version && ffmpeg -version && gst-inspect-1.0 --version && " +
+        "apt-get clean && rm -rf /var/lib/apt/lists/*"
+
 /** A lightweight repair for older installs: it adds only ARM64 Node.js. */
 internal fun buildLampacNodeInstallCommand(): String =
-    "export DEBIAN_FRONTEND=noninteractive && " +
+    LAMPAC_OFFLINE_DPKG_ENV +
+        "dpkg --root=/ --configure -a && " +
         "apt-get update && " +
         "apt-get install -y --no-install-recommends nodejs && " +
         "test -x /usr/bin/node && node --version && " +
@@ -632,23 +660,9 @@ class LampacRuntimeInstaller(context: android.content.Context) {
         }
 
         send("packages", "Подготавливаем системные библиотеки Debian…", 0, 0)
-        val apt = commandRunner.runAsRoot(
-            "export DEBIAN_FRONTEND=noninteractive && " +
-                "apt-get update && " +
-                "apt-get install -y --no-install-recommends ca-certificates curl fontconfig libicu78 libssl-dev zlib1g tar nodejs " +
-                "ffmpeg imagemagick xvfb libjpeg-dev libpng-dev libwebp-dev libnspr4 " +
-                "gstreamer1.0-libav gstreamer1.0-plugins-bad gstreamer1.0-plugins-base gstreamer1.0-plugins-base-apps " +
-                "gstreamer1.0-plugins-good gstreamer1.0-plugins-ugly gstreamer1.0-tools " +
-                "libgstreamer-plugins-base1.0-0 libgstreamer1.0-0 && " +
-                "curl -fSL --retry 3 https://dl.google.com/linux/direct/google-chrome-stable_current_arm64.deb -o /tmp/google-chrome-stable.deb && " +
-                "test \"$(dpkg-deb -f /tmp/google-chrome-stable.deb Architecture)\" = arm64 && " +
-                "apt-get install -y --no-install-recommends /tmp/google-chrome-stable.deb && " +
-                "ln -sf /usr/bin/google-chrome-stable /usr/bin/chromium && " +
-                "rm -f /tmp/google-chrome-stable.deb && " +
-                "test -x /usr/bin/node && node --version && " +
-                "test -x /usr/bin/chromium && chromium --version && ffmpeg -version && gst-inspect-1.0 --version && " +
-                "apt-get clean && rm -rf /var/lib/apt/lists/*"
-        ) { line -> send("packages", line.take(220), 0, 0) }
+        val apt = commandRunner.runAsRoot(buildLampacSystemPackagesInstallCommand()) { line ->
+            send("packages", line.take(220), 0, 0)
+        }
         check(apt == 0) { "Не удалось установить системные библиотеки Debian (код $apt)" }
 
         send("dotnet-download", "Загружаем ASP.NET Core Runtime ${LampacRuntimeArtifacts.DOTNET_VERSION} ARM64…", 0, 0)

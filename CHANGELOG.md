@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.0.1 — PRoot package installation repair
+
+- Run Debian package maintainer scripts against the offline PRoot root instead of Android's init environment.
+- Recover any interrupted dpkg configuration before installing Lampac's native dependencies or repairing Node.js.
+- Keep the existing Debian container, Lampac payload and provider configuration during an in-place APK update.
+
 ## 3.0.0 — Lampa-only refactor
 
 - Retained the complete upstream Lampa client and its own HTML5 player.
