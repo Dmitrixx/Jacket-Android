@@ -79,7 +79,7 @@ object LampacModuleCatalog {
     ): LampacModuleInfo? {
         if (id.isBlank() || id == "." || id == "..") return null
         val enabled = runCatching {
-            JSONObject(manifest.readText(Charsets.UTF_8)).optBoolean("enable", true)
+            JSONObject(manifest.readText(Charsets.UTF_8)).optBoolean("enable", false)
         }.getOrNull() ?: return null
 
         return LampacModuleInfo(
