@@ -47,6 +47,9 @@ fun LampaApp(onExit: () -> Unit) {
     val busy = checkingInstallation || runtime.phase == LampacRuntimePhase.INSTALLING ||
         runtime.phase == LampacRuntimePhase.STARTING ||
         runtime.phase == LampacRuntimePhase.STOPPING
+    // Read the delegated StateFlow snapshot once; this also keeps nullable progress
+    // smart-casts stable inside Compose's deferred progress lambda.
+    val progress = runtime.progress
 
     LaunchedEffect(Unit) {
         installed = withContext(Dispatchers.IO) {
@@ -108,12 +111,12 @@ fun LampaApp(onExit: () -> Unit) {
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     Text(runtime.message)
-                    if (runtime.progress != null) {
+                    if (progress != null) {
                         LinearProgressIndicator(
-                            progress = { runtime.progress.coerceIn(0, 100) / 100f },
+                            progress = { progress.coerceIn(0, 100) / 100f },
                             modifier = Modifier.fillMaxWidth()
                         )
-                        Text("${runtime.progress}%")
+                        Text("$progress%")
                     }
                     Text(
                         "Устанавливается официальный полный серверный архив, .NET 10, Chromium, FFmpeg и GStreamer. Требуется несколько гигабайт свободной памяти. Настройки сервера сохраняются при обновлении приложения.",
