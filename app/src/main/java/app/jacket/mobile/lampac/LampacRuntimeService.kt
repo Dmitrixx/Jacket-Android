@@ -154,7 +154,7 @@ class LampacRuntimeService : Service() {
             val launchedSession = AtomicReference<ProotLauncher.Session?>()
             val session = try {
                 withContext(Dispatchers.IO) {
-                    commands.start(listOf("login", "debian", "--user", "root", "--", command))
+                    commands.start(listOf("login", LAMPAC_DEBIAN_ALIAS, "--user", "root", "--", command))
                         .also(launchedSession::set)
                 }
             } catch (cancelled: CancellationException) {

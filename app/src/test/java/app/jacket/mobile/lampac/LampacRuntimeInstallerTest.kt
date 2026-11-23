@@ -12,7 +12,7 @@ class LampacRuntimeInstallerTest {
     @Test
     fun debianBootstrapUsesTheUpstreamForkyOciImageAndStableAlias() {
         assertEquals(
-            listOf("install", "docker.io/library/debian:forky-slim", "--override-alias", "debian"),
+            listOf("install", "docker.io/library/debian:forky-slim", "--override-alias", "lampac-debian"),
             lampacDebianInstallArguments()
         )
     }
@@ -67,6 +67,39 @@ class LampacRuntimeInstallerTest {
                 rejected = true
             }
             assertTrue("Expected unsafe ZIP path to be rejected: $path", rejected)
+        }
+    }
+
+    @Test
+    fun migratesInitConfigFromLegacyOrPreviousOciDebianRootfs() {
+        val prefix = java.nio.file.Files.createTempDirectory("lampa-debian-config-migration").toFile()
+        try {
+            val legacyConfig = File(
+                prefix,
+                "var/lib/pr/installed-rootfs/debian/opt/lampac/init.conf"
+            )
+            legacyConfig.parentFile?.mkdirs()
+            legacyConfig.writeText("""{"Filmix":{"token":"keep-this"}}""")
+
+            assertEquals(
+                """{"Filmix":{"token":"keep-this"}}""",
+                readLegacyLampacInitConfig(prefix)
+            )
+
+            legacyConfig.delete()
+            val previousOciConfig = File(
+                prefix,
+                "var/lib/pr/containers/debian/rootfs/opt/lampac/init.conf"
+            )
+            previousOciConfig.parentFile?.mkdirs()
+            previousOciConfig.writeText("""{"Filmix":{"token":"keep-this-too"}}""")
+
+            assertEquals(
+                """{"Filmix":{"token":"keep-this-too"}}""",
+                readLegacyLampacInitConfig(prefix)
+            )
+        } finally {
+            prefix.deleteRecursively()
         }
     }
 

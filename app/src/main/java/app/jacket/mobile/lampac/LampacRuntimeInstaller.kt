@@ -444,6 +444,23 @@ internal fun isCompleteLampacRuntime(root: File, expectedVersion: String): Boole
         markerVersion == expectedVersion
 }
 
+/**
+ * Finds the previous app's Debian alias config before a new OCI runtime is
+ * created. The old legacy and old OCI locations are both checked, but neither
+ * rootfs is removed automatically.
+ */
+internal fun readLegacyLampacInitConfig(prefixDir: File): String? {
+    val candidates = listOf(
+        File(prefixDir, "var/lib/pr/installed-rootfs/debian/opt/lampac/init.conf"),
+        File(prefixDir, "var/lib/pr/containers/debian/rootfs/opt/lampac/init.conf")
+    )
+    val source = candidates.firstOrNull { it.isFile } ?: return null
+    require(source.length() in 1..LampacEmbeddedConfig.MAX_INIT_CONFIG_BYTES.toLong()) {
+        "Существующий init.conf Lampac пуст или превышает лимит 2 МиБ; миграция настроек отменена."
+    }
+    return source.readText(Charsets.UTF_8)
+}
+
 /** True only when the PRoot Debian root contains the required base system tools. */
 internal fun isDebianRootfsReady(root: File): Boolean {
     if (!root.isDirectory) return false
@@ -526,11 +543,12 @@ class LampacRuntimeInstaller(context: android.content.Context) {
 
         send("prepare", "Подготавливаем PRoot…", 0, 0)
         val prepared = LampacProotBootstrap.prepare(host)
+        val legacyInitConfig = readLegacyLampacInitConfig(host.prefixDir)
         if (!isDebianRootfsReady(prepared.debianRootfsDir)) {
             val containerDir = prepared.debianRootfsDir.parentFile
             if (containerDir?.exists() == true) {
                 send("debian-repair", "Обнаружена незавершённая установка Debian. Удаляем повреждённый контейнер…", 0, 0)
-                val removeCode = commandRunner.execute(listOf("remove", "debian")) { line ->
+                val removeCode = commandRunner.execute(listOf("remove", LAMPAC_DEBIAN_ALIAS)) { line ->
                     send("debian-repair", line.take(220), 0, 0)
                 }
                 check(removeCode == 0 || !containerDir.exists()) {
@@ -598,6 +616,14 @@ class LampacRuntimeInstaller(context: android.content.Context) {
             ),
             downloads
         ) { done, total -> send("lampac-download", "Загрузка Lampac: ${formatBytes(done)}", done, total) }
+
+        if (legacyInitConfig != null) {
+            val newServerDirectory = File(prepared.debianRootfsDir, "opt/lampac")
+            if (!File(newServerDirectory, "init.conf").isFile) {
+                LampacEmbeddedConfig.importInitConfig(newServerDirectory, legacyInitConfig)
+                send("config-migration", "Сохранены прежние настройки и ключи источников Lampac.", 1, 1)
+            }
+        }
 
         send("lampac-extract", "Проверяем архив и устанавливаем Lampac…", 0, 0)
         val serverDir = LampacZipInstaller.install(lampacArchive, prepared.debianRootfsDir) { done, total ->

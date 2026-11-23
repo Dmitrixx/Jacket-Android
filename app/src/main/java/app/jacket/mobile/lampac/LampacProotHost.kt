@@ -39,9 +39,9 @@ class LampaProotHost(context: Context) : ProotHost {
     val nativeLibraryDir: File
         get() = File(appContext.applicationInfo.nativeLibraryDir)
 
-    /** OCI rootfs path created by `pr-cli install debian`; do not create it before install. */
+    /** OCI rootfs path created by pr-cli under the private Lampac Debian alias. */
     val debianRootfsDir: File
-        get() = File(prefixDir, "var/lib/pr/containers/debian/rootfs")
+        get() = File(prefixDir, "var/lib/pr/containers/$LAMPAC_DEBIAN_ALIAS/rootfs")
 }
 
 data class ProotBootstrapResult(

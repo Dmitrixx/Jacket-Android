@@ -8,6 +8,7 @@ The app contains the complete upstream Lampa web client and a minimal Android We
 - Lampac source: third_party/lampac-source, pinned to the commit for release 1.90.2.
 - Runtime payload: official full lampac-nextgen.zip release asset, checksum-verified before extraction.
 - Local endpoint: http://127.0.0.1:9118.
+- PRoot OCI alias: lampac-debian; the app does not overwrite or remove another Debian container.
 - Runtime data and init.conf: filesDir/lampac, preserved across app upgrades.
 - Process lifecycle: user-started foreground LampacRuntimeService.
 
