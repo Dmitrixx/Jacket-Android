@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.0.11 — Avoid the false MediaStationX hint in the embedded app
+
+- Keep the upstream Android APK recommendation in Chrome and Media Station X.
+- Exempt only the app's private `Lampa-Android` WebView marker from that recommendation; the app is already an installed Android APK and uses its own native bridge.
+- Preserve Lampa's web platform/player behavior instead of impersonating the full upstream Android client or silently switching torrent playback to an external Android player.
+
 ## 3.0.10 — Reduce persistent PRoot storage
 
 - Clear verified OCI image-layer download cache after the Debian rootfs is confirmed installed; keep the Debian rootfs itself and only delete direct regular files in the dedicated cache directory.
