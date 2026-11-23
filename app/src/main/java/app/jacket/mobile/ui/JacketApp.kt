@@ -118,6 +118,8 @@ import app.jacket.mobile.data.FilmixDeviceAuth
 import app.jacket.mobile.data.HdRezkaLoginClient
 import app.jacket.mobile.data.HdRezkaSettings
 import app.jacket.mobile.data.LampacSettings
+import app.jacket.mobile.lampac.LampacRuntimeInstaller
+import app.jacket.mobile.lampac.LampacRuntimeService
 import app.jacket.mobile.data.IndexerConfig
 import app.jacket.mobile.data.IndexerProtocol
 import app.jacket.mobile.data.ReleaseHeuristics
@@ -310,6 +312,15 @@ fun JacketApp(viewModel: MainViewModel) {
             TAB_SERIES -> viewModel.loadSeries()
             TAB_SEARCH -> Unit
             TAB_LIBRARY -> viewModel.refreshFavoritesAndHistory()
+            TAB_LAMPA -> {
+                // Opening the main Lampa screen is a foreground user action.
+                // Start an already-installed embedded Lampac runtime automatically;
+                // do not silently download/install the large runtime here.
+                val lampacInstalled = withContext(Dispatchers.IO) {
+                    LampacRuntimeInstaller(context).isInstalled()
+                }
+                if (lampacInstalled) LampacRuntimeService.start(context)
+            }
         }
     }
 
