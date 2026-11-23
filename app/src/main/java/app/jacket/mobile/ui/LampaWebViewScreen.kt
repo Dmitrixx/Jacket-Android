@@ -40,6 +40,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import app.jacket.mobile.BuildConfig
+import app.jacket.mobile.lampac.ExternalMediaProxy
+import app.jacket.mobile.lampac.routeExternalMediaUrl
 import java.io.ByteArrayInputStream
 
 private const val LAMPA_ORIGIN = "http://127.0.0.1:9118"
@@ -286,7 +288,9 @@ private class LampaAndroidBridge(
      */
     @JavascriptInterface
     fun openExternalPlayer(rawUrl: String?, rawData: String?): Boolean {
-        val uri = rawUrl?.let(::safeVideoUri) ?: return false
+        val uri = rawUrl?.let(::safeVideoUri)?.let { parsed ->
+            routeExternalMediaUrl(parsed.toString(), ExternalMediaProxy.port)?.let(Uri::parse)
+        } ?: return false
         val payload = runCatching {
             JSONObject(rawData.orEmpty().ifBlank { "{}" })
         }.getOrDefault(JSONObject())
@@ -327,7 +331,11 @@ private class LampaAndroidBridge(
                 val titles = ArrayList<String>()
                 for (index in 0 until playlist.length()) {
                     val item = playlist.optJSONObject(index) ?: continue
-                    val itemUri = safeVideoUri(item.optString("url")) ?: continue
+                    val itemUri = safeVideoUri(item.optString("url"))
+                        ?.let { parsed ->
+                            routeExternalMediaUrl(parsed.toString(), ExternalMediaProxy.port)?.let(Uri::parse)
+                        }
+                        ?: continue
                     urls += itemUri.toString()
                     titles += item.optString("title").takeIf { it.isNotBlank() }
                         ?: "Видео ${urls.size}"
