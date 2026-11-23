@@ -118,6 +118,8 @@ import app.jacket.mobile.data.FilmixDeviceAuth
 import app.jacket.mobile.data.HdRezkaLoginClient
 import app.jacket.mobile.data.HdRezkaSettings
 import app.jacket.mobile.data.LampacSettings
+import app.jacket.mobile.lampac.LampacRuntimeInstaller
+import app.jacket.mobile.lampac.LampacRuntimeService
 import app.jacket.mobile.data.IndexerConfig
 import app.jacket.mobile.data.IndexerProtocol
 import app.jacket.mobile.data.ReleaseHeuristics
@@ -148,11 +150,13 @@ private const val TAB_MOVIES = 1
 private const val TAB_SERIES = 2
 private const val TAB_SEARCH = 3
 private const val TAB_LIBRARY = 4
+private const val TAB_LAMPA = 5
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun JacketApp(viewModel: MainViewModel) {
-    var selectedTab by rememberSaveable { mutableIntStateOf(TAB_HOME) }
+    // Lampa is the primary media-center surface; Jacket tools remain one Back press away.
+    var selectedTab by rememberSaveable { mutableIntStateOf(TAB_LAMPA) }
     var showSettings by rememberSaveable { mutableStateOf(false) }
     var showDownloads by rememberSaveable { mutableStateOf(false) }
     var playerUrl by rememberSaveable { mutableStateOf<String?>(null) }
@@ -195,17 +199,20 @@ fun JacketApp(viewModel: MainViewModel) {
     }
 
     // Android TV remotes dispatch Back through the system dispatcher; unwind the current screen first.
-    BackHandler(enabled = playerUrl != null || showSettings || showDownloads || details != null) {
+    BackHandler(
+        enabled = playerUrl != null || showSettings || showDownloads ||
+            details != null || selectedTab == TAB_LAMPA
+    ) {
         when {
             playerUrl != null -> closePlayer()
             showSettings -> showSettings = false
             showDownloads -> showDownloads = false
             details != null -> viewModel.closeDetails()
+            selectedTab == TAB_LAMPA -> selectedTab = TAB_HOME
         }
     }
 
     LaunchedEffect(Unit) {
-        viewModel.loadHome()
         if (TorrentQueueStore(context).all().isNotEmpty()) TorrentDownloadService.restore(context)
     }
 
@@ -305,61 +312,77 @@ fun JacketApp(viewModel: MainViewModel) {
             TAB_SERIES -> viewModel.loadSeries()
             TAB_SEARCH -> Unit
             TAB_LIBRARY -> viewModel.refreshFavoritesAndHistory()
+            TAB_LAMPA -> {
+                // Opening the main Lampa screen is a foreground user action.
+                // Start an already-installed embedded Lampac runtime automatically;
+                // do not silently download/install the large runtime here.
+                val lampacInstalled = withContext(Dispatchers.IO) {
+                    LampacRuntimeInstaller(context).isInstalled()
+                }
+                if (lampacInstalled) LampacRuntimeService.start(context)
+            }
         }
     }
 
     screenStateHolder.SaveableStateProvider("main") {
         Scaffold(
         topBar = {
-            TopAppBar(
-                title = {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(11.dp)
-                    ) {
-                        Box(
-                            modifier = Modifier.size(42.dp)
-                                .clip(RoundedCornerShape(14.dp))
-                                .background(
-                                    Brush.linearGradient(
-                                        listOf(
-                                            MaterialTheme.colorScheme.primary,
-                                            Color(0xFFE99A3C),
-                                            Color(0xFF9D6AF0)
-                                        )
-                                    )
-                                ),
-                            contentAlignment = Alignment.Center
+            if (selectedTab != TAB_LAMPA) {
+                TopAppBar(
+                    title = {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(11.dp)
                         ) {
-                            Text("J", style = MaterialTheme.typography.headlineMedium,
-                                fontWeight = FontWeight.Black, color = Color(0xFF17120D))
+                            Box(
+                                modifier = Modifier.size(42.dp)
+                                    .clip(RoundedCornerShape(14.dp))
+                                    .background(
+                                        Brush.linearGradient(
+                                            listOf(
+                                                MaterialTheme.colorScheme.primary,
+                                                Color(0xFFE99A3C),
+                                                Color(0xFF9D6AF0)
+                                            )
+                                        )
+                                    ),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text("J", style = MaterialTheme.typography.headlineMedium,
+                                    fontWeight = FontWeight.Black, color = Color(0xFF17120D))
+                            }
+                            Column(verticalArrangement = Arrangement.spacedBy(1.dp)) {
+                                Text(
+                                    if (selectedTab == TAB_LAMPA) "LAMPA" else "JACKET",
+                                    style = MaterialTheme.typography.titleLarge,
+                                    fontWeight = FontWeight.Black,
+                                    letterSpacing = 1.4.sp
+                                )
+                                Text(
+                                    if (selectedTab == TAB_LAMPA) "ВСТРОЕННЫЙ ИНТЕРФЕЙС" else "КИНО  •  СЕРИАЛЫ  •  ТОРРЕНТЫ",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant, letterSpacing = 0.6.sp)
+                            }
                         }
-                        Column(verticalArrangement = Arrangement.spacedBy(1.dp)) {
-                            Text("JACKET", style = MaterialTheme.typography.titleLarge,
-                                fontWeight = FontWeight.Black, letterSpacing = 1.4.sp)
-                            Text("КИНО  •  СЕРИАЛЫ  •  ТОРРЕНТЫ",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant, letterSpacing = 0.6.sp)
+                    },
+                    actions = {
+                        IconButton(onClick = { showDownloads = true }) {
+                            Icon(Icons.Default.Download, contentDescription = "Загрузки", tint = MaterialTheme.colorScheme.primary)
                         }
-                    }
-                },
-                actions = {
-                    IconButton(onClick = { showDownloads = true }) {
-                        Icon(Icons.Default.Download, contentDescription = "Загрузки", tint = MaterialTheme.colorScheme.primary)
-                    }
-                    IconButton(onClick = { showSettings = true }) {
-                        Icon(Icons.Default.Settings, contentDescription = "Настройки", tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.background,
-                    titleContentColor = MaterialTheme.colorScheme.onBackground,
-                    actionIconContentColor = MaterialTheme.colorScheme.onSurfaceVariant
+                        IconButton(onClick = { showSettings = true }) {
+                            Icon(Icons.Default.Settings, contentDescription = "Настройки", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    },
+                    colors = TopAppBarDefaults.topAppBarColors(
+                        containerColor = MaterialTheme.colorScheme.background,
+                        titleContentColor = MaterialTheme.colorScheme.onBackground,
+                        actionIconContentColor = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 )
-            )
+            }
         },
         bottomBar = {
-            if (!isTv) {
+            if (!isTv && selectedTab != TAB_LAMPA) {
                 MainNavigationBar(
                     selectedTab = selectedTab,
                     onSelect = { selectedTab = it }
@@ -367,7 +390,7 @@ fun JacketApp(viewModel: MainViewModel) {
             }
         }
     ) { padding ->
-        if (isTv) {
+        if (isTv && selectedTab != TAB_LAMPA) {
             Row(Modifier.fillMaxSize().padding(padding)) {
                 MainNavigationRail(
                     selectedTab = selectedTab,
@@ -378,7 +401,8 @@ fun JacketApp(viewModel: MainViewModel) {
                     viewModel = viewModel,
                     modifier = Modifier.weight(1f).fillMaxSize(),
                     onShowMovies = { selectedTab = TAB_MOVIES },
-                    onDownloads = { showDownloads = true }
+                    onDownloads = { showDownloads = true },
+                    onLampaBack = { selectedTab = TAB_HOME },
                 )
             }
         } else {
@@ -387,7 +411,8 @@ fun JacketApp(viewModel: MainViewModel) {
                 viewModel = viewModel,
                 modifier = Modifier.padding(padding),
                 onShowMovies = { selectedTab = TAB_MOVIES },
-                onDownloads = { showDownloads = true }
+                onDownloads = { showDownloads = true },
+                onLampaBack = { selectedTab = TAB_HOME },
             )
         }
         }
@@ -431,6 +456,12 @@ private fun MainNavigationRail(
                 icon = { Icon(Icons.Default.Favorite, contentDescription = null) },
                 label = { Text("Моё") }
             )
+            NavigationRailItem(
+                selected = selectedTab == TAB_LAMPA,
+                onClick = { onSelect(TAB_LAMPA) },
+                icon = { Icon(Icons.Default.PlayArrow, contentDescription = null) },
+                label = { Text("Lampa") }
+            )
         }
     }
 }
@@ -441,7 +472,8 @@ private fun MainTabContent(
     viewModel: MainViewModel,
     modifier: Modifier,
     onShowMovies: () -> Unit,
-    onDownloads: () -> Unit
+    onDownloads: () -> Unit,
+    onLampaBack: () -> Unit
 ) {
     val loading by viewModel.isLoading.collectAsState()
     val tabStateHolder = rememberSaveableStateHolder()
@@ -473,6 +505,10 @@ private fun MainTabContent(
                 viewModel = viewModel,
                 modifier = modifier,
                 onOpen = viewModel::openItem
+            )
+            TAB_LAMPA -> LampaWebViewScreen(
+                modifier = modifier,
+                onBack = onLampaBack
             )
             else -> LibraryScreen(
                 viewModel = viewModel,
@@ -526,6 +562,12 @@ private fun MainNavigationBar(
             onClick = { onSelect(TAB_LIBRARY) },
             icon = { Icon(Icons.Default.Favorite, contentDescription = null) },
             label = { Text("Моё") }
+        )
+        NavigationBarItem(
+            selected = selectedTab == TAB_LAMPA,
+            onClick = { onSelect(TAB_LAMPA) },
+            icon = { Icon(Icons.Default.PlayArrow, contentDescription = null) },
+            label = { Text("Lampa") }
         )
         }
     }

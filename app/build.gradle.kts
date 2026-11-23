@@ -17,6 +17,29 @@ val hasJacketReleaseSigning = listOf(
     jacketSigningKeyPassword
 ).all { !it.isNullOrBlank() }
 
+// Build the vendored Lampa web client into app-private APK assets before Android merges assets.
+val buildLampaWebAssets by tasks.registering(Exec::class) {
+    val lampaRoot = rootProject.file("third_party/lampa-source")
+    workingDir(rootProject.projectDir)
+    commandLine("node", rootProject.file("tools/build-lampa-web.mjs").absolutePath)
+    inputs.dir(lampaRoot.resolve("src"))
+    inputs.dir(lampaRoot.resolve("public"))
+    inputs.file(lampaRoot.resolve("package.json"))
+    inputs.file(lampaRoot.resolve("LICENSE"))
+    inputs.file(rootProject.file("lampa-android/modification.js"))
+    inputs.file(rootProject.file("tools/build-lampa-web.mjs"))
+    outputs.dir(layout.projectDirectory.dir("src/main/assets/lampa"))
+    doFirst {
+        check(lampaRoot.resolve("node_modules").isDirectory) {
+            "Lampa build dependencies are missing. Run npm install --no-package-lock in third_party/lampa-source."
+        }
+    }
+}
+
+tasks.named("preBuild").configure {
+    dependsOn(buildLampaWebAssets)
+}
+
 android {
     namespace = "app.jacket.mobile"
     compileSdk = 36
@@ -26,8 +49,8 @@ android {
         minSdk = 28
         // Embedded PRoot's tested Android integration currently targets API 35; compile against API 36.
         targetSdk = 35
-        versionCode = 22
-        versionName = "2.8.10"
+        versionCode = 23
+        versionName = "2.8.11"
         buildConfigField("boolean", "PERSISTENT_SIGNING_CONFIGURED", hasJacketReleaseSigning.toString())
         vectorDrawables { useSupportLibrary = true }
     }
