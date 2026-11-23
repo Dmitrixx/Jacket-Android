@@ -551,11 +551,16 @@ class LampacRuntimeInstaller(context: android.content.Context) {
         val apt = commandRunner.runAsRoot(
             "export DEBIAN_FRONTEND=noninteractive && " +
                 "apt-get update && " +
-                "apt-get install -y --no-install-recommends ca-certificates curl fontconfig libicu-dev libssl-dev zlib1g tar " +
-                "chromium ffmpeg imagemagick xvfb fonts-liberation libjpeg-dev libpng-dev libwebp-dev libnspr4 libnss3 " +
+                "apt-get install -y --no-install-recommends ca-certificates curl fontconfig libicu78 libssl-dev zlib1g tar " +
+                "ffmpeg imagemagick xvfb libjpeg-dev libpng-dev libwebp-dev libnspr4 " +
                 "gstreamer1.0-libav gstreamer1.0-plugins-bad gstreamer1.0-plugins-base gstreamer1.0-plugins-base-apps " +
                 "gstreamer1.0-plugins-good gstreamer1.0-plugins-ugly gstreamer1.0-tools " +
                 "libgstreamer-plugins-base1.0-0 libgstreamer1.0-0 && " +
+                "curl -fSL --retry 3 https://dl.google.com/linux/direct/google-chrome-stable_current_arm64.deb -o /tmp/google-chrome-stable.deb && " +
+                "test \"$(dpkg-deb -f /tmp/google-chrome-stable.deb Architecture)\" = arm64 && " +
+                "apt-get install -y --no-install-recommends /tmp/google-chrome-stable.deb && " +
+                "ln -sf /usr/bin/google-chrome-stable /usr/bin/chromium && " +
+                "rm -f /tmp/google-chrome-stable.deb && " +
                 "test -x /usr/bin/chromium && chromium --version && ffmpeg -version && gst-inspect-1.0 --version && " +
                 "apt-get clean && rm -rf /var/lib/apt/lists/*"
         ) { line -> send("packages", line.take(220), 0, 0) }
