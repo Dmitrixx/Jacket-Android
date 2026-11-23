@@ -311,6 +311,7 @@ class LampacRuntimeInstallerTest {
             assertTrue(command.contains("dpkg-divert --local --rename --divert"))
             assertTrue(command.contains("lampa_divert_stub /usr/bin/systemctl 0"))
             assertTrue(command.contains("lampa_divert_stub /usr/bin/systemd-machine-id-setup 0"))
+            assertTrue(command.contains("lampa_divert_stub /usr/bin/systemd-sysusers 0"))
             assertTrue(command.contains("lampa_divert_stub /usr/bin/deb-systemd-invoke 0"))
             assertTrue(command.contains("lampa_divert_stub /usr/bin/deb-systemd-helper 0"))
             assertTrue(command.contains("lampa_divert_stub /usr/sbin/policy-rc.d 101"))
