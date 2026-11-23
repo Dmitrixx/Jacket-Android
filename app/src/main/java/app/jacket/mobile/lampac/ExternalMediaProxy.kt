@@ -171,7 +171,7 @@ internal class ExternalMediaProxyServer(
                 if (target == null || target.isAbsolute || target.rawAuthority != null ||
                     path.isNullOrBlank() || !path.startsWith("/ts/") ||
                     decodedPath.orEmpty().split('/').any { it == "." || it == ".." } ||
-                    '\\' in path || target.rawQuery?.length ?: 0 > MAX_QUERY_LENGTH
+                    '\\' in path || (target.rawQuery?.length ?: 0) > MAX_QUERY_LENGTH
                 ) {
                     writeSimpleResponse(output, 404, "Not Found")
                     return
