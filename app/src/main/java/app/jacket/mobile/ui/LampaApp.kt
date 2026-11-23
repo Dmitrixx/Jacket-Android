@@ -9,6 +9,8 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -28,6 +30,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import app.jacket.mobile.lampac.LampacRuntimeInstaller
@@ -40,6 +44,7 @@ import kotlinx.coroutines.withContext
 @Composable
 fun LampaApp(onExit: () -> Unit) {
     val context = LocalContext.current
+    val clipboardManager = LocalClipboardManager.current
     val runtime by LampacRuntimeState.state.collectAsState()
     var settingsVisible by remember { mutableStateOf(false) }
     var installed by remember { mutableStateOf(false) }
@@ -131,16 +136,25 @@ fun LampaApp(onExit: () -> Unit) {
                             shape = RoundedCornerShape(10.dp)
                         ) {
                             Column(
-                                modifier = Modifier.padding(10.dp),
+                                modifier = Modifier
+                                    .padding(10.dp)
+                                    .verticalScroll(rememberScrollState()),
                                 verticalArrangement = Arrangement.spacedBy(4.dp)
                             ) {
-                                runtime.logs.takeLast(8).forEach { line ->
+                                runtime.logs.forEach { line ->
                                     Text(
                                         line,
                                         style = MaterialTheme.typography.labelSmall
                                     )
                                 }
                             }
+                        }
+                        TextButton(
+                            onClick = {
+                                clipboardManager.setText(AnnotatedString(runtime.logs.joinToString("\n")))
+                            }
+                        ) {
+                            Text("Копировать полный журнал")
                         }
                     }
                 }

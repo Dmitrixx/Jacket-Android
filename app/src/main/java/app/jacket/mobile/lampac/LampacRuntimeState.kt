@@ -53,5 +53,5 @@ object LampacRuntimeState {
         mutable.update { current -> current.copy(logs = emptyList()) }
     }
 
-    private const val MAX_LOG_ROWS = 80
+    private const val MAX_LOG_ROWS = 160
 }
