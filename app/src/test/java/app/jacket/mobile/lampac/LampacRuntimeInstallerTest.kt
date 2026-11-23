@@ -99,6 +99,18 @@ class LampacRuntimeInstallerTest {
                 """{"Filmix":{"token":"keep-this-too"}}""",
                 readLegacyLampacInitConfig(prefix)
             )
+
+            previousOciConfig.delete()
+            val currentAliasConfig = File(
+                prefix,
+                "var/lib/pr/containers/lampac-debian/rootfs/opt/lampac/init.conf"
+            )
+            currentAliasConfig.parentFile?.mkdirs()
+            currentAliasConfig.writeText("""{"Filmix":{"token":"preserve-current-alias"}}""")
+            assertEquals(
+                """{"Filmix":{"token":"preserve-current-alias"}}""",
+                readLegacyLampacInitConfig(prefix)
+            )
         } finally {
             prefix.deleteRecursively()
         }

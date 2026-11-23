@@ -20,7 +20,7 @@ The installer retrieves the full official Lampac release archive and does not ex
 
 The ARM64 Debian Forky-slim environment is installed as an OCI rootfs and then receives ASP.NET Core Runtime 10, Debian Chromium, FFmpeg/FFprobe, GStreamer plugins and tools, ImageMagick, Xvfb, fonts and the native libraries used by the upstream deployment.
 
-A fresh init.conf loads every module with an empty SkipModules array. Existing configs retain provider credentials and custom sections; previous app-added module exclusions are cleared. Explicit choices such as chromium.enable=false remain intact. The local HTTP listener is kept on loopback.
+A fresh init.conf loads every module with an empty SkipModules array. Existing configs retain provider credentials and custom sections; during the Debian alias migration the installer checks both the current runtime root and both previous Debian rootfs layouts before any incomplete container is replaced. Previous app-added module exclusions are cleared. Explicit choices such as chromium.enable=false remain intact. The local HTTP listener is kept on loopback.
 
 The module package is complete. Individual features can still require user accounts, provider availability, Linux networking, multicast, browser sandbox support or native services that vary between Android devices.
 

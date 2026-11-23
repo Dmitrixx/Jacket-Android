@@ -451,6 +451,10 @@ internal fun isCompleteLampacRuntime(root: File, expectedVersion: String): Boole
  */
 internal fun readLegacyLampacInitConfig(prefixDir: File): String? {
     val candidates = listOf(
+        File(
+            prefixDir,
+            "var/lib/pr/containers/$LAMPAC_DEBIAN_ALIAS/rootfs/opt/lampac/init.conf"
+        ),
         File(prefixDir, "var/lib/pr/installed-rootfs/debian/opt/lampac/init.conf"),
         File(prefixDir, "var/lib/pr/containers/debian/rootfs/opt/lampac/init.conf")
     )
