@@ -123,7 +123,7 @@ try {
 }
 const pluginSourceRoot = path.join(sourceRoot, "plugins");
 const pluginOutputRoot = path.join(outputRoot, "plugins");
-const compiledPluginRoot = path.join(sourceRoot, "dest", "plugins");
+const compiledPluginRoot = path.join(sourceRoot, "dest");
 const requiredPluginBundles = [
   "collections/collections.js",
   "dlna/dlna.js",
