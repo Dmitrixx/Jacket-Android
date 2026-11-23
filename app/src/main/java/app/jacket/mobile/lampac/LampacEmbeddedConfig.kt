@@ -38,6 +38,10 @@ object LampacEmbeddedConfig {
             JSONObject()
                 .put("enable", true)
                 .put("executablePath", "/usr/bin/chromium")
+                // Lampac runs as root inside PRoot; Chromium's namespace sandbox
+                // cannot initialize reliably on Android, so use the upstream
+                // documented no-sandbox flag for this isolated app-private runtime.
+                .put("Args", JSONArray(listOf("--no-sandbox")))
         )
         .put("openstat", JSONObject().put("enable", true))
         .put(
@@ -144,6 +148,18 @@ object LampacEmbeddedConfig {
         }
         if (chromium.optString("executablePath").isBlank()) {
             chromium.put("executablePath", "/usr/bin/chromium")
+            changed = true
+        }
+
+        // The PRoot server starts as root and Android does not provide the
+        // Linux user-namespace setup Chromium's sandbox expects. Preserve every
+        // user-supplied flag, but always retain the documented --no-sandbox flag.
+        val browserArgs = chromium.optJSONArray("Args") ?: JSONArray().also {
+            chromium.put("Args", it)
+            changed = true
+        }
+        if ((0 until browserArgs.length()).none { browserArgs.optString(it) == "--no-sandbox" }) {
+            browserArgs.put("--no-sandbox")
             changed = true
         }
 
