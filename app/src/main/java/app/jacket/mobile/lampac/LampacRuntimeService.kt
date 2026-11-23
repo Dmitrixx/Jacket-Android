@@ -36,10 +36,9 @@ import java.util.concurrent.atomic.AtomicReference
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
- * The generic upstream Lampac ZIP is built on x64 Linux, so its bundled
- * Playwright Node executable is not suitable for the app's ARM64 Debian root.
- * The Playwright JS driver is architecture-independent; use Debian's ARM64
- * Node package via the supported PLAYWRIGHT_NODEJS_PATH override.
+ * Do not depend on which platform-specific Node binary the generic upstream
+ * Lampac ZIP contains. The Playwright JS driver is architecture-independent;
+ * use Debian's ARM64 Node package via PLAYWRIGHT_NODEJS_PATH.
  */
 internal fun buildLampacServerCommand(): String =
     "cd /opt/lampac && " +
