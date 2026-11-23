@@ -3,6 +3,7 @@ package app.jacket.mobile.ui
 import android.app.Activity
 import android.content.Context
 import android.content.ContextWrapper
+import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.net.Uri
 import android.os.Handler
@@ -18,6 +19,7 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.FrameLayout
 import android.widget.Toast
+import org.json.JSONObject
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
@@ -274,6 +276,114 @@ private class LampaAndroidBridge(
         openExternalLink(rawUrl)
     }
 
+    /**
+     * Opens a Lampa stream in Android's system video-app chooser.
+     *
+     * This method is called on WebView's JavaScript bridge thread. Intent creation and
+     * package resolution are safe there; startActivity is posted to the main thread.
+     * Returning false lets Lampa keep its built-in HTML5 player when the URL is not
+     * eligible or no installed application accepts the video MIME type.
+     */
+    @JavascriptInterface
+    fun openExternalPlayer(rawUrl: String?, rawData: String?): Boolean {
+        val uri = rawUrl?.let(::safeVideoUri) ?: return false
+        val payload = runCatching {
+            JSONObject(rawData.orEmpty().ifBlank { "{}" })
+        }.getOrDefault(JSONObject())
+        val title = payload.optString("title").takeIf { it.isNotBlank() } ?: "Видео"
+
+        val playerIntent = Intent(Intent.ACTION_VIEW).apply {
+            setDataAndType(uri, "video/*")
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            putExtra(Intent.EXTRA_TITLE, title)
+            putExtra("title", title)
+
+            payload.optJSONObject("headers")?.let { headersObject ->
+                val headers = ArrayList<String>()
+                val keys = headersObject.keys()
+                while (keys.hasNext()) {
+                    val key = keys.next()
+                    if (key.equals("content-length", ignoreCase = true)) continue
+                    headers += key
+                    headers += headersObject.optString(key)
+                }
+                if (headers.isNotEmpty()) {
+                    // Common convention used by Android video players such as MX Player.
+                    putExtra("headers", headers.toTypedArray())
+                }
+            }
+
+            val timelinePosition = payload.optJSONObject("timeline")
+                ?.optDouble("time", 0.0)
+                ?.takeIf { it > 0.0 }
+                ?.let { (it * 1000.0).toLong() }
+                ?: payload.optLong("position", 0L)
+            if (timelinePosition > 0L) {
+                putExtra("position", timelinePosition)
+            }
+
+            payload.optJSONArray("playlist")?.let { playlist ->
+                val urls = ArrayList<String>()
+                val titles = ArrayList<String>()
+                for (index in 0 until playlist.length()) {
+                    val item = playlist.optJSONObject(index) ?: continue
+                    val itemUri = safeVideoUri(item.optString("url")) ?: continue
+                    urls += itemUri.toString()
+                    titles += item.optString("title").takeIf { it.isNotBlank() }
+                        ?: "Видео ${urls.size}"
+                }
+                if (urls.size > 1) {
+                    putExtra("media_uris", urls.toTypedArray())
+                    putExtra("media_titles", titles.toTypedArray())
+                }
+            }
+
+            payload.optJSONArray("subtitles")?.let { subtitles ->
+                val subtitleUrls = ArrayList<String>()
+                val subtitleLabels = ArrayList<String>()
+                for (index in 0 until subtitles.length()) {
+                    val item = subtitles.optJSONObject(index) ?: continue
+                    val subtitleUrl = safeVideoUri(item.optString("url")) ?: continue
+                    subtitleUrls += subtitleUrl.toString()
+                    subtitleLabels += item.optString("label").takeIf { it.isNotBlank() }
+                        ?: "Субтитры ${subtitleUrls.size}"
+                }
+                if (subtitleUrls.isNotEmpty()) {
+                    putExtra("subtitle_uris", subtitleUrls.toTypedArray())
+                    putExtra("subtitle_labels", subtitleLabels.toTypedArray())
+                    putExtra("subtitle_uri", subtitleUrls.first())
+                }
+            }
+        }
+
+        val handlers = runCatching {
+            context.packageManager.queryIntentActivities(playerIntent, 0)
+        }.getOrDefault(emptyList())
+        if (handlers.isEmpty()) return false
+
+        val chooser = Intent.createChooser(playerIntent, "Выберите видеоплеер").apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        mainHandler.post {
+            try {
+                context.startActivity(chooser)
+            } catch (_: ActivityNotFoundException) {
+                Toast.makeText(
+                    context,
+                    "Не найдено приложение для воспроизведения видео",
+                    Toast.LENGTH_LONG
+                ).show()
+            } catch (_: Exception) {
+                Toast.makeText(
+                    context,
+                    "Не удалось открыть внешний видеоплеер",
+                    Toast.LENGTH_LONG
+                ).show()
+            }
+        }
+        return true
+    }
+
     @JavascriptInterface
     fun clearDefaultPlayer() = Unit
 
@@ -296,6 +406,17 @@ private fun safeExternalUri(raw: String): Uri? = runCatching {
         )
         else -> error("Unsupported external URI scheme")
     }
+    uri
+}.getOrNull()
+
+/** Only network media URLs are forwarded to a third-party video application. */
+private fun safeVideoUri(raw: String): Uri? = runCatching {
+    val value = raw.trim()
+    require(value.isNotEmpty() && value.length <= 16_384)
+    val uri = Uri.parse(value)
+    require(uri.userInfo == null)
+    require(!uri.host.isNullOrBlank())
+    require(uri.scheme?.lowercase() in setOf("http", "https", "rtsp", "rtmp"))
     uri
 }.getOrNull()
 

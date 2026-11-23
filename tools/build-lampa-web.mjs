@@ -35,10 +35,37 @@ await cp(publicRoot, outputRoot, { recursive: true });
 
 // This wrapper-specific transform is build-time only; the vendored upstream source stays untouched.
 const torrentSourcePath = path.join(sourceRoot, "src", "interaction", "torrent.js").replace(/\\/g, "/");
+const playerSourcePath = path.join(sourceRoot, "src", "interaction", "player.js").replace(/\\/g, "/");
 const embeddedAndroidShellCompatibility = {
-  name: "lampa-android-shell-torrent-hint",
+  name: "lampa-android-shell-compatibility",
   transform(code, id) {
     const sourceId = id.split("?")[0].replace(/\\/g, "/");
+
+    if (sourceId === playerSourcePath) {
+      // Keep the normal Lampa HTML5 player as fallback, but hand media streams
+      // to Android's external-player resolver when this is our installed APK.
+      const upstreamFallback = "    }\n    else launchInner()\n\n    if(data.launch_player) delete data.launch_player";
+      const externalFallback = `    }
+    else if (
+        navigator.userAgent.toLowerCase().indexOf('lampa-android') >= 0 &&
+        typeof AndroidJS !== 'undefined' &&
+        typeof AndroidJS.openExternalPlayer === 'function' &&
+        AndroidJS.openExternalPlayer(data.url, JSON.stringify(data))
+    ){
+        listener.send('external', data)
+    }
+    else launchInner()
+
+    if(data.launch_player) delete data.launch_player`;
+      const occurrences = code.split(upstreamFallback).length - 1;
+      if (occurrences !== 1) {
+        throw new Error(
+          "The upstream Lampa player fallback changed; review the external-player integration"
+        );
+      }
+      return { code: code.replace(upstreamFallback, externalFallback), map: null };
+    }
+
     if (sourceId !== torrentSourcePath) return null;
 
     // The upstream warning is intended for Android browsers and Media Station X.
@@ -210,8 +237,12 @@ await writeFile(
 
 const appJs = await readFile(path.join(outputRoot, "app.js"));
 const css = await readFile(path.join(outputRoot, "css", "app.css"));
-if (!appJs.toString("utf8").includes("lampa-android")) {
+const builtAppJs = appJs.toString("utf8");
+if (!builtAppJs.includes("lampa-android")) {
   throw new Error("The embedded Android shell compatibility patch is missing from the Lampa bundle");
+}
+if (!builtAppJs.includes("openExternalPlayer")) {
+  throw new Error("The external Android player integration is missing from the Lampa bundle");
 }
 if (appJs.length < 100_000 || css.length < 20_000) {
   throw new Error("The built Lampa web assets appear incomplete");
