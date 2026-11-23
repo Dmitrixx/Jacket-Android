@@ -269,9 +269,9 @@ private class LampaAndroidBridge(
     @JavascriptInterface
     fun setLampacState(rawState: String?) {
         val state = when (rawState) {
-            "connected" -> "Lampac: подключён"
+            "connected" -> "Lampac: плагин загружен"
             "connecting" -> "Lampac: подключение…"
-            "unavailable" -> "Lampac: сервер не отвечает"
+            "unavailable" -> "Lampac: /online.js недоступен"
             else -> "Lampac: ожидаем подключение"
         }
         mainHandler.post { onLampacStateChanged(state) }
