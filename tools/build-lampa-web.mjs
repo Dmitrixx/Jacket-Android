@@ -33,9 +33,33 @@ await rm(path.join(sourceRoot, "dest"), { recursive: true, force: true });
 await mkdir(outputRoot, { recursive: true });
 await cp(publicRoot, outputRoot, { recursive: true });
 
+const torrentSourcePath = path.join(sourceRoot, "src", "interaction", "torrent.js").replace(/\\/g, "/");
+const embeddedAndroidShellCompatibility = {
+  name: "lampa-android-shell-torrent-hint",
+  transform(code, id) {
+    const sourceId = id.split("?")[0].replace(/\\/g, "/");
+    if (sourceId !== torrentSourcePath) return null;
+
+    // The upstream warning is intended for Android browsers and Media Station X.
+    // This app is already an installed Android APK with its own WebView bridge,
+    // but it intentionally keeps Lampa's web platform/player path. Recognize only
+    // our private WebView marker so Chrome and MSX still receive the upstream hint.
+    const upstreamGuard = "if(navigator.userAgent.toLowerCase().indexOf('android') >= 0 && !Platform.is('android') && !Torserver.gstWork()) return Platform.install('apk')";
+    const appGuard = "if(navigator.userAgent.toLowerCase().indexOf('android') >= 0 && navigator.userAgent.toLowerCase().indexOf('lampa-android') < 0 && !Platform.is('android') && !Torserver.gstWork()) return Platform.install('apk')";
+    const occurrences = code.split(upstreamGuard).length - 1;
+    if (occurrences !== 1) {
+      throw new Error(
+        "The upstream Lampa Android APK hint changed; review the embedded-shell compatibility patch"
+      );
+    }
+    return { code: code.replace(upstreamGuard, appGuard), map: null };
+  }
+};
+
 const bundle = await rollup({
   input: path.join(sourceRoot, "src", "app.js"),
   plugins: [
+    embeddedAndroidShellCompatibility,
     babel({
       babelHelpers: "bundled",
       presets: [require.resolve("@babel/preset-env")]
@@ -185,6 +209,9 @@ await writeFile(
 
 const appJs = await readFile(path.join(outputRoot, "app.js"));
 const css = await readFile(path.join(outputRoot, "css", "app.css"));
+if (!appJs.toString("utf8").includes("lampa-android")) {
+  throw new Error("The embedded Android shell compatibility patch is missing from the Lampa bundle");
+}
 if (appJs.length < 100_000 || css.length < 20_000) {
   throw new Error("The built Lampa web assets appear incomplete");
 }
