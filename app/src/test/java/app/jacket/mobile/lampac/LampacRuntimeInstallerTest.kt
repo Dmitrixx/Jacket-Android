@@ -10,6 +10,35 @@ import java.io.IOException
 
 class LampacRuntimeInstallerTest {
     @Test
+    fun archivePathStripsOnlyTheCoreApplicationDirectory() {
+        assertTrue(lampacArchiveRelativePath("lampac/Core.dll", "lampac/") == "Core.dll")
+        assertTrue(
+            lampacArchiveRelativePath("lampac/Modules/Filmix/manifest.json", "lampac/") ==
+                listOf("Modules", "Filmix", "manifest.json").joinToString(File.separator)
+        )
+        assertTrue(
+            lampacArchiveRelativePath("server-assets/probe.json", "lampac/") ==
+                listOf("server-assets", "probe.json").joinToString(File.separator)
+        )
+        assertTrue(lampacArchiveRelativePath("lampac/", "lampac/") == null)
+        assertTrue(lampacArchiveRelativePath("Core.dll", "") == "Core.dll")
+    }
+
+    @Test
+    fun archivePathRejectsTraversalAndAbsolutePaths() {
+        val invalid = listOf("../outside.txt", "lampac/../../outside.txt", "/absolute/file", "lampac/../outside")
+        invalid.forEach { path ->
+            var rejected = false
+            try {
+                lampacArchiveRelativePath(path, "lampac/")
+            } catch (_: IllegalArgumentException) {
+                rejected = true
+            }
+            assertTrue("Expected unsafe ZIP path to be rejected: $path", rejected)
+        }
+    }
+
+    @Test
     fun rejectsMissingOrPartialDebianRootfs() {
         val root = java.nio.file.Files.createTempDirectory("jacket-debian-partial").toFile()
         try {

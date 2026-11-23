@@ -215,6 +215,30 @@ private object LampacArtifactDownloader {
     private val REDIRECT_CODES = setOf(301, 302, 303, 307, 308)
 }
 
+/**
+ * Converts every ZIP entry to a safe relative destination.
+ *
+ * Lampac release archives may contain files next to the directory that contains
+ * Core.dll. Strip the common application directory only for entries beneath it;
+ * entries outside it remain part of the installed full distribution.
+ */
+internal fun lampacArchiveRelativePath(entryName: String, corePrefix: String): String? {
+    val relative = if (corePrefix.isNotEmpty() && entryName.startsWith(corePrefix)) {
+        entryName.removePrefix(corePrefix)
+    } else {
+        entryName
+    }
+    if (relative.isBlank()) return null
+    require(!relative.startsWith('/') && '\\' !in relative && '\u0000' !in relative) {
+        "Архив Lampac содержит недопустимый путь"
+    }
+    val segments = relative.trimEnd('/').split('/')
+    require(segments.none { it.isBlank() || it == "." || it == ".." }) {
+        "Архив Lampac содержит traversal-путь"
+    }
+    return segments.joinToString(File.separator)
+}
+
 private object LampacZipInstaller {
     private const val MAX_FILES = 120_000
     private const val MAX_UNCOMPRESSED_BYTES = 10L * 1024L * 1024L * 1024L
@@ -288,10 +312,9 @@ private object LampacZipInstaller {
                 var written = 0L
                 all.forEach { entry ->
                     context.ensureActive()
-                    if (!entry.name.startsWith(prefix)) return@forEach
-                    val relative = entry.name.removePrefix(prefix)
-                    if (relative.isBlank()) return@forEach
-                    val safePath = safeRelativePath(relative)
+                    // Strip the common application folder only where it actually
+                    // prefixes the entry. Keep every other archive entry too.
+                    val safePath = lampacArchiveRelativePath(entry.name, prefix) ?: return@forEach
                     val output = File(stage, safePath)
                     val rootPath = stage.canonicalPath + File.separator
                     require(output.canonicalPath.startsWith(rootPath)) {
@@ -362,17 +385,6 @@ private object LampacZipInstaller {
             if (!target.exists() && backup.exists()) backup.renameTo(target)
             throw error
         }
-    }
-
-    private fun safeRelativePath(value: String): String {
-        require(!value.startsWith('/') && '\\' !in value && '\u0000' !in value) {
-            "Архив Lampac содержит недопустимый путь"
-        }
-        val segments = value.trimEnd('/').split('/')
-        require(segments.none { it.isBlank() || it == "." || it == ".." }) {
-            "Архив Lampac содержит traversal-путь"
-        }
-        return segments.joinToString(File.separator)
     }
 
     private fun formatBytes(value: Long): String =
