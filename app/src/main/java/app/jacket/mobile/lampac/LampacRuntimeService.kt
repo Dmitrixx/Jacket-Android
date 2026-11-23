@@ -138,6 +138,9 @@ class LampacRuntimeService : Service() {
             return
         }
         if (serverSession != null) {
+            if (!ExternalMediaProxy.start()) {
+                LampacRuntimeState.appendLog("Не удалось запустить локальный прокси внешнего плеера.")
+            }
             LampacRuntimeState.update(LampacRuntimePhase.RUNNING, "Lampac уже работает на 127.0.0.1:9118")
             updateNotification("Lampac работает • 127.0.0.1:9118")
             return
@@ -183,6 +186,9 @@ class LampacRuntimeService : Service() {
             monitorServer(session)
             waitForServerReady(session)
             if (serverSession === session && !isStopping.get()) {
+                if (!ExternalMediaProxy.start()) {
+                    LampacRuntimeState.appendLog("Не удалось запустить локальный прокси внешнего плеера.")
+                }
                 LampacRuntimeState.update(LampacRuntimePhase.RUNNING, "Lampac работает • http://127.0.0.1:9118")
                 updateNotification("Lampac работает • 127.0.0.1:9118")
             }
@@ -192,6 +198,7 @@ class LampacRuntimeService : Service() {
             // Stop the monitor before our intentional Ctrl+C cleanup so the
             // expected signal exit (130) cannot replace the actual startup error.
             isStopping.set(true)
+            ExternalMediaProxy.stop()
             stopSession()
             monitorJob?.cancel()
             serverSession = null
@@ -225,6 +232,7 @@ class LampacRuntimeService : Service() {
             if (serverSession === session && !isStopping.get()) {
                 withContext(Dispatchers.Main.immediate) {
                     serverSession = null
+                    ExternalMediaProxy.stop()
                     if (exitCode == 0) {
                         LampacRuntimeState.update(LampacRuntimePhase.INSTALLED, "Lampac остановился")
                     } else {
@@ -281,6 +289,7 @@ class LampacRuntimeService : Service() {
 
     private fun stopServer() {
         if (!isStopping.compareAndSet(false, true)) return
+        ExternalMediaProxy.stop()
         operationJob?.cancel()
         scope.launch {
             LampacRuntimeState.update(LampacRuntimePhase.STOPPING, "Останавливаем Lampac…")
@@ -320,6 +329,7 @@ class LampacRuntimeService : Service() {
     }
 
     private fun finishService() {
+        ExternalMediaProxy.stop()
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
     }
@@ -386,6 +396,7 @@ class LampacRuntimeService : Service() {
 
     override fun onDestroy() {
         isStopping.set(true)
+        ExternalMediaProxy.stop()
         monitorJob?.cancel()
         serverSession?.close()
         serverSession = null
