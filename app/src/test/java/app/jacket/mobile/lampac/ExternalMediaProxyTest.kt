@@ -28,6 +28,9 @@ class ExternalMediaProxyTest {
             "http://192.168.1.20:9118/ts/stream/video.mkv",
             routeExternalMediaUrl("http://192.168.1.20:9118/ts/stream/video.mkv", 50123)
         )
+
+        val localSettings = "http://127.0.0.1:9118/ts/settings"
+        assertEquals(localSettings, routeExternalMediaUrl(localSettings, 50123))
     }
 
     @Test
