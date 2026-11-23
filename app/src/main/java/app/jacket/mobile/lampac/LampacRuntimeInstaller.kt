@@ -301,6 +301,11 @@ private object LampacZipInstaller {
                 require(all.any { !it.isDirectory && it.name.startsWith(prefix + "runtimes/references/") }) {
                     "В архиве Lampac отсутствуют зависимости runtimes/references"
                 }
+                require(all.any {
+                    !it.isDirectory && it.name == prefix + ".playwright/package/index.js"
+                }) {
+                    "В полном архиве Lampac отсутствует JavaScript-драйвер Playwright"
+                }
 
                 val freeSpace = StatFs(rootfs.absolutePath).availableBytes
                 require(freeSpace >= totalBytes + RESERVED_BYTES) {
@@ -361,6 +366,9 @@ private object LampacZipInstaller {
                 }
                 require(File(stage, "runtimes/references").isDirectory) {
                     "После распаковки отсутствуют зависимости runtimes/references"
+                }
+                require(isLampacPlaywrightPackageReady(stage)) {
+                    "После распаковки отсутствует JavaScript-драйвер Playwright"
                 }
                 if (previousInitConfig == null) {
                     LampacEmbeddedConfig.writeInitConfig(stage)
@@ -441,8 +449,18 @@ internal fun isCompleteLampacRuntime(root: File, expectedVersion: String): Boole
         File(lampac, "Core.dll").isFile &&
         File(lampac, "Shared.dll").isFile &&
         File(lampac, "init.conf").isFile &&
+        isLampacPlaywrightPackageReady(lampac) &&
         markerVersion == expectedVersion
 }
+
+/**
+ * The official generic Lampac release is published from an x64 Linux runner.
+ * Playwright's JS driver is portable; the native Node executable is supplied by
+ * the device's ARM64 Debian package through PLAYWRIGHT_NODEJS_PATH.
+ */
+internal fun isLampacPlaywrightPackageReady(lampacDirectory: File): Boolean =
+    File(lampacDirectory, ".playwright/package/index.js").isFile
+
 
 /**
  * Finds the previous app's Debian alias config before a new OCI runtime is
@@ -573,7 +591,7 @@ class LampacRuntimeInstaller(context: android.content.Context) {
         val apt = commandRunner.runAsRoot(
             "export DEBIAN_FRONTEND=noninteractive && " +
                 "apt-get update && " +
-                "apt-get install -y --no-install-recommends ca-certificates curl fontconfig libicu78 libssl-dev zlib1g tar " +
+                "apt-get install -y --no-install-recommends ca-certificates curl fontconfig libicu78 libssl-dev zlib1g tar nodejs " +
                 "ffmpeg imagemagick xvfb libjpeg-dev libpng-dev libwebp-dev libnspr4 " +
                 "gstreamer1.0-libav gstreamer1.0-plugins-bad gstreamer1.0-plugins-base gstreamer1.0-plugins-base-apps " +
                 "gstreamer1.0-plugins-good gstreamer1.0-plugins-ugly gstreamer1.0-tools " +
@@ -583,6 +601,7 @@ class LampacRuntimeInstaller(context: android.content.Context) {
                 "apt-get install -y --no-install-recommends /tmp/google-chrome-stable.deb && " +
                 "ln -sf /usr/bin/google-chrome-stable /usr/bin/chromium && " +
                 "rm -f /tmp/google-chrome-stable.deb && " +
+                "test -x /usr/bin/node && node --version && " +
                 "test -x /usr/bin/chromium && chromium --version && ffmpeg -version && gst-inspect-1.0 --version && " +
                 "apt-get clean && rm -rf /var/lib/apt/lists/*"
         ) { line -> send("packages", line.take(220), 0, 0) }
