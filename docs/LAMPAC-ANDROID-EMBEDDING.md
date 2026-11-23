@@ -12,7 +12,9 @@ The app contains the complete upstream Lampa web client and a minimal Android We
 - Runtime data and init.conf: filesDir/lampac, preserved across app upgrades.
 - Process lifecycle: user-started foreground LampacRuntimeService.
 
-The Android application ID remains app.jacket.mobile so the new build updates the existing installation instead of creating a second app or losing private data. The displayed name is Lampa.
+The Android application ID remains app.jacket.mobile so the new build updates the existing installation instead of creating a second app or losing private data.
+
+The POCO F3 (M2012K11AG / alioth) uses an Android 4.19 kernel. The Debian Forky systemd 260 tools require the newer `STATX_MNT_ID` statx feature; on this kernel `systemd-sysusers` can report `Failed to read 'basic.conf'` even when that packaged file exists. The installer diverts `/usr/bin/systemd-sysusers` to a no-op because this rootfs is not booted with systemd and no systemd-managed daemons are started. Debian's base-passwd package supplies the standard base groups. The application and Lampac run as Android-managed processes. The displayed name is Lampa.
 
 ## Complete upstream payload
 
