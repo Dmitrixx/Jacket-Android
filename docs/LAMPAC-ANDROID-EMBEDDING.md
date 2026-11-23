@@ -12,7 +12,7 @@ The app contains the complete upstream Lampa web client and a minimal Android We
 - Runtime data and init.conf: filesDir/lampac, preserved across app upgrades.
 - Process lifecycle: user-started foreground LampacRuntimeService.
 
-The Android application ID remains app.jacket.mobile so the new build updates the existing installation instead of creating a second app or losing private data. The displayed name is Lampa.
+The Android application ID intentionally remains app.jacket.mobile so the new build updates the existing installation instead of creating a second app or losing private data. This is only the package identifier required for update compatibility; it does not retain the previous app's catalog, search or playback implementation. The displayed name is Lampa.
 
 ## Complete upstream payload
 
@@ -31,7 +31,7 @@ The module package is complete. Individual features can still require user accou
 - Embedded PRoot is ARM64-only.
 - The server is loopback-only; it is not advertised as a LAN server.
 - Several gigabytes of free internal storage are required for Debian, Lampac, .NET, Chromium and media dependencies.
-- Playback remains in Lampa's own WebView player. No Jacket-native Media3 player or custom torrent engine is included.
+- Playback remains in Lampa's own WebView player. There is no separate Android-native media player or custom Android torrent engine.
 
 ## Validation
 

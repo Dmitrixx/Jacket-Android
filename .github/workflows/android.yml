@@ -47,7 +47,8 @@ jobs:
       - name: Install Android SDK packages
         run: sdkmanager "platforms;android-36" "build-tools;36.0.0" "platform-tools" "ndk;27.2.12479018" "cmake;3.22.1"
 
-      # A permanent keystore is supplied once through repository Actions secrets.
+      # Existing JACKET_KEYSTORE_* / JACKET_KEY_* secret IDs are retained for key continuity.
+      # They are signing credentials only; no Jacket feature code is present.
       # Never store the signing key or its passwords in git.
       - name: Restore persistent app signing key
         id: restore_signing
@@ -64,18 +65,18 @@ jobs:
                 -z "$JACKET_KEYSTORE_PASSWORD" ||
                 -z "$JACKET_KEY_ALIAS" ||
                 -z "$JACKET_KEY_PASSWORD" ]]; then
-            echo "JACKET_SIGNING_READY=false" >> "$GITHUB_ENV"
+            echo "LAMPA_SIGNING_READY=false" >> "$GITHUB_ENV"
             echo "ready=false" >> "$GITHUB_OUTPUT"
             echo "::warning::Persistent signing is not configured. No main-branch update APK will be uploaded."
             exit 0
           fi
-          signing_dir="$RUNNER_TEMP/jacket-signing"
+          signing_dir="$RUNNER_TEMP/lampa-signing"
           mkdir -p "$signing_dir"
-          printf '%s' "$JACKET_KEYSTORE_BASE64" | base64 --decode > "$signing_dir/jacket-release.jks"
-          test -s "$signing_dir/jacket-release.jks"
+          printf '%s' "$JACKET_KEYSTORE_BASE64" | base64 --decode > "$signing_dir/lampa-release.jks"
+          test -s "$signing_dir/lampa-release.jks"
           {
-            echo "JACKET_SIGNING_READY=true"
-            echo "JACKET_SIGNING_STORE_FILE=$signing_dir/jacket-release.jks"
+            echo "LAMPA_SIGNING_READY=true"
+            echo "JACKET_SIGNING_STORE_FILE=$signing_dir/lampa-release.jks"
             echo "JACKET_SIGNING_STORE_PASSWORD=$JACKET_KEYSTORE_PASSWORD"
             echo "JACKET_SIGNING_KEY_ALIAS=$JACKET_KEY_ALIAS"
             echo "JACKET_SIGNING_KEY_PASSWORD=$JACKET_KEY_PASSWORD"

@@ -22,11 +22,13 @@ The server data, providers and init.conf are stored in the app-private directory
 
 ## Updating
 
-The application ID intentionally remains app.jacket.mobile. A newer APK signed with the same persistent key updates the existing installation and preserves app data.
+The Android application ID intentionally remains `app.jacket.mobile`. This is a package-compatibility identifier, not a remaining Jacket feature: changing it would make Android treat this build as a different app and prevent an in-place update of the existing installation and its private Lampac data. The same persistent signing certificate must also be used for every update.
 
 ## Scope
 
-This repository has been reduced to Lampa, its Android WebView host and the full Lampac runtime. Jacket catalog/search screens, Jacket-native player, tracker UI, custom torrent engine and media catalog modules have been removed.
+The Android-specific catalog/search screens, direct provider clients, native media player, tracker/indexer interface, and custom torrent engine/server from the previous client have been removed. The remaining Android code is the Lampa WebView host, its small platform bridge, and the local Lampac runtime controller.
+
+The complete upstream Lampa source and complete Lampac package are intentionally retained, including their own plugins and source modules. These are upstream Lampa/Lampac functionality, not the removed Android-specific Jacket implementation.
 
 The complete upstream Lampac package is installed. Its module manifests and the user's configuration still determine each module's default state. Runtime dependencies used by the upstream deployment are installed, but some integrations require Linux services, browser sandbox capabilities, multicast/network features or device resources that differ under Android PRoot. Physical-device validation is required before claiming every feature works on every handset.
 
@@ -36,4 +38,4 @@ The HTTP listener is loopback-only by default. Do not expose this unauthenticate
 
 Clone with submodules enabled, install npm dependencies in third_party/lampa-source, then run Gradle lint, unit tests, debug and release build tasks.
 
-Release builds use the existing persistent signing credentials configured in GitHub Actions or local environment variables. Never commit the keystore or passwords.
+Release builds use the existing persistent signing credentials configured in GitHub Actions or local environment variables. The legacy `JACKET_*` secret/environment-variable names are retained only so the existing private signing key continues to work; they do not enable any Jacket application features. Never commit the keystore or passwords.
