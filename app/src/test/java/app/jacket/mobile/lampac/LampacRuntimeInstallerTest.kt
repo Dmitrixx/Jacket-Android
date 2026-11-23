@@ -323,8 +323,12 @@ class LampacRuntimeInstallerTest {
             assertFalse(command.contains("/usr/local/bin/systemd-machine-id-setup"))
             assertFalse(command.contains("sed -i"))
         }
-        assertTrue(packageCommand.contains("dpkg --root=/ --configure -a && apt-get update &&"))
-        assertTrue(nodeRepairCommand.contains("dpkg --root=/ --configure -a && apt-get update &&"))
+        listOf(packageCommand, nodeRepairCommand).forEach { command ->
+            val opensysusersInstall = command.indexOf("apt-get install -y --no-install-recommends opensysusers")
+            val dpkgRecovery = command.indexOf("dpkg --root=/ --configure -a")
+            assertTrue(opensysusersInstall >= 0)
+            assertTrue(dpkgRecovery > opensysusersInstall)
+        }
 
         listOf(packageCommand, nodeRepairCommand).forEach { command ->
             assertTrue(command.contains("/tmp/lampa-dpkg-install.log 2>&1"))
