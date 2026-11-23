@@ -518,8 +518,8 @@ internal fun buildLampacOfflineDpkgCommand(command: String): String {
         "lampa_divert_stub /usr/bin/deb-systemd-invoke 0; " +
         "lampa_divert_stub /usr/bin/deb-systemd-helper 0; " +
         "lampa_divert_stub /usr/sbin/policy-rc.d 101; " +
-        "dpkg --root=/ --configure -a && " +
-        command
+        "lampa_run_logged() { log=/tmp/lampa-dpkg-install.log; if eval \"\$1\" > \"\$log\" 2>&1; then cat \"\$log\" && rm -f \"\$log\"; else status=\$?; echo '--- apt/dpkg failure log (last 120 lines) ---'; tail -n 120 \"\$log\"; exit \"\$status\"; fi; }; " +
+        "dpkg --root=/ --configure -a && lampa_run_logged \" + command + "\"
 }
 
 /** Ensure the private Debian rootfs has a persistent, standard 32-hex machine-id. */
