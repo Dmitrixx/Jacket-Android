@@ -555,8 +555,7 @@ internal fun ensureLampacDebianMachineId(rootfs: File) {
 
 internal fun buildLampacSystemPackagesInstallCommand(): String =
     buildLampacOfflineDpkgCommand(
-        "dpkg --root=/ --configure -a && " +
-            "apt-get update && " +
+        "apt-get update && " +
             "apt-get install -y --no-install-recommends ca-certificates curl fontconfig libicu78 libssl-dev zlib1g tar nodejs " +
             "ffmpeg imagemagick xvfb libjpeg-dev libpng-dev libwebp-dev libnspr4 " +
             "gstreamer1.0-libav gstreamer1.0-plugins-bad gstreamer1.0-plugins-base gstreamer1.0-plugins-base-apps " +
@@ -575,8 +574,7 @@ internal fun buildLampacSystemPackagesInstallCommand(): String =
 /** A lightweight repair for older installs: it adds only ARM64 Node.js. */
 internal fun buildLampacNodeInstallCommand(): String =
     buildLampacOfflineDpkgCommand(
-        "dpkg --root=/ --configure -a && " +
-            "apt-get update && " +
+        "apt-get update && " +
             "apt-get install -y --no-install-recommends nodejs && " +
             "test -x /usr/bin/node && node --version && " +
             "apt-get clean && rm -rf /var/lib/apt/lists/*"
