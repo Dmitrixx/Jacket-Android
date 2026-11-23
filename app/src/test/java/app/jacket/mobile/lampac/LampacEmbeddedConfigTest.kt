@@ -24,7 +24,7 @@ class LampacEmbeddedConfigTest {
     }
 
     @Test
-    fun importedConfigRemovesPreviousModuleExclusionsAndPreservesProviders() {
+    fun importedConfigPreservesModuleExclusionsAndProviderSettings() {
         val original = JSONObject()
             .put("listen", JSONObject().put("ip", "0.0.0.0").put("port", 9999))
             .put(
@@ -45,7 +45,7 @@ class LampacEmbeddedConfigTest {
         assertEquals("127.0.0.1", normalized.getJSONObject("listen").getString("ip"))
         assertEquals(9118, normalized.getJSONObject("listen").getInt("port"))
         assertEquals(listOf(".*"), base.getJSONArray("LoadModules").toStrings())
-        assertEquals(0, base.getJSONArray("SkipModules").length())
+        assertEquals(listOf("GStreamer", "DLNA", "TorrServer"), base.getJSONArray("SkipModules").toStrings())
         assertFalse(normalized.getJSONObject("chromium").getBoolean("enable"))
         assertEquals(
             listOf("--disable-gpu", "--no-sandbox"),
@@ -68,13 +68,76 @@ class LampacEmbeddedConfigTest {
         assertTrue(LampacEmbeddedConfig.ensureAndroidModules(config))
         val base = config.getJSONObject("BaseModule")
         assertEquals(listOf(".*"), base.getJSONArray("LoadModules").toStrings())
-        assertEquals(0, base.getJSONArray("SkipModules").length())
+        assertEquals(listOf("DLNA", "GStreamer", "Catalog"), base.getJSONArray("SkipModules").toStrings())
         assertFalse(config.getJSONObject("SomeProvider").getBoolean("enable"))
         assertEquals(
             listOf("--no-sandbox"),
             config.getJSONObject("chromium").getJSONArray("Args").toStrings()
         )
         assertFalse(LampacEmbeddedConfig.ensureAndroidModules(config))
+    }
+
+
+    @Test
+    fun moduleSelectionReplacesKnownGroupExclusionsAndPreservesCustomOnes() {
+        val modules = listOf(
+            LampacModuleInfo("Kinogo", "OnlineRUS", "module", true),
+            LampacModuleInfo("Mirage", "OnlineRUS", "module", true),
+            LampacModuleInfo("TorrServer", null, "module", true),
+            LampacModuleInfo("FutureUnavailable", null, "module", false)
+        )
+        val original = JSONObject()
+            .put(
+                "BaseModule",
+                JSONObject().put(
+                    "SkipModules",
+                    JSONArray(listOf("OnlineRUS", "TorrServer", "CustomExtension"))
+                )
+            )
+            .put("Kinogo", JSONObject().put("token", "keep-me"))
+
+        assertEquals(
+            emptySet<String>(),
+            LampacEmbeddedConfig.readEnabledModules(original.toString(), modules)
+        )
+
+        val updatedText = LampacEmbeddedConfig.prepareModuleSelection(
+            content = original.toString(),
+            enabledModuleIds = setOf("Kinogo"),
+            modules = modules
+        )
+        val updated = JSONObject(updatedText)
+        val skips = updated.getJSONObject("BaseModule").getJSONArray("SkipModules").toStrings()
+
+        assertEquals(listOf("CustomExtension", "Mirage", "TorrServer"), skips)
+        assertEquals(setOf("Kinogo"), LampacEmbeddedConfig.readEnabledModules(updatedText, modules))
+        assertEquals("keep-me", updated.getJSONObject("Kinogo").getString("token"))
+    }
+
+    @Test
+    fun selectAllRemovesOnlyKnownModuleExclusions() {
+        val modules = listOf(
+            LampacModuleInfo("Kinogo", "OnlineRUS", "module", true),
+            LampacModuleInfo("TorrServer", null, "module", true)
+        )
+        val original = JSONObject()
+            .put(
+                "BaseModule",
+                JSONObject().put(
+                    "SkipModules",
+                    JSONArray(listOf("OnlineRUS", "TorrServer", "CustomModule"))
+                )
+            )
+
+        val updated = LampacEmbeddedConfig.prepareModuleSelection(
+            original.toString(),
+            setOf("Kinogo", "TorrServer"),
+            modules
+        )
+        val config = JSONObject(updated)
+
+        assertEquals(listOf("CustomModule"), config.getJSONObject("BaseModule").getJSONArray("SkipModules").toStrings())
+        assertEquals(setOf("Kinogo", "TorrServer"), LampacEmbeddedConfig.readEnabledModules(updated, modules))
     }
 
     private fun JSONArray.toStrings(): List<String> =
