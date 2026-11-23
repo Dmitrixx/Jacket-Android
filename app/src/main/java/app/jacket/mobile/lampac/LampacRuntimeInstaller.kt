@@ -466,9 +466,9 @@ internal fun isCompleteLampacRuntime(root: File, expectedVersion: String): Boole
 
 /**
  * Debian Forky runs under PRoot, not as the Android host's init system.
- * Tell Debian maintainer scripts to operate on the offline container root:
- * systemd then uses --root=/ for unit/machine-id setup instead of querying
- * Android's kernel or trying to contact a system manager that is not running.
+ * Keep service/package helpers in offline mode and direct unit operations to
+ * the private rootfs. The machine-id postinst workaround is scoped separately
+ * to the dpkg recovery pass below.
  */
 private const val LAMPAC_OFFLINE_DPKG_ENV =
     "export DEBIAN_FRONTEND=noninteractive DPKG_ROOT=/ SYSTEMD_OFFLINE=1 && "
