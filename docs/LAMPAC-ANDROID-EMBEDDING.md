@@ -26,6 +26,9 @@ The installer does not depend on the platform-specific Node executable bundled i
 
 A fresh init.conf loads every module with an empty SkipModules array. Existing configs retain provider credentials and custom sections; during the Debian alias migration the installer checks both the current runtime root and both previous Debian rootfs layouts before any incomplete container is replaced. Previous app-added module exclusions are cleared. Explicit choices such as chromium.enable=false remain intact. The local HTTP listener is kept on loopback.
 
+The embedded app appends the private `Lampa-Android/1` marker to its WebView user agent. The build narrowly suppresses the upstream “install Lampa APK” prompt only when that marker is present: that prompt is for Android browsers/Media Station X, not for this already-installed native wrapper. Chrome and Media Station X retain the upstream prompt. The WebView deliberately does not impersonate the complete upstream Android client, so Lampa keeps its web player path and avoids unexpectedly switching torrent playback to an external Android app.
+
+
 The module package is complete. Individual features can still require user accounts, provider availability, Linux networking, multicast, browser sandbox support or native services that vary between Android devices.
 
 ## Device constraints
