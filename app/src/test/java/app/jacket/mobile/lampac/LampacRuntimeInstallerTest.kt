@@ -324,8 +324,11 @@ class LampacRuntimeInstallerTest {
         assertTrue(packageCommand.contains("dpkg --root=/ --configure -a && apt-get update &&"))
         assertTrue(nodeRepairCommand.contains("dpkg --root=/ --configure -a && apt-get update &&"))
 
-        assertTrue(packageCommand.contains("lampa_run_logged"))
-        assertTrue(packageCommand.contains("tail -n 120"))
+        listOf(packageCommand, nodeRepairCommand).forEach { command ->
+            assertTrue(command.contains("/tmp/lampa-dpkg-install.log 2>&1"))
+            assertTrue(command.contains("tail -n 120 /tmp/lampa-dpkg-install.log"))
+            assertTrue(command.contains("status=\\$?"))
+        }
         assertTrue(packageCommand.contains("apt-get install -y --no-install-recommends ca-certificates"))
         assertTrue(packageCommand.contains("google-chrome-stable_current_arm64.deb"))
         assertTrue(packageCommand.contains("gst-inspect-1.0 --version"))
