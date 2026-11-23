@@ -107,7 +107,7 @@ fun LampaApp(onExit: () -> Unit) {
                             progress = { runtime.progress.coerceIn(0, 100) / 100f },
                             modifier = Modifier.fillMaxWidth()
                         )
-                        Text("\${runtime.progress}%")
+                        Text("${runtime.progress}%")
                     }
                     Text(
                         "Устанавливается официальный полный серверный архив, .NET 10, Chromium, FFmpeg и GStreamer. Требуется несколько гигабайт свободной памяти. Настройки сервера сохраняются при обновлении приложения.",

@@ -241,7 +241,7 @@ private class LampaAndroidBridge(
     private val mainHandler = Handler(Looper.getMainLooper())
 
     @JavascriptInterface
-    fun appVersion(): String = "Lampa-\${BuildConfig.VERSION_NAME}-\${BuildConfig.VERSION_CODE}"
+    fun appVersion(): String = "Lampa-${BuildConfig.VERSION_NAME}-${BuildConfig.VERSION_CODE}"
 
     @JavascriptInterface
     fun setPlayerOpen(isOpen: Boolean) {

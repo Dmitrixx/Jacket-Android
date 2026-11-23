@@ -525,15 +525,19 @@ class LampacRuntimeInstaller(context: android.content.Context) {
         val apt = commandRunner.runAsRoot(
             "export DEBIAN_FRONTEND=noninteractive && " +
                 "apt-get update && " +
-                "apt-get install -y --no-install-recommends ca-certificates curl fontconfig libicu-dev libssl-dev zlib1g tar " +
+                "apt-get install -y --no-install-recommends ca-certificates curl gnupg fontconfig libicu-dev libssl-dev zlib1g tar " +
                 "ffmpeg imagemagick xvfb fonts-liberation libjpeg-dev libpng-dev libwebp-dev libnspr4 libnss3 " +
                 "gstreamer1.0-libav gstreamer1.0-plugins-bad gstreamer1.0-plugins-base gstreamer1.0-plugins-base-apps " +
                 "gstreamer1.0-plugins-good gstreamer1.0-plugins-ugly gstreamer1.0-tools " +
                 "libgstreamer-plugins-base1.0-0 libgstreamer1.0-0 && " +
-                "curl -fSL --retry 3 https://dl.google.com/linux/direct/google-chrome-stable_current_arm64.deb -o /tmp/google-chrome-stable.deb && " +
-                "apt-get install -y --no-install-recommends /tmp/google-chrome-stable.deb && " +
+                "mkdir -p /usr/share/keyrings /etc/apt/sources.list.d && " +
+                "curl -fSL --retry 3 https://dl.google.com/linux/linux_signing_key.pub -o /tmp/google-linux-signing-key.pub && " +
+                "gpg --dearmor --yes -o /usr/share/keyrings/google-chrome.gpg /tmp/google-linux-signing-key.pub && " +
+                "echo 'deb [arch=arm64 signed-by=/usr/share/keyrings/google-chrome.gpg] https://dl.google.com/linux/chrome/deb/ stable main' > /etc/apt/sources.list.d/google-chrome.list && " +
+                "apt-get update && " +
+                "apt-get install -y --no-install-recommends google-chrome-stable && " +
                 "ln -sf /usr/bin/google-chrome-stable /usr/bin/chromium && " +
-                "rm -f /tmp/google-chrome-stable.deb && " +
+                "rm -f /tmp/google-linux-signing-key.pub && " +
                 "apt-get clean && rm -rf /var/lib/apt/lists/*"
         ) { line -> send("packages", line.take(220), 0, 0) }
         check(apt == 0) { "Не удалось установить системные библиотеки Debian (код $apt)" }
