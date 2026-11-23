@@ -23,6 +23,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.viewinterop.AndroidView
@@ -41,6 +42,7 @@ fun LampaWebViewScreen(
     onBack: () -> Unit
 ) {
     val context = LocalContext.current
+    val lampaPlayerOpen = remember { mutableStateOf(false) }
     val chromeClient = remember(context) {
         context.findActivity()?.let(::LampaFullscreenChromeClient)
     }
@@ -65,7 +67,9 @@ fun LampaWebViewScreen(
             scrollBarStyle = View.SCROLLBARS_INSIDE_OVERLAY
 
             addJavascriptInterface(
-                LampaAndroidBridge(context.applicationContext, onBack),
+                LampaAndroidBridge(context.applicationContext, onBack) { isOpen ->
+                    lampaPlayerOpen.value = isOpen
+                },
                 "AndroidJS"
             )
 
@@ -119,6 +123,13 @@ fun LampaWebViewScreen(
     BackHandler(enabled = true) {
         when {
             chromeClient?.hideCustomView() == true -> Unit
+            lampaPlayerOpen.value -> {
+                webView.evaluateJavascript(
+                    "if (window.Lampa && Lampa.Player && Lampa.Player.opened()) Lampa.Player.close();",
+                    null
+                )
+                lampaPlayerOpen.value = false
+            }
             webView.canGoBack() -> webView.goBack()
             else -> onBack()
         }
@@ -127,6 +138,7 @@ fun LampaWebViewScreen(
     DisposableEffect(webView) {
         onDispose {
             chromeClient?.hideCustomView()
+            lampaPlayerOpen.value = false
             webView.stopLoading()
             webView.removeJavascriptInterface("AndroidJS")
             webView.destroy()
@@ -204,7 +216,8 @@ private fun errorResponse(status: Int, reason: String) = WebResourceResponse(
 
 private class LampaAndroidBridge(
     private val context: Context,
-    private val onBack: () -> Unit
+    private val onBack: () -> Unit,
+    private val onPlayerOpenChanged: (Boolean) -> Unit
 ) {
     private val mainHandler = Handler(Looper.getMainLooper())
 
@@ -217,6 +230,11 @@ private class LampaAndroidBridge(
         val metadata = runCatching { JSONObject(rawExtra.orEmpty()) }.getOrDefault(JSONObject())
         val title = metadata.optString("title").ifBlank { "Раздача из Lampa" }.take(180)
         mainHandler.post { handleTorrent(context, link, title) }
+    }
+
+    @JavascriptInterface
+    fun setPlayerOpen(isOpen: Boolean) {
+        mainHandler.post { onPlayerOpenChanged(isOpen) }
     }
 
     @JavascriptInterface

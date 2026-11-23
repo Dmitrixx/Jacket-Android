@@ -34,11 +34,30 @@
         document.head.appendChild(script);
     }
 
+    function observeLampaPlayer() {
+        var player = window.Lampa && window.Lampa.Player;
+        if (!player || !player.listener || typeof AndroidJS === 'undefined') {
+            window.setTimeout(observeLampaPlayer, 250);
+            return;
+        }
+        if (player.__jacketBackBridgeInstalled) return;
+        player.__jacketBackBridgeInstalled = true;
+        player.listener.follow('start', function () {
+            AndroidJS.setPlayerOpen(true);
+        });
+        player.listener.follow('close', function () {
+            AndroidJS.setPlayerOpen(false);
+        });
+        AndroidJS.setPlayerOpen(Boolean(player.opened && player.opened()));
+    }
+
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', loadLampacPlugin, { once: true });
     } else {
         loadLampacPlugin();
     }
+
+    observeLampaPlayer();
 
     window.addEventListener('beforeunload', function () {
         if (timer) window.clearTimeout(timer);

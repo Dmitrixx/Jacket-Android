@@ -318,13 +318,6 @@ fun JacketApp(viewModel: MainViewModel) {
         topBar = {
             if (selectedTab != TAB_LAMPA) {
                 TopAppBar(
-                    navigationIcon = {
-                        if (selectedTab == TAB_LAMPA) {
-                            IconButton(onClick = { selectedTab = TAB_HOME }) {
-                                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Назад в Jacket")
-                            }
-                        }
-                    },
                     title = {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
