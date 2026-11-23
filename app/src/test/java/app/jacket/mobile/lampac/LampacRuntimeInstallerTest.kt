@@ -327,7 +327,7 @@ class LampacRuntimeInstallerTest {
         listOf(packageCommand, nodeRepairCommand).forEach { command ->
             assertTrue(command.contains("/tmp/lampa-dpkg-install.log 2>&1"))
             assertTrue(command.contains("tail -n 120 /tmp/lampa-dpkg-install.log"))
-            assertTrue(command.contains("status=\\$?"))
+            assertTrue(command.contains("status=\$?"))
         }
         assertTrue(packageCommand.contains("apt-get install -y --no-install-recommends ca-certificates"))
         assertTrue(packageCommand.contains("google-chrome-stable_current_arm64.deb"))
