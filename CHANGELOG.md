@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.8.11 (release candidate)
+
+- Bundle the pinned upstream Lampa source tree and compile its web interface into APK assets.
+- Add the embedded Lampac startup and loopback `/online.js` plugin connection to the primary Lampa screen.
+- Keep Lampa playback in its own WebView player; existing Jacket catalog and torrent playback still use Media3 pending the planned player unification and real-device acceptance tests.
+- Report the actual Jacket version through the Lampa bridge and Lampac startup health checks.
+
 ## 2.8.10
 
 - Fixed embedded Lampac provider requests by forwarding TMDB title, year, media type and identifiers to each discovered `/lite/{provider}` route.
