@@ -308,13 +308,16 @@ class LampacRuntimeInstallerTest {
 
         listOf(packageCommand, nodeRepairCommand).forEach { command ->
             assertTrue(command.startsWith(offlineEnvironment))
-            assertEquals(1, command.split("dpkg --root=/ --configure -a").size - 1)
-            assertTrue(command.contains("dpkg --root=/ --configure -a;"))
-            assertTrue(command.contains("sed -i 's/systemd-machine-id-setup/true/g'"))
-            assertTrue(command.contains("backup=/tmp/lampa-systemd.postinst.original"))
-            assertTrue(command.contains("trap 'restore_systemd_postinst' EXIT"))
-            assertTrue(command.contains("restore_systemd_postinst;"))
+            assertTrue(command.contains("backup=/tmp/lampa-systemd-machine-id-setup.original"))
+            assertTrue(command.contains("shim=/usr/local/bin/systemd-machine-id-setup"))
+            assertTrue(command.contains("printf '#!/bin/sh\\nexit 0\\n'"))
+            assertTrue(command.contains("export PATH=/usr/local/bin:\$PATH"))
+            assertTrue(command.contains("trap 'restore_systemd_machine_id_setup' EXIT"))
+            assertTrue(command.contains("restore_systemd_machine_id_setup()"))
+            assertFalse(command.contains("sed -i"))
         }
+        assertTrue(packageCommand.contains("dpkg --root=/ --configure -a && apt-get update &&"))
+        assertTrue(nodeRepairCommand.contains("dpkg --root=/ --configure -a && apt-get update &&"))
 
         assertTrue(packageCommand.contains("apt-get install -y --no-install-recommends ca-certificates"))
         assertTrue(packageCommand.contains("google-chrome-stable_current_arm64.deb"))
