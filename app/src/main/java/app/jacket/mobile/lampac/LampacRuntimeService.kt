@@ -80,8 +80,21 @@ class LampacRuntimeService : Service() {
 
         startAsForeground("Подготовка встроенного Lampac…")
         synchronized(commandLock) {
-            if (operationJob?.isActive == true) {
-                updateNotification(LampacRuntimeState.state.value.message)
+            val activeOperation = operationJob
+            if (activeOperation?.isActive == true) {
+                if (action == ACTION_RESTART &&
+                    LampacRuntimeState.state.value.phase == LampacRuntimePhase.RUNNING
+                ) {
+                    // The initial START operation publishes RUNNING just before it
+                    // completes. Queue a restart behind it instead of dropping the
+                    // user's module-save request during that small transition.
+                    operationJob = scope.launch {
+                        activeOperation.join()
+                        restartInstalledServer()
+                    }
+                } else {
+                    updateNotification(LampacRuntimeState.state.value.message)
+                }
                 return START_NOT_STICKY
             }
             operationJob = scope.launch {
