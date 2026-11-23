@@ -70,7 +70,9 @@
         player.listener.follow('close', function () {
             var playbackId = window.__JACKET_ACTIVE_PLAYBACK_ID__ ||
                 window.__JACKET_PENDING_PLAYBACK_ID__;
-            if (playbackId) {
+            var failedPlayback = playbackId &&
+                window.__JACKET_PLAYBACK_ERROR_SENT__ === playbackId;
+            if (playbackId && !failedPlayback) {
                 AndroidJS.onJacketPlaybackClosed(String(playbackId));
             }
             window.__JACKET_ACTIVE_PLAYBACK_ID__ = null;
