@@ -1,5 +1,13 @@
 # Changelog
 
+## 3.0.13 — Route torrent playback to external Android video players
+
+- Intercept Lampa's earlier torrent-specific inner-player branch before the generic HTML5 fallback.
+- Convert torrent source URLs and playlist entries through `Torserver.toPlayUrl` before handing them to the Android external-player chooser.
+- Preserve the stream metadata and playlist for compatible video players.
+- Fall back to Lampa's built-in player when the external chooser has no compatible handler or rejects the URL.
+- Keep the change restricted to the embedded `Lampa-Android` WebView; browser and Media Station X playback are unchanged.
+
 ## 3.0.12 — Open Lampa streams in an external Android player
 
 - Send Lampa media streams to Android's system video-app chooser by default inside the installed app.

@@ -36,14 +36,57 @@ await cp(publicRoot, outputRoot, { recursive: true });
 // This wrapper-specific transform is build-time only; the vendored upstream source stays untouched.
 const torrentSourcePath = path.join(sourceRoot, "src", "interaction", "torrent.js").replace(/\\/g, "/");
 const playerSourcePath = path.join(sourceRoot, "src", "interaction", "player.js").replace(/\\/g, "/");
+let torrentExternalHandoffPatched = false;
 const embeddedAndroidShellCompatibility = {
   name: "lampa-android-shell-compatibility",
   transform(code, id) {
     const sourceId = id.split("?")[0].replace(/\\/g, "/");
 
     if (sourceId === playerSourcePath) {
-      // Keep the normal Lampa HTML5 player as fallback, but hand media streams
-      // to Android's external-player resolver when this is our installed APK.
+      // Torrent starts have an earlier "inner player" branch in upstream Lampa.
+      // Intercept torrent media before that branch so the external-player chooser
+      // receives the actual TorrServer/GStreamer playback URL, not the magnet URI.
+      const upstreamTorrentStart = "    if(launch_player == 'lampa' || launch_player == 'inner' || Video.verifyTube(data.url)) launchInner()";
+      const externalTorrentStart = `    /* LAMPA_ANDROID_TORRENT_EXTERNAL */
+    if (
+        data.torrent_hash &&
+        navigator.userAgent.toLowerCase().indexOf('lampa-android') >= 0 &&
+        typeof AndroidJS !== 'undefined' &&
+        typeof AndroidJS.openExternalPlayer === 'function' &&
+        !Video.verifyTube(data.url)
+    ) {
+        const torrentData = Object.assign({}, data);
+        torrentData.url = Torserver.toPlayUrl(data.url);
+        if (Array.isArray(torrentData.playlist)) {
+            torrentData.playlist = torrentData.playlist
+                .filter(item => item && typeof item.url === 'string')
+                .map(item => Object.assign({}, item, { url: Torserver.toPlayUrl(item.url) }));
+        }
+
+        if (AndroidJS.openExternalPlayer(torrentData.url, JSON.stringify(torrentData))) {
+            data.url = torrentData.url;
+            data.playlist = torrentData.playlist;
+            listener.send('external', torrentData);
+        }
+        else {
+            launchInner();
+        }
+    }
+    else if(launch_player == 'lampa' || launch_player == 'inner' || Video.verifyTube(data.url)) launchInner()`;
+      const torrentOccurrences = code.split(upstreamTorrentStart).length - 1;
+      if (torrentOccurrences !== 1) {
+        throw new Error(
+          "The upstream Lampa torrent player branch changed; review the external torrent handoff"
+        );
+      }
+      code = code.replace(upstreamTorrentStart, externalTorrentStart);
+      // Verify the handoff against the transformed upstream source before Rollup
+      // renames imported module bindings in the generated bundle.
+      torrentExternalHandoffPatched =
+        code.includes("torrentData.url = Torserver.toPlayUrl(data.url)") &&
+        code.includes("AndroidJS.openExternalPlayer(torrentData.url, JSON.stringify(torrentData))");
+
+      // Keep the normal Lampa HTML5 player as fallback for non-torrent playback.
       const upstreamFallback = "    }\n    else launchInner()\n\n    if(data.launch_player) delete data.launch_player";
       const externalFallback = `    }
     else if (
@@ -243,6 +286,9 @@ if (!builtAppJs.includes("lampa-android")) {
 }
 if (!builtAppJs.includes("openExternalPlayer")) {
   throw new Error("The external Android player integration is missing from the Lampa bundle");
+}
+if (!torrentExternalHandoffPatched || !builtAppJs.includes("openExternalPlayer")) {
+  throw new Error("The external Android torrent handoff is missing from the Lampa bundle");
 }
 if (appJs.length < 100_000 || css.length < 20_000) {
   throw new Error("The built Lampa web assets appear incomplete");
