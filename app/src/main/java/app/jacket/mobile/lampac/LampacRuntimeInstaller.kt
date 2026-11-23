@@ -579,13 +579,47 @@ internal fun ensureLampacDebianMachineId(rootfs: File) {
     }
 }
 
+/**
+ * The PRoot OCI downloader keeps verified Debian image layers in var/lib/pr/dlcache
+ * after the rootfs has been extracted. Those files are only a re-download cache:
+ * once Debian's rootfs is ready, the installed filesystem no longer depends on them.
+ *
+ * Delete only direct regular files, matching pr-cli clear-cache semantics. Do not
+ * follow symlinks or recurse into unexpected directories in this app-private path.
+ */
+internal fun clearLampacProotDownloadCache(prefixDir: File): Long {
+    if (!prefixDir.isDirectory) return 0L
+    val canonicalPrefix = runCatching { prefixDir.canonicalFile.toPath() }.getOrNull() ?: return 0L
+    val cacheDir = File(prefixDir, "var/lib/pr/dlcache")
+    val cachePath = cacheDir.toPath()
+    if (!Files.isDirectory(cachePath, java.nio.file.LinkOption.NOFOLLOW_LINKS)) return 0L
+
+    val canonicalCache = runCatching { cacheDir.canonicalFile.toPath() }.getOrNull() ?: return 0L
+    if (!canonicalCache.startsWith(canonicalPrefix) || canonicalCache == canonicalPrefix) return 0L
+
+    var reclaimedBytes = 0L
+    return try {
+        Files.newDirectoryStream(cachePath).use { entries ->
+            for (entry in entries) {
+                if (!Files.isRegularFile(entry, java.nio.file.LinkOption.NOFOLLOW_LINKS)) continue
+                val size = runCatching { Files.size(entry) }.getOrDefault(0L)
+                val deleted = runCatching { Files.deleteIfExists(entry) }.getOrDefault(false)
+                if (deleted) reclaimedBytes += size
+            }
+            reclaimedBytes
+        }
+    } catch (_: IOException) {
+        reclaimedBytes
+    }
+}
+
 internal fun buildLampacSystemPackagesInstallCommand(): String =
     buildLampacOfflineDpkgCommand(
         "apt-get update && " +
             "apt-get install -y --no-install-recommends opensysusers && " +
             "dpkg --root=/ --configure -a && " +
-            "apt-get install -y --no-install-recommends ca-certificates curl fontconfig libicu78 libssl-dev zlib1g tar nodejs " +
-            "ffmpeg imagemagick xvfb libjpeg-dev libpng-dev libwebp-dev libnspr4 " +
+            "apt-get install -y --no-install-recommends ca-certificates curl fontconfig libicu78 zlib1g tar nodejs " +
+            "ffmpeg imagemagick xvfb libnspr4 " +
             "gstreamer1.0-libav gstreamer1.0-plugins-bad gstreamer1.0-plugins-base gstreamer1.0-plugins-base-apps " +
             "gstreamer1.0-plugins-good gstreamer1.0-plugins-ugly gstreamer1.0-tools " +
             "libgstreamer-plugins-base1.0-0 libgstreamer1.0-0 && " +
@@ -723,6 +757,15 @@ class LampacRuntimeInstaller(context: android.content.Context) {
         send("prepare", "Подготавливаем PRoot…", 0, 0)
         val prepared = LampacProotBootstrap.prepare(host)
 
+        // Once the OCI rootfs exists, its verified layer blobs are no longer
+        // needed. Remove this re-download cache before any repair or install.
+        if (isDebianRootfsReady(prepared.debianRootfsDir)) {
+            val reclaimed = clearLampacProotDownloadCache(host.prefixDir)
+            if (reclaimed > 0L) {
+                send("storage-cleanup", "Освобождено ${formatBytes(reclaimed)} из кэша слоёв Debian", reclaimed, reclaimed)
+            }
+        }
+
         // Newer APKs may add an ARM64 runtime prerequisite without changing the
         // Lampac payload. Repair that in place before requiring space for a
         // second 480 MB archive or replacing the user's existing init.conf.
@@ -768,6 +811,10 @@ class LampacRuntimeInstaller(context: android.content.Context) {
             }
             check(result == 0 && isDebianRootfsReady(prepared.debianRootfsDir)) {
                 "Не удалось установить полноценный Debian ARM64 в PRoot (код $result)"
+            }
+            val reclaimed = clearLampacProotDownloadCache(host.prefixDir)
+            if (reclaimed > 0L) {
+                send("storage-cleanup", "Освобождено ${formatBytes(reclaimed)} из кэша слоёв Debian", reclaimed, reclaimed)
             }
         }
 
