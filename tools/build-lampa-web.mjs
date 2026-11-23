@@ -33,6 +33,7 @@ await rm(path.join(sourceRoot, "dest"), { recursive: true, force: true });
 await mkdir(outputRoot, { recursive: true });
 await cp(publicRoot, outputRoot, { recursive: true });
 
+// This wrapper-specific transform is build-time only; the vendored upstream source stays untouched.
 const torrentSourcePath = path.join(sourceRoot, "src", "interaction", "torrent.js").replace(/\\/g, "/");
 const embeddedAndroidShellCompatibility = {
   name: "lampa-android-shell-torrent-hint",
