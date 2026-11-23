@@ -168,7 +168,7 @@ class LocalStreamServer(
                         client.getOutputStream(),
                         204,
                         "No Content",
-                        corsHeaders + listOf("Content-Length: 0", "Connection: close")
+                        corsHeaders + listOf("Connection: close")
                     )
                     return
                 }
