@@ -16,7 +16,7 @@ import java.nio.file.Files
  * The PRoot executable and loader stay in ApplicationInfo.nativeLibraryDir:
  * Android's W^X policy does not allow executing downloaded binaries from filesDir.
  */
-class JacketProotHost(context: Context) : ProotHost {
+class LampaProotHost(context: Context) : ProotHost {
     private val appContext = context.applicationContext
 
     override val prefixDir: File = File(appContext.filesDir, "lampac/pr")
@@ -39,9 +39,9 @@ class JacketProotHost(context: Context) : ProotHost {
     val nativeLibraryDir: File
         get() = File(appContext.applicationInfo.nativeLibraryDir)
 
-    /** OCI rootfs path created by `pr-cli install debian`; do not create it before install. */
+    /** OCI rootfs path created by pr-cli under the private Lampac Debian alias. */
     val debianRootfsDir: File
-        get() = File(prefixDir, "var/lib/pr/containers/debian/rootfs")
+        get() = File(prefixDir, "var/lib/pr/containers/$LAMPAC_DEBIAN_ALIAS/rootfs")
 }
 
 data class ProotBootstrapResult(
@@ -67,7 +67,7 @@ object LampacProotBootstrap {
     fun isSupportedOnThisDevice(): Boolean =
         Build.SUPPORTED_ABIS.any { it.equals("arm64-v8a", ignoreCase = true) }
 
-    fun prepare(host: JacketProotHost): ProotBootstrapResult {
+    fun prepare(host: LampaProotHost): ProotBootstrapResult {
         check(isSupportedOnThisDevice()) {
             "Встроенный Lampac пока поддерживается только на ARM64. Можно подключить удалённый Lampac по сети."
         }
@@ -75,7 +75,7 @@ object LampacProotBootstrap {
         val nativeDir = host.nativeLibraryDir
         requiredLibraries.forEach { name ->
             require(File(nativeDir, name).isFile) {
-                "Не найдена библиотека $name. Проверьте ARM64-сборку Jacket."
+                "Не найдена библиотека $name. Проверьте ARM64-сборку Lampa."
             }
         }
 
@@ -143,7 +143,7 @@ object LampacProotBootstrap {
  * Output is read from the PTY continuously so pr-cli cannot block on a full
  * output buffer. The caller owns command sequencing and service lifetime.
  */
-class LampacProotCommands(host: JacketProotHost) {
+class LampacProotCommands(host: LampaProotHost) {
     private val launcher = ProotLauncher(host)
 
     fun start(args: List<String>): ProotLauncher.Session {

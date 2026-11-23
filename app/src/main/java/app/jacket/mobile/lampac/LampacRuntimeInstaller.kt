@@ -110,7 +110,7 @@ private object LampacArtifactDownloader {
                     readTimeout = 90_000
                     instanceFollowRedirects = false
                     setRequestProperty("Accept", "application/octet-stream")
-                    setRequestProperty("User-Agent", "Jacket-Android/2.8 (private Lampac installer)")
+                    setRequestProperty("User-Agent", "Lampa-Android/3.0 (private Lampac installer)")
                 }
 
                 try {
@@ -215,12 +215,36 @@ private object LampacArtifactDownloader {
     private val REDIRECT_CODES = setOf(301, 302, 303, 307, 308)
 }
 
+/**
+ * Converts every ZIP entry to a safe relative destination.
+ *
+ * Lampac release archives may contain files next to the directory that contains
+ * Core.dll. Strip the common application directory only for entries beneath it;
+ * entries outside it remain part of the installed full distribution.
+ */
+internal fun lampacArchiveRelativePath(entryName: String, corePrefix: String): String? {
+    val relative = if (corePrefix.isNotEmpty() && entryName.startsWith(corePrefix)) {
+        entryName.removePrefix(corePrefix)
+    } else {
+        entryName
+    }
+    if (relative.isBlank()) return null
+    require(!relative.startsWith('/') && '\\' !in relative && '\u0000' !in relative) {
+        "Архив Lampac содержит недопустимый путь"
+    }
+    val segments = relative.trimEnd('/').split('/')
+    require(segments.none { it.isBlank() || it == "." || it == ".." }) {
+        "Архив Lampac содержит traversal-путь"
+    }
+    return segments.joinToString(File.separator)
+}
+
 private object LampacZipInstaller {
     private const val MAX_FILES = 120_000
-    private const val MAX_UNCOMPRESSED_BYTES = 3L * 1024L * 1024L * 1024L
+    private const val MAX_UNCOMPRESSED_BYTES = 10L * 1024L * 1024L * 1024L
     private const val MAX_ENTRY_BYTES = 512L * 1024L * 1024L
     private const val RESERVED_BYTES = 256L * 1024L * 1024L
-    private const val MARKER_FILE = ".jacket-lampac-version"
+    private const val MARKER_FILE = ".lampa-lampac-version"
 
     suspend fun install(
         archive: File,
@@ -277,6 +301,15 @@ private object LampacZipInstaller {
                 require(all.any { !it.isDirectory && it.name.startsWith(prefix + "runtimes/references/") }) {
                     "В архиве Lampac отсутствуют зависимости runtimes/references"
                 }
+                val requiredPlaywrightFiles = listOf(
+                    prefix + ".playwright/package/index.js",
+                    prefix + ".playwright/package/cli.js"
+                )
+                requiredPlaywrightFiles.forEach { required ->
+                    require(all.any { !it.isDirectory && it.name == required }) {
+                        "В полном архиве Lampac отсутствует файл Playwright: ${required.removePrefix(prefix)}"
+                    }
+                }
 
                 val freeSpace = StatFs(rootfs.absolutePath).availableBytes
                 require(freeSpace >= totalBytes + RESERVED_BYTES) {
@@ -288,10 +321,9 @@ private object LampacZipInstaller {
                 var written = 0L
                 all.forEach { entry ->
                     context.ensureActive()
-                    if (!entry.name.startsWith(prefix)) return@forEach
-                    val relative = entry.name.removePrefix(prefix)
-                    if (relative.isBlank()) return@forEach
-                    val safePath = safeRelativePath(relative)
+                    // Strip the common application folder only where it actually
+                    // prefixes the entry. Keep every other archive entry too.
+                    val safePath = lampacArchiveRelativePath(entry.name, prefix) ?: return@forEach
                     val output = File(stage, safePath)
                     val rootPath = stage.canonicalPath + File.separator
                     require(output.canonicalPath.startsWith(rootPath)) {
@@ -339,6 +371,9 @@ private object LampacZipInstaller {
                 require(File(stage, "runtimes/references").isDirectory) {
                     "После распаковки отсутствуют зависимости runtimes/references"
                 }
+                require(isLampacPlaywrightPackageReady(stage)) {
+                    "После распаковки отсутствует JavaScript-драйвер Playwright"
+                }
                 if (previousInitConfig == null) {
                     LampacEmbeddedConfig.writeInitConfig(stage)
                 } else {
@@ -362,17 +397,6 @@ private object LampacZipInstaller {
             if (!target.exists() && backup.exists()) backup.renameTo(target)
             throw error
         }
-    }
-
-    private fun safeRelativePath(value: String): String {
-        require(!value.startsWith('/') && '\\' !in value && '\u0000' !in value) {
-            "Архив Lampac содержит недопустимый путь"
-        }
-        val segments = value.trimEnd('/').split('/')
-        require(segments.none { it.isBlank() || it == "." || it == ".." }) {
-            "Архив Lampac содержит traversal-путь"
-        }
-        return segments.joinToString(File.separator)
     }
 
     private fun formatBytes(value: Long): String =
@@ -415,6 +439,73 @@ internal fun copyArchiveEntryBounded(
     return copied
 }
 
+/**
+ * A complete install is only accepted when it carries the new Lampa marker.
+ * Older Jacket/Lampac installs are intentionally reinstalled once so the
+ * official full archive and all module files replace any previously filtered
+ * payload. The updater still carries forward init.conf and provider settings.
+ */
+internal fun isLampacRuntimePayloadReady(root: File, expectedVersion: String): Boolean {
+    val lampac = File(root, "opt/lampac")
+    val marker = File(lampac, ".lampa-lampac-version")
+    val markerVersion = runCatching { marker.readText(Charsets.UTF_8).trim() }.getOrNull()
+    return File(root, "opt/dotnet/dotnet").isFile &&
+        File(lampac, "Core.dll").isFile &&
+        File(lampac, "Shared.dll").isFile &&
+        File(lampac, "init.conf").isFile &&
+        isLampacPlaywrightPackageReady(lampac) &&
+        markerVersion == expectedVersion
+}
+
+internal fun isLampacNodeReady(root: File): Boolean =
+    File(root, "usr/bin/node").canExecute()
+
+internal fun isCompleteLampacRuntime(root: File, expectedVersion: String): Boolean =
+    isLampacRuntimePayloadReady(root, expectedVersion) && isLampacNodeReady(root)
+
+/** A lightweight repair for older installs: it adds only ARM64 Node.js. */
+internal fun buildLampacNodeInstallCommand(): String =
+    "export DEBIAN_FRONTEND=noninteractive && " +
+        "apt-get update && " +
+        "apt-get install -y --no-install-recommends nodejs && " +
+        "test -x /usr/bin/node && node --version && " +
+        "apt-get clean && rm -rf /var/lib/apt/lists/*"
+
+/**
+ * Playwright's JS package is architecture-independent. The runtime uses
+ * Debian's ARM64 Node.js through PLAYWRIGHT_NODEJS_PATH rather than assuming
+ * that a platform-specific executable in the release archive matches Android.
+ */
+internal fun isLampacPlaywrightPackageReady(lampacDirectory: File): Boolean {
+    val packageDirectory = File(lampacDirectory, ".playwright/package")
+    // index.js is checked by Lampac's startup guard; cli.js is the actual
+    // Playwright driver entrypoint launched by Microsoft.Playwright.
+    return File(packageDirectory, "index.js").isFile &&
+        File(packageDirectory, "cli.js").isFile
+}
+
+
+/**
+ * Finds the previous app's Debian alias config before a new OCI runtime is
+ * created. The old legacy and old OCI locations are both checked, but neither
+ * rootfs is removed automatically.
+ */
+internal fun readLegacyLampacInitConfig(prefixDir: File): String? {
+    val candidates = listOf(
+        File(
+            prefixDir,
+            "var/lib/pr/containers/$LAMPAC_DEBIAN_ALIAS/rootfs/opt/lampac/init.conf"
+        ),
+        File(prefixDir, "var/lib/pr/installed-rootfs/debian/opt/lampac/init.conf"),
+        File(prefixDir, "var/lib/pr/containers/debian/rootfs/opt/lampac/init.conf")
+    )
+    val source = candidates.firstOrNull { it.isFile } ?: return null
+    require(source.length() in 1..LampacEmbeddedConfig.MAX_INIT_CONFIG_BYTES.toLong()) {
+        "Существующий init.conf Lampac пуст или превышает лимит 2 МиБ; миграция настроек отменена."
+    }
+    return source.readText(Charsets.UTF_8)
+}
+
 /** True only when the PRoot Debian root contains the required base system tools. */
 internal fun isDebianRootfsReady(root: File): Boolean {
     if (!root.isDirectory) return false
@@ -441,7 +532,7 @@ internal fun isDebianRootfsReady(root: File): Boolean {
  */
 class LampacRuntimeInstaller(context: android.content.Context) {
     private val appContext = context.applicationContext
-    private val host = JacketProotHost(appContext)
+    private val host = LampaProotHost(appContext)
     private val commands = LampacProotCommands(host)
     private val commandRunner = LampacProotCommandRunner(commands)
     private val downloads = File(appContext.filesDir, "lampac/downloads")
@@ -449,10 +540,7 @@ class LampacRuntimeInstaller(context: android.content.Context) {
     fun isInstalled(): Boolean {
         val root = host.debianRootfsDir
         return isDebianRootfsReady(root) &&
-            File(root, "opt/dotnet/dotnet").isFile &&
-            File(root, "opt/lampac/Core.dll").isFile &&
-            File(root, "opt/lampac/Shared.dll").isFile &&
-            File(root, "opt/lampac/init.conf").isFile
+            isCompleteLampacRuntime(root, LampacRuntimeArtifacts.LAMPAC_VERSION)
     }
 
     fun availableBytes(): Long = StatFs(appContext.filesDir.absolutePath).availableBytes
@@ -492,19 +580,41 @@ class LampacRuntimeInstaller(context: android.content.Context) {
         check(LampacProotBootstrap.isSupportedOnThisDevice()) {
             "Встроенный Lampac пока доступен только на ARM64. Удалённый сервер можно подключить по HTTPS."
         }
-        val requiredBeforeDownload = LampacRuntimeArtifacts.LAMPAC_BYTES +
-            1024L * 1024L * 1024L
-        check(availableBytes() >= requiredBeforeDownload) {
-            "Для установки Lampac нужно не менее 1,5 ГБ свободного места во внутренней памяти телефона."
-        }
 
         send("prepare", "Подготавливаем PRoot…", 0, 0)
         val prepared = LampacProotBootstrap.prepare(host)
+
+        // Newer APKs may add an ARM64 runtime prerequisite without changing the
+        // Lampac payload. Repair that in place before requiring space for a
+        // second 480 MB archive or replacing the user's existing init.conf.
+        if (isDebianRootfsReady(prepared.debianRootfsDir) &&
+            isLampacRuntimePayloadReady(prepared.debianRootfsDir, LampacRuntimeArtifacts.LAMPAC_VERSION) &&
+            !isLampacNodeReady(prepared.debianRootfsDir)
+        ) {
+            send("nodejs-migration", "Добавляем ARM64 Node.js для Playwright без повторной загрузки Lampac…", 0, 0)
+            val nodeInstall = commandRunner.runAsRoot(buildLampacNodeInstallCommand()) { line ->
+                send("nodejs-migration", line.take(220), 0, 0)
+            }
+            check(nodeInstall == 0 && isLampacNodeReady(prepared.debianRootfsDir)) {
+                "Не удалось добавить ARM64 Node.js для Playwright (код $nodeInstall)"
+            }
+            val existingServer = File(prepared.debianRootfsDir, "opt/lampac")
+            send("installed", "ARM64 Node.js добавлен. Существующий Lampac и настройки сохранены.", 1, 1)
+            return@withContext existingServer
+        }
+
+        val requiredBeforeDownload = LampacRuntimeArtifacts.LAMPAC_BYTES +
+            4L * 1024L * 1024L * 1024L
+        check(availableBytes() >= requiredBeforeDownload) {
+            "Для установки полного Lampac нужно не менее 4,5 ГБ свободного места во внутренней памяти телефона."
+        }
+
+        val legacyInitConfig = readLegacyLampacInitConfig(host.prefixDir)
         if (!isDebianRootfsReady(prepared.debianRootfsDir)) {
             val containerDir = prepared.debianRootfsDir.parentFile
             if (containerDir?.exists() == true) {
                 send("debian-repair", "Обнаружена незавершённая установка Debian. Удаляем повреждённый контейнер…", 0, 0)
-                val removeCode = commandRunner.execute(listOf("remove", "debian")) { line ->
+                val removeCode = commandRunner.execute(listOf("remove", LAMPAC_DEBIAN_ALIAS)) { line ->
                     send("debian-repair", line.take(220), 0, 0)
                 }
                 check(removeCode == 0 || !containerDir.exists()) {
@@ -525,7 +635,18 @@ class LampacRuntimeInstaller(context: android.content.Context) {
         val apt = commandRunner.runAsRoot(
             "export DEBIAN_FRONTEND=noninteractive && " +
                 "apt-get update && " +
-                "apt-get install -y --no-install-recommends ca-certificates curl libicu-dev libssl-dev zlib1g tar && " +
+                "apt-get install -y --no-install-recommends ca-certificates curl fontconfig libicu78 libssl-dev zlib1g tar nodejs " +
+                "ffmpeg imagemagick xvfb libjpeg-dev libpng-dev libwebp-dev libnspr4 " +
+                "gstreamer1.0-libav gstreamer1.0-plugins-bad gstreamer1.0-plugins-base gstreamer1.0-plugins-base-apps " +
+                "gstreamer1.0-plugins-good gstreamer1.0-plugins-ugly gstreamer1.0-tools " +
+                "libgstreamer-plugins-base1.0-0 libgstreamer1.0-0 && " +
+                "curl -fSL --retry 3 https://dl.google.com/linux/direct/google-chrome-stable_current_arm64.deb -o /tmp/google-chrome-stable.deb && " +
+                "test \"$(dpkg-deb -f /tmp/google-chrome-stable.deb Architecture)\" = arm64 && " +
+                "apt-get install -y --no-install-recommends /tmp/google-chrome-stable.deb && " +
+                "ln -sf /usr/bin/google-chrome-stable /usr/bin/chromium && " +
+                "rm -f /tmp/google-chrome-stable.deb && " +
+                "test -x /usr/bin/node && node --version && " +
+                "test -x /usr/bin/chromium && chromium --version && ffmpeg -version && gst-inspect-1.0 --version && " +
                 "apt-get clean && rm -rf /var/lib/apt/lists/*"
         ) { line -> send("packages", line.take(220), 0, 0) }
         check(apt == 0) { "Не удалось установить системные библиотеки Debian (код $apt)" }
@@ -562,6 +683,14 @@ class LampacRuntimeInstaller(context: android.content.Context) {
             ),
             downloads
         ) { done, total -> send("lampac-download", "Загрузка Lampac: ${formatBytes(done)}", done, total) }
+
+        if (legacyInitConfig != null) {
+            val newServerDirectory = File(prepared.debianRootfsDir, "opt/lampac")
+            if (!File(newServerDirectory, "init.conf").isFile) {
+                LampacEmbeddedConfig.importInitConfig(newServerDirectory, legacyInitConfig)
+                send("config-migration", "Сохранены прежние настройки и ключи источников Lampac.", 1, 1)
+            }
+        }
 
         send("lampac-extract", "Проверяем архив и устанавливаем Lampac…", 0, 0)
         val serverDir = LampacZipInstaller.install(lampacArchive, prepared.debianRootfsDir) { done, total ->

@@ -7,38 +7,15 @@ import java.io.File
 import java.io.IOException
 
 /**
- * Minimal local-only Lampac configuration based on the upstream example.init.conf.
+ * Android bootstrap defaults for the complete upstream Lampac server.
  *
- * Browser automation, public listening and server-side media processing stay off
- * for the Android profile. The native GStreamer add-on is not packaged with the
- * Android rootfs; Jacket uses its own Media3 player and does not need that module.
+ * No Android-specific module exclusions are written. The full release package,
+ * upstream module manifests and the user's configuration determine capabilities.
  */
 object LampacEmbeddedConfig {
     const val HOST = "127.0.0.1"
     const val PORT = 9118
     const val BASE_URL = "http://127.0.0.1:9118"
-
-    // Preserve the upstream base.conf exclusions as init.conf arrays replace,
-    // rather than append to, the base arrays during Lampac config merging.
-    private val skippedModules = listOf(
-        "Catalog",
-        "CacheMedia",
-        "DLNA",
-        "ForkPlayerXML",
-        "GStreamer",
-        "MsxNative",
-        "Potok",
-        "QRAuth",
-        "SeriesNotify",
-        "Sync",
-        "TelegramAuth",
-        "TelegramAuthBot",
-        "TimeCode",
-        "TorrServer",
-        "Tracks",
-        "Transcoding",
-        "WebLog"
-    )
 
     fun buildJson(): String = JSONObject()
         .put(
@@ -53,11 +30,20 @@ object LampacEmbeddedConfig {
         .put(
             "BaseModule",
             JSONObject()
-                .put("SkipModules", JSONArray(skippedModules))
                 .put("LoadModules", JSONArray(listOf(".*")))
+                .put("SkipModules", JSONArray())
         )
-        .put("chromium", JSONObject().put("enable", false))
-        .put("openstat", JSONObject().put("enable", false))
+        .put(
+            "chromium",
+            JSONObject()
+                .put("enable", true)
+                .put("executablePath", "/usr/bin/chromium")
+                // Lampac runs as root inside PRoot; Chromium's namespace sandbox
+                // cannot initialize reliably on Android, so use the upstream
+                // documented no-sandbox flag for this isolated app-private runtime.
+                .put("Args", JSONArray(listOf("--no-sandbox")))
+        )
+        .put("openstat", JSONObject().put("enable", true))
         .put(
             "JacRed",
             JSONObject()
@@ -74,8 +60,8 @@ object LampacEmbeddedConfig {
         .put(
             "online",
             JSONObject()
-                .put("name", "Lampac NextGen")
-                .put("spiderName", "Lampac NextGen")
+                .put("name", "Lampa")
+                .put("spiderName", "Lampa")
                 .put("version", true)
                 .put("btn_priority_forced", true)
         )
@@ -90,9 +76,8 @@ object LampacEmbeddedConfig {
         .toString(2)
 
     /**
-     * Migrates an already-installed runtime without replacing unrelated settings.
-     * GStreamer is an optional server-side transcoder with native GLib/GStreamer
-     * dependencies; the Android runtime intentionally keeps it unloaded.
+     * Reapplies the loopback listener and unfiltered module selection while
+     * preserving provider credentials, priorities and custom configuration.
      */
     fun ensureAndroidRuntimeConfig(serverDirectory: File): File {
         if (!serverDirectory.exists() && !serverDirectory.mkdirs()) {
@@ -108,24 +93,24 @@ object LampacEmbeddedConfig {
         } catch (error: Exception) {
             throw IOException("Не удалось прочитать init.conf Lampac", error)
         }
-        if (!ensureAndroidModules(config)) return target
+        val modulesChanged = ensureFullModuleSet(config)
+        val listenerChanged = ensureLocalListener(config)
+        val browserChanged = ensureBrowserDefaults(config)
+        val jacredChanged = ensureJacRedConfigured(config)
+        if (!modulesChanged && !listenerChanged && !browserChanged && !jacredChanged) return target
+
         writeConfigAtomically(target, config.toString(2))
         return target
     }
 
-    /** Adds only Android-specific module exclusions and required local JacRed defaults. */
     internal fun ensureAndroidModules(config: JSONObject): Boolean {
-        var changed = ensureLocalListener(config)
-        if (ensureAllModulesLoadedWhenUnspecified(config)) changed = true
-        if (ensureAndroidRuntimeRestrictions(config)) changed = true
-        if (ensureGStreamerSkipped(config)) changed = true
-        if (ensureUpstreamDefaultExclusions(config)) changed = true
-        if (ensureAndroidOptionalModulesSkipped(config)) changed = true
-        if (ensureJacRedConfigured(config)) changed = true
-        return changed
+        val listenerChanged = ensureLocalListener(config)
+        val modulesChanged = ensureFullModuleSet(config)
+        val browserChanged = ensureBrowserDefaults(config)
+        val jacredChanged = ensureJacRedConfigured(config)
+        return listenerChanged || modulesChanged || browserChanged || jacredChanged
     }
 
-    /** Keep the embedded HTTP listener private even when a desktop init.conf is imported. */
     internal fun ensureLocalListener(config: JSONObject): Boolean {
         val listen = config.optJSONObject("listen") ?: JSONObject().also {
             config.put("listen", it)
@@ -139,102 +124,58 @@ object LampacEmbeddedConfig {
         return before != listen.toString()
     }
 
-    /** Browser automation and telemetry endpoints are not part of the embedded Android profile. */
-    internal fun ensureAndroidRuntimeRestrictions(config: JSONObject): Boolean {
+    /** Make every shipped module eligible for loading; upstream manifest flags still apply. */
+    internal fun ensureFullModuleSet(config: JSONObject): Boolean {
+        val base = config.optJSONObject("BaseModule") ?: JSONObject().also {
+            config.put("BaseModule", it)
+        }
+        val before = base.toString()
+        base.put("LoadModules", JSONArray(listOf(".*")))
+            .put("SkipModules", JSONArray())
+        return before != base.toString()
+    }
+
+    /** Enable upstream browser integrations by default but retain explicit user choices. */
+    internal fun ensureBrowserDefaults(config: JSONObject): Boolean {
         var changed = false
         val chromium = config.optJSONObject("chromium") ?: JSONObject().also {
             config.put("chromium", it)
             changed = true
         }
-        if (!chromium.has("enable") || chromium.optBoolean("enable", true)) {
-            chromium.put("enable", false)
+        if (!chromium.has("enable")) {
+            chromium.put("enable", true)
             changed = true
         }
+        if (chromium.optString("executablePath").isBlank()) {
+            chromium.put("executablePath", "/usr/bin/chromium")
+            changed = true
+        }
+
+        // The PRoot server starts as root and Android does not provide the
+        // Linux user-namespace setup Chromium's sandbox expects. Preserve every
+        // user-supplied flag, but always retain the documented --no-sandbox flag.
+        val browserArgs = chromium.optJSONArray("Args") ?: JSONArray().also {
+            chromium.put("Args", it)
+            changed = true
+        }
+        if ((0 until browserArgs.length()).none { browserArgs.optString(it) == "--no-sandbox" }) {
+            browserArgs.put("--no-sandbox")
+            changed = true
+        }
+
         val openstat = config.optJSONObject("openstat") ?: JSONObject().also {
             config.put("openstat", it)
             changed = true
         }
-        if (!openstat.has("enable") || openstat.optBoolean("enable", true)) {
-            openstat.put("enable", false)
+        if (!openstat.has("enable")) {
+            openstat.put("enable", true)
             changed = true
-        }
-        return changed
-    }
-
-    /** Lampac loads enabled modules selected by LoadModules, less SkipModules. */
-    internal fun ensureAllModulesLoadedWhenUnspecified(config: JSONObject): Boolean {
-        val baseModule = config.optJSONObject("BaseModule") ?: JSONObject().also {
-            config.put("BaseModule", it)
-        }
-        val loadModules = baseModule.optJSONArray("LoadModules")
-        if (loadModules != null && loadModules.length() > 0) return false
-        baseModule.put("LoadModules", JSONArray(listOf(".*")))
-        return true
-    }
-
-    /** init.conf replaces BaseModule.SkipModules; restore all upstream base.conf exclusions. */
-    internal fun ensureUpstreamDefaultExclusions(config: JSONObject): Boolean {
-        val baseModule = config.optJSONObject("BaseModule") ?: JSONObject().also {
-            config.put("BaseModule", it)
-        }
-        val skipped = baseModule.optJSONArray("SkipModules") ?: JSONArray().also {
-            baseModule.put("SkipModules", it)
-        }
-        val required = listOf(
-            "CacheMedia",
-            "ForkPlayerXML",
-            "MsxNative",
-            "Potok",
-            "QRAuth",
-            "SeriesNotify",
-            "TelegramAuth",
-            "TelegramAuthBot"
-        )
-        var changed = false
-        required.forEach { module ->
-            if ((0 until skipped.length()).none { skipped.optString(it).equals(module, true) }) {
-                skipped.put(module)
-                changed = true
-            }
-        }
-        return changed
-    }
-
-    /** Keep modules that rely on native services, privileged networking or extra ports off on Android. */
-    internal fun ensureAndroidOptionalModulesSkipped(config: JSONObject): Boolean {
-        val baseModule = config.optJSONObject("BaseModule") ?: JSONObject().also {
-            config.put("BaseModule", it)
-        }
-        val skipped = baseModule.optJSONArray("SkipModules") ?: JSONArray().also {
-            baseModule.put("SkipModules", it)
-        }
-        var changed = false
-        skippedModules.forEach { module ->
-            if ((0 until skipped.length()).none { skipped.optString(it).equals(module, true) }) {
-                skipped.put(module)
-                changed = true
-            }
         }
         return changed
     }
 
     internal fun ensureJacRedConfigured(config: JSONObject): Boolean {
         var changed = false
-        val baseModule = config.optJSONObject("BaseModule") ?: JSONObject().also {
-            config.put("BaseModule", it)
-            changed = true
-        }
-        val skipped = baseModule.optJSONArray("SkipModules") ?: JSONArray().also {
-            baseModule.put("SkipModules", it)
-            changed = true
-        }
-        for (index in skipped.length() - 1 downTo 0) {
-            if (skipped.optString(index).equals("JacRed", ignoreCase = true)) {
-                skipped.remove(index)
-                changed = true
-            }
-        }
-
         val jacRed = config.optJSONObject("JacRed") ?: JSONObject().also {
             config.put("JacRed", it)
             changed = true
@@ -259,9 +200,6 @@ object LampacEmbeddedConfig {
             jackett.put("timeoutSeconds", 8)
             changed = true
         }
-        // Megapeer is the only upstream JacRed adapter disabled by default.
-        // Enable it on fresh/previously unconfigured embedded installs, but keep
-        // an explicit user enable=false choice intact.
         val megapeer = jackett.optJSONObject("Megapeer") ?: JSONObject().also {
             jackett.put("Megapeer", it)
             changed = true
@@ -273,37 +211,16 @@ object LampacEmbeddedConfig {
         return changed
     }
 
-    /** Adds the native GStreamer exclusion; Android uses its own Media3 playback engine. */
-    internal fun ensureGStreamerSkipped(config: JSONObject): Boolean {
-        val baseModule = config.optJSONObject("BaseModule") ?: JSONObject().also {
-            config.put("BaseModule", it)
-        }
-        val skipped = baseModule.optJSONArray("SkipModules") ?: JSONArray().also {
-            baseModule.put("SkipModules", it)
-        }
-        if ((0 until skipped.length()).any { skipped.optString(it) == "GStreamer" }) return false
-        skipped.put("GStreamer")
-        return true
-    }
-
-    /** Writes init.conf atomically, preserving the previous file if writing fails. */
     fun writeInitConfig(serverDirectory: File): File {
         if (!serverDirectory.exists() && !serverDirectory.mkdirs()) {
             throw IOException("Не удалось создать каталог Lampac: ${serverDirectory.absolutePath}")
         }
         require(serverDirectory.isDirectory) { "Путь Lampac не является каталогом" }
-
         val target = File(serverDirectory, "init.conf")
         writeConfigAtomically(target, buildJson())
         return target
     }
 
-    /**
-     * Imports a user-owned Lampac init.conf while enforcing the Android loopback-only
-     * listener and the native modules that the embedded runtime cannot safely load.
-     * Provider credentials, priorities, JacRed adapters and all other custom sections
-     * are retained as supplied by the user.
-     */
     internal fun prepareImportedConfig(content: String): String {
         val encoded = content.toByteArray(Charsets.UTF_8)
         require(encoded.isNotEmpty() && encoded.size <= MAX_INIT_CONFIG_BYTES) {

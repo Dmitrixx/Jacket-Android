@@ -11,6 +11,20 @@ import java.io.IOException
 import java.nio.charset.StandardCharsets
 
 /**
+ * Use the same Debian Forky-slim base as the upstream Lampac runtime image.
+ * A dedicated alias prevents collisions with older or user-created Debian containers.
+ */
+internal const val LAMPAC_DEBIAN_ALIAS = "lampac-debian"
+internal const val LAMPAC_DEBIAN_OCI_IMAGE = "docker.io/library/debian:forky-slim"
+
+internal fun lampacDebianInstallArguments(): List<String> = listOf(
+    "install",
+    LAMPAC_DEBIAN_OCI_IMAGE,
+    "--override-alias",
+    LAMPAC_DEBIAN_ALIAS
+)
+
+/**
  * Executes pr-cli operations without blocking the UI thread.
  *
  * Reads the non-blocking PTY in small chunks, emits complete UTF-8 log lines,
@@ -20,7 +34,7 @@ class LampacProotCommandRunner(
     private val commands: LampacProotCommands
 ) {
     suspend fun installDebian(onOutput: (String) -> Unit = {}): Int =
-        execute(listOf("install", "debian"), onOutput)
+        execute(lampacDebianInstallArguments(), onOutput)
 
     suspend fun runAsRoot(
         command: String,
@@ -29,7 +43,7 @@ class LampacProotCommandRunner(
         require(command.isNotBlank()) { "Команда Debian не задана" }
         require('\u0000' !in command) { "Команда содержит нулевой байт" }
         return execute(
-            listOf("login", "debian", "--user", "root", "--", command),
+            listOf("login", LAMPAC_DEBIAN_ALIAS, "--user", "root", "--", command),
             onOutput
         )
     }

@@ -1,6 +1,7 @@
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
+import { execFileSync } from "node:child_process";
 import { cp, mkdir, readFile, rm, writeFile, copyFile } from "node:fs/promises";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -28,6 +29,7 @@ for (const required of [
 }
 
 await rm(outputRoot, { recursive: true, force: true });
+await rm(path.join(sourceRoot, "dest"), { recursive: true, force: true });
 await mkdir(outputRoot, { recursive: true });
 await cp(publicRoot, outputRoot, { recursive: true });
 
@@ -58,6 +60,84 @@ try {
   await bundle.close();
 }
 
+// Keep the upstream Gulp build's browser-platform substitution.
+const appBundlePath = path.join(outputRoot, "app.js");
+const appBundle = (await readFile(appBundlePath, "utf8"))
+  .replace(/return kIsNodeJS/g, "return false");
+await writeFile(appBundlePath, appBundle, "utf8");
+
+// The upstream Gulp plugins task starts Rollup streams but calls done()
+// synchronously. Wrap those streams in a Promise in a temporary build-only
+// Gulpfile so CI waits for every full plugin bundle and CSS include to finish.
+const gulpFilePath = path.join(sourceRoot, "gulpfile.js");
+let gulpFileText = await readFile(gulpFilePath, "utf8");
+const bubbleStreamPattern = /rollup\(\{\s*input: plgFolder\+name,/;
+if (!bubbleStreamPattern.test(gulpFileText)) {
+  throw new Error("The upstream Lampa plugin bundler changed; review its build task before proceeding");
+}
+gulpFileText = gulpFileText.replace(bubbleStreamPattern, match => "return " + match);
+const pluginsStart = gulpFileText.indexOf("function plugins(done) {");
+const pluginsEnd = gulpFileText.indexOf("\nfunction plugin_sass", pluginsStart);
+if (pluginsStart < 0 || pluginsEnd < 0) {
+  throw new Error("The upstream Lampa plugins task could not be located");
+}
+const awaitedPluginsTask = `function plugins() {
+    const jobs = [];
+    fs.readdirSync(plgFolder).filter(function (file) {
+        return fs.statSync(plgFolder + '/' + file).isDirectory();
+    }).forEach(folder => {
+        const entry = plgFolder + folder + '/' + folder + '.js';
+        if (fs.existsSync(entry)) {
+            const stream = bubbleFile(folder + '/' + folder + '.js');
+            jobs.push(new Promise((resolve, reject) => {
+                stream.once('error', reject);
+                stream.once('finish', resolve);
+            }));
+        }
+
+        const cssDir = plgFolder + folder + '/css';
+        if (fs.existsSync(cssDir) &&
+            fs.readdirSync(cssDir).some(file => file.endsWith('.scss'))) {
+            const stream = plugin_sass(plgFolder + folder);
+            jobs.push(new Promise((resolve, reject) => {
+                stream.once('error', reject);
+                stream.once('finish', resolve);
+            }));
+        }
+    });
+    return Promise.all(jobs);
+}`;
+gulpFileText = gulpFileText.slice(0, pluginsStart) +
+  awaitedPluginsTask + gulpFileText.slice(pluginsEnd);
+const temporaryGulpFile = path.join(sourceRoot, ".lampa-build-gulpfile.js");
+const gulpCli = path.join(sourceRoot, "node_modules", "gulp", "bin", "gulp.js");
+await writeFile(temporaryGulpFile, gulpFileText, "utf8");
+try {
+  execFileSync(
+    process.execPath,
+    [gulpCli, "--gulpfile", temporaryGulpFile, "pack_plugins"],
+    { cwd: sourceRoot, stdio: "inherit" }
+  );
+} finally {
+  await rm(temporaryGulpFile, { force: true });
+}
+const pluginSourceRoot = path.join(sourceRoot, "plugins");
+const pluginOutputRoot = path.join(outputRoot, "plugins");
+const compiledPluginRoot = path.join(sourceRoot, "dest");
+const requiredPluginBundles = [
+  "collections/collections.js",
+  "dlna/dlna.js",
+  "iptv/iptv.js",
+  "online/online.js",
+  "radio/radio.js",
+  "tracks/tracks.js"
+];
+for (const relative of requiredPluginBundles) {
+  await readFile(path.join(compiledPluginRoot, relative));
+}
+await cp(pluginSourceRoot, pluginOutputRoot, { recursive: true, force: true });
+await cp(compiledPluginRoot, pluginOutputRoot, { recursive: true, force: true });
+
 const compiledCss = sass.compile(path.join(sourceRoot, "src", "sass", "app.scss"), {
   style: "expanded",
   loadPaths: [path.join(sourceRoot, "src", "sass")]
@@ -75,26 +155,16 @@ await writeFile(path.join(outputRoot, "css", "app.css"), prefixedCss.css, "utf8"
 const indexPath = path.join(outputRoot, "index.html");
 let html = await readFile(indexPath, "utf8");
 html = html.replace("http://www.youtube.com/iframe_api", "https://www.youtube.com/iframe_api");
-const configScript = `<script>
-window.lampa_settings = window.lampa_settings || {};
-window.lampa_settings.socket_use = false;
-window.lampa_settings.account_use = false;
-window.lampa_settings.account_sync = false;
-window.lampa_settings.plugins_use = false;
-window.lampa_settings.plugins_store = false;
-window.lampa_settings.torrents_use = true;
-window.lampa_settings.disable_features = Object.assign(
-    {},
-    window.lampa_settings.disable_features || {},
-    { ads: true, install_proxy: true, remote_configuration: true }
-);
-window.__JACKET_LAMPAC_URL__ = "http://127.0.0.1:9118";
-</script>`;
+
 const appScriptTag = '<script src="app.js"></script>';
 if (!html.includes(appScriptTag)) {
-  throw new Error("Lampa public/index.html no longer contains the expected app.js entry point");
+  throw new Error("The upstream Lampa index no longer has the expected app.js entry point");
 }
-html = html.replace(appScriptTag, configScript + "\n" + appScriptTag);
+const bridgeScript = [
+  '<script>window.__LAMPA_LAMPAC_URL__ = "http://127.0.0.1:9118";</script>',
+  '<script src="plugins/modification.js"></script>'
+].join("\n");
+html = html.replace(appScriptTag, appScriptTag + "\n" + bridgeScript);
 await writeFile(indexPath, html, "utf8");
 
 const modificationSource = path.join(repoRoot, "lampa-android", "modification.js");
@@ -116,6 +186,6 @@ await writeFile(
 const appJs = await readFile(path.join(outputRoot, "app.js"));
 const css = await readFile(path.join(outputRoot, "css", "app.css"));
 if (appJs.length < 100_000 || css.length < 20_000) {
-  throw new Error(`Lampa build output looks incomplete (app.js=${appJs.length}, app.css=${css.length})`);
+  throw new Error("The built Lampa web assets appear incomplete");
 }
-console.log(`Lampa Android assets ready: app.js=${appJs.length}, app.css=${css.length}`);
+console.log("Complete Lampa web assets: app.js=" + appJs.length + ", app.css=" + css.length);

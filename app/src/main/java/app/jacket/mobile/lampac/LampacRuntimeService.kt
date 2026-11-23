@@ -36,6 +36,21 @@ import java.util.concurrent.atomic.AtomicReference
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
+ * Do not depend on which platform-specific Node binary the generic upstream
+ * Lampac ZIP contains. The Playwright JS driver is architecture-independent;
+ * use Debian's ARM64 Node package via PLAYWRIGHT_NODEJS_PATH.
+ */
+internal fun buildLampacServerCommand(): String =
+    "cd /opt/lampac && " +
+        "export DOTNET_ROOT=/opt/dotnet " +
+        "DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=0 " +
+        "DOTNET_CLI_TELEMETRY_OPTOUT=1 " +
+        "DOTNET_NOLOGO=1 " +
+        "PLAYWRIGHT_NODEJS_PATH=/usr/bin/node " +
+        "PATH=/opt/dotnet:\$PATH && " +
+        "exec /opt/dotnet/dotnet /opt/lampac/Core.dll"
+
+/**
  * User-started owner of the embedded Lampac process.
  *
  * It runs only while the user has explicitly installed or started the server.
@@ -117,7 +132,7 @@ class LampacRuntimeService : Service() {
         if (!installer.isInstalled()) {
             LampacRuntimeState.update(
                 LampacRuntimePhase.ERROR,
-                "Встроенный Lampac не установлен. Сначала нажмите «Установить и запустить»."
+                "Встроенный Lampac не установлен. Сначала выберите «Установить полный Lampac»."
             )
             finishService()
             return
@@ -135,26 +150,20 @@ class LampacRuntimeService : Service() {
         )
         updateNotification("Запускаем Lampac…")
         try {
-            val host = JacketProotHost(applicationContext)
+            val host = LampaProotHost(applicationContext)
             LampacProotBootstrap.prepare(host)
             // Existing installs keep their original init.conf across APK updates.
             // Apply the safe Android module profile before launching Core.dll.
             LampacEmbeddedConfig.ensureAndroidRuntimeConfig(File(host.debianRootfsDir, "opt/lampac"))
             val commands = LampacProotCommands(host)
-            val command = "cd /opt/lampac && " +
-                "export DOTNET_ROOT=/opt/dotnet " +
-                "DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=0 " +
-                "DOTNET_CLI_TELEMETRY_OPTOUT=1 " +
-                "DOTNET_NOLOGO=1 " +
-                "PATH=/opt/dotnet:\$PATH && " +
-                "exec /opt/dotnet/dotnet /opt/lampac/Core.dll"
+            val command = buildLampacServerCommand()
             // Keep a side reference: withContext may throw on return if the
             // service is cancelled just after PRoot starts, otherwise the newly
             // spawned PTY session would be lost and the child could be orphaned.
             val launchedSession = AtomicReference<ProotLauncher.Session?>()
             val session = try {
                 withContext(Dispatchers.IO) {
-                    commands.start(listOf("login", "debian", "--user", "root", "--", command))
+                    commands.start(listOf("login", LAMPAC_DEBIAN_ALIAS, "--user", "root", "--", command))
                         .also(launchedSession::set)
                 }
             } catch (cancelled: CancellationException) {
@@ -257,7 +266,7 @@ class LampacRuntimeService : Service() {
                 readTimeout = 1_200
                 requestMethod = "GET"
                 instanceFollowRedirects = false
-                setRequestProperty("User-Agent", "Jacket-Android/${BuildConfig.VERSION_NAME}")
+                setRequestProperty("User-Agent", "Lampa-Android/${BuildConfig.VERSION_NAME}")
             }
         }.getOrNull() ?: return false
         return try {
@@ -345,13 +354,13 @@ class LampacRuntimeService : Service() {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
         return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setSmallIcon(R.drawable.ic_jacket)
-            .setContentTitle("Jacket • Lampac")
+            .setSmallIcon(R.drawable.ic_lampa)
+            .setContentTitle("Lampa • Lampac")
             .setContentText(LampacLogSanitizer.sanitize(status).take(140))
             .setContentIntent(openPending)
             .setOngoing(serverSession != null || operationJob?.isActive == true)
             .setOnlyAlertOnce(true)
-            .addAction(R.drawable.ic_jacket, "Остановить", stopPending)
+            .addAction(R.drawable.ic_lampa, "Остановить", stopPending)
             .build()
     }
 
@@ -362,7 +371,7 @@ class LampacRuntimeService : Service() {
                 "Встроенный Lampac",
                 NotificationManager.IMPORTANCE_LOW
             ).apply {
-                description = "Статус локального медиасервера Jacket"
+                description = "Статус локального медиасервера Lampa"
                 setShowBadge(false)
             }
             getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
@@ -385,7 +394,7 @@ class LampacRuntimeService : Service() {
     }
 
     companion object {
-        private const val CHANNEL_ID = "jacket-lampac-runtime"
+        private const val CHANNEL_ID = "lampa-lampac-runtime"
         private const val NOTIFICATION_ID = 4412
         private const val NOTIFICATION_UPDATE_INTERVAL_MS = 1_000L
 
