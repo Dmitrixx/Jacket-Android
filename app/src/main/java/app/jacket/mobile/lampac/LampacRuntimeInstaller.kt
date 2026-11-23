@@ -18,6 +18,7 @@ import java.net.URL
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
 import java.security.MessageDigest
+import java.security.SecureRandom
 import java.util.Enumeration
 import java.util.zip.ZipEntry
 import java.util.zip.ZipFile
@@ -472,32 +473,103 @@ internal fun isCompleteLampacRuntime(root: File, expectedVersion: String): Boole
 private const val LAMPAC_OFFLINE_DPKG_ENV =
     "export DEBIAN_FRONTEND=noninteractive DPKG_ROOT=/ SYSTEMD_OFFLINE=1 && "
 
+private const val LAMPAC_DPKG_SHIM_DIR = "/tmp/lampa-proot-dpkg-bin"
+
+/**
+ * Run dpkg while temporarily shadowing systemd-machine-id-setup.
+ *
+ * The Debian systemd postinst calls this binary as a fatal step. Under Android
+ * PRoot it cannot obtain a host machine-id and exits with EUNATCH ("Protocol
+ * driver not attached"), even though a valid machine-id exists in the rootfs.
+ * systemd is not PID 1 in this environment, so the installer provisions the
+ * rootfs machine-id itself and makes only this one maintainer-script call a
+ * no-op for the duration of the package transaction.
+ */
+internal fun buildLampacOfflineDpkgCommand(command: String): String {
+    require(command.isNotBlank() && '\u0000' !in command) {
+        "Команда Debian пуста или содержит нулевой байт"
+    }
+    return LAMPAC_OFFLINE_DPKG_ENV +
+        "set -e; " +
+        "mkdir -p $LAMPAC_DPKG_SHIM_DIR; " +
+        "printf '#!/bin/sh\\nexit 0\\n' > $LAMPAC_DPKG_SHIM_DIR/systemd-machine-id-setup; " +
+        "chmod 755 $LAMPAC_DPKG_SHIM_DIR/systemd-machine-id-setup; " +
+        "export PATH=$LAMPAC_DPKG_SHIM_DIR:\$PATH; " +
+        "trap 'rm -f $LAMPAC_DPKG_SHIM_DIR/systemd-machine-id-setup; rmdir $LAMPAC_DPKG_SHIM_DIR 2>/dev/null || true' EXIT; " +
+        command
+}
+
+/** Ensure the private Debian rootfs has a persistent, standard 32-hex machine-id. */
+internal fun ensureLampacDebianMachineId(rootfs: File) {
+    require(rootfs.isDirectory) { "Debian rootfs недоступен" }
+    val root = rootfs.canonicalFile
+    val etc = File(root, "etc")
+    if (!etc.exists() && !etc.mkdirs()) throw IOException("Не удалось создать /etc в Debian")
+    require(etc.canonicalFile == etc) { "Каталог /etc в Debian указывает за пределы rootfs" }
+
+    val machineIdFile = File(etc, "machine-id")
+    val machineIdPath = machineIdFile.toPath()
+    val existingContent = runCatching {
+        val contentFile = if (Files.isSymbolicLink(machineIdPath)) {
+            val linkTarget = Files.readSymbolicLink(machineIdPath)
+            val resolved = if (linkTarget.isAbsolute) {
+                File(root, linkTarget.toString().trimStart(File.separatorChar))
+            } else {
+                File(etc, linkTarget.toString())
+            }
+            val canonical = resolved.canonicalFile
+            canonical.takeIf { it.toPath().startsWith(root.toPath()) }
+        } else {
+            machineIdFile
+        }
+        contentFile?.takeIf { it.isFile }?.readText(Charsets.UTF_8)?.trim()
+    }.getOrNull()
+
+    if (existingContent?.matches(Regex("(?i)^[0-9a-f]{32}$")) == true) return
+
+    if (Files.isSymbolicLink(machineIdPath)) Files.deleteIfExists(machineIdPath)
+    val idBytes = ByteArray(16).also { SecureRandom().nextBytes(it) }
+    val machineId = idBytes.joinToString("") { "%02x".format(it.toInt() and 0xff) }
+    machineIdFile.writeText("$machineId\\n", Charsets.UTF_8)
+
+    val dbusDirectory = File(root, "var/lib/dbus")
+    if (!dbusDirectory.exists() && !dbusDirectory.mkdirs()) {
+        throw IOException("Не удалось создать /var/lib/dbus в Debian")
+    }
+    val dbusMachineId = File(dbusDirectory, "machine-id")
+    if (!dbusMachineId.exists() && !Files.isSymbolicLink(dbusMachineId.toPath())) {
+        Files.createSymbolicLink(dbusMachineId.toPath(), java.nio.file.Paths.get("/etc/machine-id"))
+    }
+}
+
 internal fun buildLampacSystemPackagesInstallCommand(): String =
-    LAMPAC_OFFLINE_DPKG_ENV +
+    buildLampacOfflineDpkgCommand(
         "dpkg --root=/ --configure -a && " +
-        "apt-get update && " +
-        "apt-get install -y --no-install-recommends ca-certificates curl fontconfig libicu78 libssl-dev zlib1g tar nodejs " +
-        "ffmpeg imagemagick xvfb libjpeg-dev libpng-dev libwebp-dev libnspr4 " +
-        "gstreamer1.0-libav gstreamer1.0-plugins-bad gstreamer1.0-plugins-base gstreamer1.0-plugins-base-apps " +
-        "gstreamer1.0-plugins-good gstreamer1.0-plugins-ugly gstreamer1.0-tools " +
-        "libgstreamer-plugins-base1.0-0 libgstreamer1.0-0 && " +
-        "curl -fSL --retry 3 https://dl.google.com/linux/direct/google-chrome-stable_current_arm64.deb -o /tmp/google-chrome-stable.deb && " +
-        "test \"$(dpkg-deb -f /tmp/google-chrome-stable.deb Architecture)\" = arm64 && " +
-        "apt-get install -y --no-install-recommends /tmp/google-chrome-stable.deb && " +
-        "ln -sf /usr/bin/google-chrome-stable /usr/bin/chromium && " +
-        "rm -f /tmp/google-chrome-stable.deb && " +
-        "test -x /usr/bin/node && node --version && " +
-        "test -x /usr/bin/chromium && chromium --version && ffmpeg -version && gst-inspect-1.0 --version && " +
-        "apt-get clean && rm -rf /var/lib/apt/lists/*"
+            "apt-get update && " +
+            "apt-get install -y --no-install-recommends ca-certificates curl fontconfig libicu78 libssl-dev zlib1g tar nodejs " +
+            "ffmpeg imagemagick xvfb libjpeg-dev libpng-dev libwebp-dev libnspr4 " +
+            "gstreamer1.0-libav gstreamer1.0-plugins-bad gstreamer1.0-plugins-base gstreamer1.0-plugins-base-apps " +
+            "gstreamer1.0-plugins-good gstreamer1.0-plugins-ugly gstreamer1.0-tools " +
+            "libgstreamer-plugins-base1.0-0 libgstreamer1.0-0 && " +
+            "curl -fSL --retry 3 https://dl.google.com/linux/direct/google-chrome-stable_current_arm64.deb -o /tmp/google-chrome-stable.deb && " +
+            "test \"$(dpkg-deb -f /tmp/google-chrome-stable.deb Architecture)\" = arm64 && " +
+            "apt-get install -y --no-install-recommends /tmp/google-chrome-stable.deb && " +
+            "ln -sf /usr/bin/google-chrome-stable /usr/bin/chromium && " +
+            "rm -f /tmp/google-chrome-stable.deb && " +
+            "test -x /usr/bin/node && node --version && " +
+            "test -x /usr/bin/chromium && chromium --version && ffmpeg -version && gst-inspect-1.0 --version && " +
+            "apt-get clean && rm -rf /var/lib/apt/lists/*"
+    )
 
 /** A lightweight repair for older installs: it adds only ARM64 Node.js. */
 internal fun buildLampacNodeInstallCommand(): String =
-    LAMPAC_OFFLINE_DPKG_ENV +
+    buildLampacOfflineDpkgCommand(
         "dpkg --root=/ --configure -a && " +
-        "apt-get update && " +
-        "apt-get install -y --no-install-recommends nodejs && " +
-        "test -x /usr/bin/node && node --version && " +
-        "apt-get clean && rm -rf /var/lib/apt/lists/*"
+            "apt-get update && " +
+            "apt-get install -y --no-install-recommends nodejs && " +
+            "test -x /usr/bin/node && node --version && " +
+            "apt-get clean && rm -rf /var/lib/apt/lists/*"
+    )
 
 /**
  * Playwright's JS package is architecture-independent. The runtime uses
@@ -619,6 +691,7 @@ class LampacRuntimeInstaller(context: android.content.Context) {
             isLampacRuntimePayloadReady(prepared.debianRootfsDir, LampacRuntimeArtifacts.LAMPAC_VERSION) &&
             !isLampacNodeReady(prepared.debianRootfsDir)
         ) {
+            ensureLampacDebianMachineId(prepared.debianRootfsDir)
             send("nodejs-migration", "Добавляем ARM64 Node.js для Playwright без повторной загрузки Lampac…", 0, 0)
             val nodeInstall = commandRunner.runAsRoot(buildLampacNodeInstallCommand()) { line ->
                 send("nodejs-migration", line.take(220), 0, 0)
@@ -659,6 +732,7 @@ class LampacRuntimeInstaller(context: android.content.Context) {
             }
         }
 
+        ensureLampacDebianMachineId(prepared.debianRootfsDir)
         send("packages", "Подготавливаем системные библиотеки Debian…", 0, 0)
         val apt = commandRunner.runAsRoot(buildLampacSystemPackagesInstallCommand()) { line ->
             send("packages", line.take(220), 0, 0)
