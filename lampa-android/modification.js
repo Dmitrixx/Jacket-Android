@@ -58,7 +58,10 @@
             window.setTimeout(observeLampaPlayer, 250);
             return;
         }
-        if (player.__jacketBackBridgeInstalled) return;
+        if (player.__jacketBackBridgeInstalled) {
+            window.__JACKET_ANDROID_BRIDGE_READY__ = true;
+            return;
+        }
         player.__jacketBackBridgeInstalled = true;
         player.listener.follow('start', function () {
             var pendingId = window.__JACKET_PENDING_PLAYBACK_ID__;
