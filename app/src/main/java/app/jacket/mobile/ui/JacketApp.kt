@@ -153,7 +153,8 @@ private const val TAB_LAMPA = 5
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun JacketApp(viewModel: MainViewModel) {
-    var selectedTab by rememberSaveable { mutableIntStateOf(TAB_HOME) }
+    // Lampa is the primary media-center surface; Jacket tools remain one Back press away.
+    var selectedTab by rememberSaveable { mutableIntStateOf(TAB_LAMPA) }
     var showSettings by rememberSaveable { mutableStateOf(false) }
     var showDownloads by rememberSaveable { mutableStateOf(false) }
     var playerUrl by rememberSaveable { mutableStateOf<String?>(null) }
@@ -210,7 +211,6 @@ fun JacketApp(viewModel: MainViewModel) {
     }
 
     LaunchedEffect(Unit) {
-        viewModel.loadHome()
         if (TorrentQueueStore(context).all().isNotEmpty()) TorrentDownloadService.restore(context)
     }
 
@@ -316,64 +316,66 @@ fun JacketApp(viewModel: MainViewModel) {
     screenStateHolder.SaveableStateProvider("main") {
         Scaffold(
         topBar = {
-            TopAppBar(
-                navigationIcon = {
-                    if (selectedTab == TAB_LAMPA) {
-                        IconButton(onClick = { selectedTab = TAB_HOME }) {
-                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Назад в Jacket")
+            if (selectedTab != TAB_LAMPA) {
+                TopAppBar(
+                    navigationIcon = {
+                        if (selectedTab == TAB_LAMPA) {
+                            IconButton(onClick = { selectedTab = TAB_HOME }) {
+                                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Назад в Jacket")
+                            }
                         }
-                    }
-                },
-                title = {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(11.dp)
-                    ) {
-                        Box(
-                            modifier = Modifier.size(42.dp)
-                                .clip(RoundedCornerShape(14.dp))
-                                .background(
-                                    Brush.linearGradient(
-                                        listOf(
-                                            MaterialTheme.colorScheme.primary,
-                                            Color(0xFFE99A3C),
-                                            Color(0xFF9D6AF0)
-                                        )
-                                    )
-                                ),
-                            contentAlignment = Alignment.Center
+                    },
+                    title = {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(11.dp)
                         ) {
-                            Text("J", style = MaterialTheme.typography.headlineMedium,
-                                fontWeight = FontWeight.Black, color = Color(0xFF17120D))
+                            Box(
+                                modifier = Modifier.size(42.dp)
+                                    .clip(RoundedCornerShape(14.dp))
+                                    .background(
+                                        Brush.linearGradient(
+                                            listOf(
+                                                MaterialTheme.colorScheme.primary,
+                                                Color(0xFFE99A3C),
+                                                Color(0xFF9D6AF0)
+                                            )
+                                        )
+                                    ),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text("J", style = MaterialTheme.typography.headlineMedium,
+                                    fontWeight = FontWeight.Black, color = Color(0xFF17120D))
+                            }
+                            Column(verticalArrangement = Arrangement.spacedBy(1.dp)) {
+                                Text(
+                                    if (selectedTab == TAB_LAMPA) "LAMPA" else "JACKET",
+                                    style = MaterialTheme.typography.titleLarge,
+                                    fontWeight = FontWeight.Black,
+                                    letterSpacing = 1.4.sp
+                                )
+                                Text(
+                                    if (selectedTab == TAB_LAMPA) "ВСТРОЕННЫЙ ИНТЕРФЕЙС" else "КИНО  •  СЕРИАЛЫ  •  ТОРРЕНТЫ",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant, letterSpacing = 0.6.sp)
+                            }
                         }
-                        Column(verticalArrangement = Arrangement.spacedBy(1.dp)) {
-                            Text(
-                                if (selectedTab == TAB_LAMPA) "LAMPA" else "JACKET",
-                                style = MaterialTheme.typography.titleLarge,
-                                fontWeight = FontWeight.Black,
-                                letterSpacing = 1.4.sp
-                            )
-                            Text(
-                                if (selectedTab == TAB_LAMPA) "ВСТРОЕННЫЙ ИНТЕРФЕЙС" else "КИНО  •  СЕРИАЛЫ  •  ТОРРЕНТЫ",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant, letterSpacing = 0.6.sp)
+                    },
+                    actions = {
+                        IconButton(onClick = { showDownloads = true }) {
+                            Icon(Icons.Default.Download, contentDescription = "Загрузки", tint = MaterialTheme.colorScheme.primary)
                         }
-                    }
-                },
-                actions = {
-                    IconButton(onClick = { showDownloads = true }) {
-                        Icon(Icons.Default.Download, contentDescription = "Загрузки", tint = MaterialTheme.colorScheme.primary)
-                    }
-                    IconButton(onClick = { showSettings = true }) {
-                        Icon(Icons.Default.Settings, contentDescription = "Настройки", tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.background,
-                    titleContentColor = MaterialTheme.colorScheme.onBackground,
-                    actionIconContentColor = MaterialTheme.colorScheme.onSurfaceVariant
+                        IconButton(onClick = { showSettings = true }) {
+                            Icon(Icons.Default.Settings, contentDescription = "Настройки", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    },
+                    colors = TopAppBarDefaults.topAppBarColors(
+                        containerColor = MaterialTheme.colorScheme.background,
+                        titleContentColor = MaterialTheme.colorScheme.onBackground,
+                        actionIconContentColor = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 )
-            )
+            }
         },
         bottomBar = {
             if (!isTv && selectedTab != TAB_LAMPA) {
@@ -384,7 +386,7 @@ fun JacketApp(viewModel: MainViewModel) {
             }
         }
     ) { padding ->
-        if (isTv) {
+        if (isTv && selectedTab != TAB_LAMPA) {
             Row(Modifier.fillMaxSize().padding(padding)) {
                 MainNavigationRail(
                     selectedTab = selectedTab,
