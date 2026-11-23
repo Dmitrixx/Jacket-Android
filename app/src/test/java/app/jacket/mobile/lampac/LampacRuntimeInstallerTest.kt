@@ -10,6 +10,14 @@ import java.io.IOException
 
 class LampacRuntimeInstallerTest {
     @Test
+    fun debianBootstrapUsesTheUpstreamForkyOciImageAndStableAlias() {
+        assertEquals(
+            listOf("install", "docker.io/library/debian:forky-slim", "--override-alias", "debian"),
+            lampacDebianInstallArguments()
+        )
+    }
+
+    @Test
     fun oldTrimmedLampacInstallIsMarkedForOneTimeFullReplacement() {
         val root = java.nio.file.Files.createTempDirectory("lampa-runtime-migration").toFile()
         try {

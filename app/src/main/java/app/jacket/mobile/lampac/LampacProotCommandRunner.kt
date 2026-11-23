@@ -11,6 +11,20 @@ import java.io.IOException
 import java.nio.charset.StandardCharsets
 
 /**
+ * Use the same Debian Forky-slim base as the upstream Lampac runtime image.
+ * The OCI alias is deliberately "debian" because all service commands and
+ * app-private paths address this stable container name.
+ */
+internal const val LAMPAC_DEBIAN_OCI_IMAGE = "docker.io/library/debian:forky-slim"
+
+internal fun lampacDebianInstallArguments(): List<String> = listOf(
+    "install",
+    LAMPAC_DEBIAN_OCI_IMAGE,
+    "--override-alias",
+    "debian"
+)
+
+/**
  * Executes pr-cli operations without blocking the UI thread.
  *
  * Reads the non-blocking PTY in small chunks, emits complete UTF-8 log lines,
@@ -20,7 +34,7 @@ class LampacProotCommandRunner(
     private val commands: LampacProotCommands
 ) {
     suspend fun installDebian(onOutput: (String) -> Unit = {}): Int =
-        execute(listOf("install", "debian"), onOutput)
+        execute(lampacDebianInstallArguments(), onOutput)
 
     suspend fun runAsRoot(
         command: String,

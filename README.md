@@ -8,7 +8,7 @@ A personal Android and Android TV shell for the complete upstream Lampa web appl
 - Complete Lampac NextGen source pinned in third_party/lampac-source.
 - Unmodified Lampa UI and its own HTML5 player, built into private APK assets.
 - Official full Lampac release archive, checksum-verified and extracted without filtering module files.
-- App-private ARM64 Debian PRoot runtime with .NET 10, Chromium, FFmpeg, GStreamer and upstream server dependencies.
+- App-private ARM64 Debian Forky-slim PRoot runtime with .NET 10, Chromium, FFmpeg, GStreamer and the dependencies used by the upstream Lampac image.
 - User-started local server on 127.0.0.1:9118.
 
 ## First start

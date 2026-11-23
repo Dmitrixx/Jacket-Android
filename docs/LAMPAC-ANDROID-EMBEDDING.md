@@ -2,7 +2,7 @@
 
 ## Architecture
 
-The app contains the complete upstream Lampa web client and a minimal Android WebView host. Lampac NextGen runs as a local .NET 10 process inside an app-private ARM64 Debian PRoot root filesystem.
+The app contains the complete upstream Lampa web client and a minimal Android WebView host. Lampac NextGen runs as a local .NET 10 process inside an app-private ARM64 Debian Forky-slim OCI root filesystem, matching the distribution used by the upstream Lampac runtime image.
 
 - Lampa UI: third_party/lampa-source, compiled into APK assets.
 - Lampac source: third_party/lampac-source, pinned to the commit for release 1.90.2.
@@ -17,7 +17,7 @@ The Android application ID remains app.jacket.mobile so the new build updates th
 
 The installer retrieves the full official Lampac release archive and does not exclude or delete upstream module directories. The archive is checked for size, SHA-256, traversal paths, excessive expansion and incomplete ZIP entries before activation.
 
-The ARM64 Debian environment installs ASP.NET Core Runtime 10, Debian Chromium, FFmpeg/FFprobe, GStreamer plugins and tools, ImageMagick, Xvfb, fonts and the native libraries used by the upstream deployment.
+The ARM64 Debian Forky-slim environment is installed as an OCI rootfs and then receives ASP.NET Core Runtime 10, Debian Chromium, FFmpeg/FFprobe, GStreamer plugins and tools, ImageMagick, Xvfb, fonts and the native libraries used by the upstream deployment.
 
 A fresh init.conf loads every module with an empty SkipModules array. Existing configs retain provider credentials and custom sections; previous app-added module exclusions are cleared. Explicit choices such as chromium.enable=false remain intact. The local HTTP listener is kept on loopback.
 
