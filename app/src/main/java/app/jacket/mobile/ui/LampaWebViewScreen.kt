@@ -26,6 +26,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.viewinterop.AndroidView
+import app.jacket.mobile.data.LocalNetwork
 import app.jacket.mobile.torrent.TorrentDownloadService
 import org.json.JSONObject
 import java.io.ByteArrayInputStream
