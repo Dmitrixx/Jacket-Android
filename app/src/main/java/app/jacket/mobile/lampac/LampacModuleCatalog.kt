@@ -19,6 +19,11 @@ data class LampacModuleInfo(
     val enabledInManifest: Boolean
 )
 
+data class LampacModuleSettings(
+    val modules: List<LampacModuleInfo>,
+    val enabledModuleIds: Set<String>
+)
+
 object LampacModuleCatalog {
     /**
      * Mirrors Lampac 1.90.2 Startup: enumerate direct folders in mods/ and
