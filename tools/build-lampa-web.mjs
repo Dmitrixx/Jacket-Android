@@ -1,6 +1,7 @@
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
+import { execFileSync } from "node:child_process";
 import { cp, mkdir, readFile, rm, writeFile, copyFile } from "node:fs/promises";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -57,6 +58,25 @@ try {
 } finally {
   await bundle.close();
 }
+
+// Keep the upstream Gulp build's browser-platform substitution.
+const appBundlePath = path.join(outputRoot, "app.js");
+const appBundle = (await readFile(appBundlePath, "utf8"))
+  .replace(/return kIsNodeJS/g, "return false");
+await writeFile(appBundlePath, appBundle, "utf8");
+
+// Compile every first-party Lampa plugin using the source repository's own
+// pack_plugins task. Copy plugin assets and generated scripts into the APK.
+execFileSync(
+  process.execPath,
+  [path.join(sourceRoot, "node_modules", "gulp", "bin", "gulp.js"), "pack_plugins"],
+  { cwd: sourceRoot, stdio: "inherit" }
+);
+const pluginSourceRoot = path.join(sourceRoot, "plugins");
+const pluginOutputRoot = path.join(outputRoot, "plugins");
+const compiledPluginRoot = path.join(sourceRoot, "dest", "plugins");
+await cp(pluginSourceRoot, pluginOutputRoot, { recursive: true, force: true });
+await cp(compiledPluginRoot, pluginOutputRoot, { recursive: true, force: true });
 
 const compiledCss = sass.compile(path.join(sourceRoot, "src", "sass", "app.scss"), {
   style: "expanded",
