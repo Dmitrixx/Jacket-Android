@@ -473,18 +473,6 @@ internal fun isCompleteLampacRuntime(root: File, expectedVersion: String): Boole
 private const val LAMPAC_OFFLINE_DPKG_ENV =
     "export DEBIAN_FRONTEND=noninteractive DPKG_ROOT=/ SYSTEMD_OFFLINE=1 && "
 
-private const val LAMPAC_DPKG_SHIM_DIR = "/tmp/lampa-proot-dpkg-bin"
-
-/**
- * Run dpkg while temporarily shadowing systemd-machine-id-setup.
- *
- * The Debian systemd postinst calls this binary as a fatal step. Under Android
- * PRoot it cannot obtain a host machine-id and exits with EUNATCH ("Protocol
- * driver not attached"), even though a valid machine-id exists in the rootfs.
- * systemd is not PID 1 in this environment, so the installer provisions the
- * rootfs machine-id itself and makes only this one maintainer-script call a
- * no-op for the duration of the package transaction.
- */
 /**
  * Temporarily bypass only the machine-id helper in Debian's systemd postinst.
  *
@@ -550,7 +538,7 @@ internal fun ensureLampacDebianMachineId(rootfs: File) {
 
     if (Files.isSymbolicLink(machineIdFile.toPath())) Files.deleteIfExists(machineIdFile.toPath())
     if (validId == null || readRootRelativeFile(machineIdFile) != machineId) {
-        machineIdFile.writeText("$machineId\\n", Charsets.UTF_8)
+        machineIdFile.writeText("$machineId\n", Charsets.UTF_8)
     }
 
     if (!dbusDirectory.exists() && !dbusDirectory.mkdirs()) {
