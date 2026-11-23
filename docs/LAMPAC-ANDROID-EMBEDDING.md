@@ -18,7 +18,7 @@ The Android application ID remains app.jacket.mobile so the new build updates th
 
 The installer retrieves the full official Lampac release archive and does not exclude or delete upstream module directories. The archive is checked for size, SHA-256, traversal paths, excessive expansion and incomplete ZIP entries before activation.
 
-The ARM64 Debian Forky-slim environment is installed as an OCI rootfs and then receives ASP.NET Core Runtime 10, Debian Chromium, FFmpeg/FFprobe, GStreamer plugins and tools, ImageMagick, Xvfb, fonts and the native libraries used by the upstream deployment.
+The ARM64 Debian Forky-slim environment is installed as an OCI rootfs and then receives ASP.NET Core Runtime 10, Google Chrome/Chromium, FFmpeg/FFprobe, GStreamer plugins and tools, ImageMagick, Xvfb, fonts and the native libraries used by the upstream deployment. Chromium receives the upstream-documented `--no-sandbox` flag because the server runs as root inside Android PRoot, where Chromium's normal namespace sandbox is unavailable.
 
 A fresh init.conf loads every module with an empty SkipModules array. Existing configs retain provider credentials and custom sections; during the Debian alias migration the installer checks both the current runtime root and both previous Debian rootfs layouts before any incomplete container is replaced. Previous app-added module exclusions are cleared. Explicit choices such as chromium.enable=false remain intact. The local HTTP listener is kept on loopback.
 
