@@ -117,7 +117,7 @@ class LampacRuntimeService : Service() {
         if (!installer.isInstalled()) {
             LampacRuntimeState.update(
                 LampacRuntimePhase.ERROR,
-                "Встроенный Lampac не установлен. Сначала нажмите «Установить и запустить»."
+                "Встроенный Lampac не установлен. Сначала выберите «Установить полный Lampac»."
             )
             finishService()
             return

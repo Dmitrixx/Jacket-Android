@@ -43,7 +43,8 @@ fun LampaApp(onExit: () -> Unit) {
     val runtime by LampacRuntimeState.state.collectAsState()
     var settingsVisible by remember { mutableStateOf(false) }
     var installed by remember { mutableStateOf(false) }
-    val busy = runtime.phase == LampacRuntimePhase.INSTALLING ||
+    var checkingInstallation by remember { mutableStateOf(true) }
+    val busy = checkingInstallation || runtime.phase == LampacRuntimePhase.INSTALLING ||
         runtime.phase == LampacRuntimePhase.STARTING ||
         runtime.phase == LampacRuntimePhase.STOPPING
 
@@ -51,6 +52,7 @@ fun LampaApp(onExit: () -> Unit) {
         installed = withContext(Dispatchers.IO) {
             runCatching { LampacRuntimeInstaller(context).isInstalled() }.getOrDefault(false)
         }
+        checkingInstallation = false
         if (installed && runtime.phase == LampacRuntimePhase.IDLE) {
             LampacRuntimeState.update(
                 LampacRuntimePhase.INSTALLED,
@@ -60,10 +62,14 @@ fun LampaApp(onExit: () -> Unit) {
     }
 
     LaunchedEffect(runtime.phase) {
-        if (runtime.phase == LampacRuntimePhase.INSTALLED ||
-            runtime.phase == LampacRuntimePhase.RUNNING
-        ) {
-            installed = true
+        when (runtime.phase) {
+            LampacRuntimePhase.INSTALLED, LampacRuntimePhase.RUNNING -> installed = true
+            LampacRuntimePhase.ERROR -> {
+                installed = withContext(Dispatchers.IO) {
+                    runCatching { LampacRuntimeInstaller(context).isInstalled() }.getOrDefault(false)
+                }
+            }
+            else -> Unit
         }
     }
 
@@ -139,6 +145,9 @@ fun LampaApp(onExit: () -> Unit) {
             confirmButton = {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     when {
+                        checkingInstallation -> {
+                            Button(enabled = false, onClick = {}) { Text("Проверка Lampac…") }
+                        }
                         runtime.phase == LampacRuntimePhase.RUNNING -> {
                             Button(
                                 enabled = !busy,

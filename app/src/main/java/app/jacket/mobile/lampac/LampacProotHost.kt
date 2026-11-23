@@ -75,7 +75,7 @@ object LampacProotBootstrap {
         val nativeDir = host.nativeLibraryDir
         requiredLibraries.forEach { name ->
             require(File(nativeDir, name).isFile) {
-                "Не найдена библиотека $name. Проверьте ARM64-сборку Jacket."
+                "Не найдена библиотека $name. Проверьте ARM64-сборку Lampa."
             }
         }
 
