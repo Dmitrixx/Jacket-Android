@@ -21,6 +21,9 @@ A personal Android and Android TV shell for the complete upstream Lampa web appl
 
 The server data, providers and init.conf are stored in the app-private directory and survive APK upgrades.
 
+The embedded WebView identifies itself with a private `Lampa-Android` marker. The build suppresses the upstream Android-APK recommendation only inside this installed wrapper; browser and Media Station X users continue to see the original recommendation.
+
+
 ## Updating
 
 The application ID intentionally remains app.jacket.mobile. A newer APK signed with the same persistent key updates the existing installation and preserves app data.
