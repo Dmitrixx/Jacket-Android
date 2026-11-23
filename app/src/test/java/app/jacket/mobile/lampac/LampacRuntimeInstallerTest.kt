@@ -304,16 +304,20 @@ class LampacRuntimeInstallerTest {
         val packageCommand = buildLampacSystemPackagesInstallCommand()
         val nodeRepairCommand = buildLampacNodeInstallCommand()
         val offlineEnvironment =
-            "export DEBIAN_FRONTEND=noninteractive DPKG_ROOT=/ SYSTEMD_OFFLINE=1 && "
+            "export DEBIAN_FRONTEND=noninteractive DPKG_ROOT=/ SYSTEMD_OFFLINE=1 SYSTEMD_IN_CHROOT=1 LANG=C LC_ALL=C && "
 
         listOf(packageCommand, nodeRepairCommand).forEach { command ->
             assertTrue(command.startsWith(offlineEnvironment))
-            assertTrue(command.contains("backup=/tmp/lampa-systemd-machine-id-setup.original"))
-            assertTrue(command.contains("shim=/usr/local/bin/systemd-machine-id-setup"))
-            assertTrue(command.contains("printf '#!/bin/sh\\nexit 0\\n'"))
-            assertTrue(command.contains("export PATH=/usr/local/bin:\$PATH"))
-            assertTrue(command.contains("trap 'restore_systemd_machine_id_setup' EXIT"))
-            assertTrue(command.contains("restore_systemd_machine_id_setup()"))
+            assertTrue(command.contains("dpkg-divert --local --rename --divert"))
+            assertTrue(command.contains("lampa_divert_stub /usr/bin/systemctl 0"))
+            assertTrue(command.contains("lampa_divert_stub /usr/bin/systemd-machine-id-setup 0"))
+            assertTrue(command.contains("lampa_divert_stub /usr/bin/deb-systemd-invoke 0"))
+            assertTrue(command.contains("lampa_divert_stub /usr/bin/deb-systemd-helper 0"))
+            assertTrue(command.contains("lampa_divert_stub /usr/sbin/policy-rc.d 101"))
+            assertTrue(command.contains("# lampa-proot-stub"))
+            assertTrue(command.contains("rm -f /var/lib/dpkg/lock /var/lib/dpkg/lock-frontend"))
+            assertFalse(command.contains("trap 'restore_systemd_machine_id_setup'"))
+            assertFalse(command.contains("/usr/local/bin/systemd-machine-id-setup"))
             assertFalse(command.contains("sed -i"))
         }
         assertTrue(packageCommand.contains("dpkg --root=/ --configure -a && apt-get update &&"))

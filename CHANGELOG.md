@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.0.4 — PRoot systemd divert
+
+- Replace `/usr/bin/systemctl` and `/usr/bin/systemd-machine-id-setup` with permanent stubs before `dpkg --configure`. Debian maintainer scripts call those absolute paths, so the previous PATH shim never ran, and PRoot's `statx` failure (`Protocol driver not attached`, apt exit 100) aborted installation of the full Lampac runtime.
+- Keep the stubs across later package upgrades with `dpkg-divert`. Do not restore the real systemd helpers: Lampac is started by Android, not by systemd.
+- Ignore service starts through `/usr/sbin/policy-rc.d` (exit 101) and clear stale dpkg locks left by the interrupted attempt. An in-place update can resume the existing Debian rootfs; deleting app data is not required.
+
 ## 3.0.3 — PRoot systemd machine-id shim
 
 - Use a temporary `/usr/local/bin/systemd-machine-id-setup` shim for the complete dpkg/apt transaction, including package upgrades and post-install scripts.

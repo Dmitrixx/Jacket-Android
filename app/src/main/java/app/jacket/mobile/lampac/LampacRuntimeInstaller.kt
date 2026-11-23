@@ -465,40 +465,52 @@ internal fun isCompleteLampacRuntime(root: File, expectedVersion: String): Boole
     isLampacRuntimePayloadReady(root, expectedVersion) && isLampacNodeReady(root)
 
 /**
- * Debian Forky runs under PRoot, not as the Android host's init system.
- * Keep service/package helpers in offline mode and direct unit operations to
- * the private rootfs. The machine-id postinst workaround is scoped separately
- * to the dpkg recovery pass below.
+ * Debian Forky runs under PRoot, not as Android's init.
+ *
+ * systemd's own tools call statx(). PRoot returns EUNATCH for that syscall,
+ * which systemd prints as "Protocol driver not attached" even when
+ * SYSTEMD_OFFLINE=1 is set and /etc/machine-id already exists. Maintainer
+ * scripts invoke /usr/bin/systemctl and /usr/bin/systemd-machine-id-setup by
+ * absolute path, so a PATH shim does not intercept them, and apt restores the
+ * real binaries on upgrade unless they are diverted.
+ *
+ * Divert those helpers to permanent exit-0 stubs before dpkg configures the
+ * half-installed systemd package. policy-rc.d exits 101 so invoke-rc.d skips
+ * service starts. Lampac is started by the Android service, not by systemd.
  */
 private const val LAMPAC_OFFLINE_DPKG_ENV =
-    "export DEBIAN_FRONTEND=noninteractive DPKG_ROOT=/ SYSTEMD_OFFLINE=1 && "
+    "export DEBIAN_FRONTEND=noninteractive DPKG_ROOT=/ SYSTEMD_OFFLINE=1 SYSTEMD_IN_CHROOT=1 LANG=C LC_ALL=C && "
 
-/**
- * Temporarily bypass only the machine-id helper in Debian's systemd postinst.
- *
- * systemd is not PID 1 in Android PRoot. Its machine-id helper returns EUNATCH
- * ("Protocol driver not attached") even when /etc/machine-id is valid. A
- * persistent ID is provisioned in the app-private rootfs, so this one setup
- * step is not needed. The package script is restored immediately after dpkg
- * recovery, including when the command fails.
- */
 internal fun buildLampacOfflineDpkgCommand(command: String): String {
     require(command.isNotBlank() && '\u0000' !in command) {
         "Команда Debian пуста или содержит нулевой байт"
     }
     return LAMPAC_OFFLINE_DPKG_ENV +
         "set -e; " +
-        "shim=/usr/local/bin/systemd-machine-id-setup; " +
-        "backup=/tmp/lampa-systemd-machine-id-setup.original; " +
-        "mkdir -p /usr/local/bin; " +
-        "if [ -e \"\$backup\" ] || [ -L \"\$backup\" ]; then rm -f \"\$shim\"; mv \"\$backup\" \"\$shim\"; fi; " +
-        "if [ -e \"\$shim\" ] || [ -L \"\$shim\" ]; then mv \"\$shim\" \"\$backup\"; fi; " +
-        "printf '#!/bin/sh\\nexit 0\\n' > \"\$shim\"; " +
-        "chmod 755 \"\$shim\"; " +
-        "export PATH=/usr/local/bin:\$PATH; " +
-        "hash -r 2>/dev/null || true; " +
-        "restore_systemd_machine_id_setup() { rm -f \"\$shim\"; if [ -e \"\$backup\" ] || [ -L \"\$backup\" ]; then mv \"\$backup\" \"\$shim\"; fi; }; " +
-        "trap 'restore_systemd_machine_id_setup' EXIT; " +
+        "mkdir -p /var/lib/lampa-disabled-init /usr/bin /usr/sbin; " +
+        "rm -f /var/lib/dpkg/lock /var/lib/dpkg/lock-frontend /var/lib/apt/lists/lock /var/cache/apt/archives/lock; " +
+        "lampa_divert_stub() { " +
+        "target=\$1; code=\$2; " +
+        "tag=\$(printf '%s' \"\$target\" | tr '/' '_'); " +
+        "divert=\"/var/lib/lampa-disabled-init/\${tag}\"; " +
+        "mkdir -p \"\$(dirname \"\$target\")\" /var/lib/lampa-disabled-init; " +
+        "if ! dpkg-divert --list \"\$target\" 2>/dev/null | grep -q 'local diversion of'; then " +
+        "dpkg-divert --local --rename --divert \"\$divert\" --add \"\$target\"; " +
+        "fi; " +
+        "if [ -L \"\$target\" ]; then rm -f \"\$target\"; " +
+        "elif [ -f \"\$target\" ] && ! head -n 5 \"\$target\" | grep -q 'lampa-proot-stub'; then " +
+        "if [ ! -e \"\$divert\" ]; then mv \"\$target\" \"\$divert\"; else rm -f \"\$target\"; fi; " +
+        "fi; " +
+        "if [ ! -f \"\$target\" ] || ! head -n 5 \"\$target\" | grep -q 'lampa-proot-stub'; then " +
+        "printf '%s\\n' '#!/bin/sh' '# lampa-proot-stub' \"exit \$code\" > \"\$target\"; " +
+        "chmod 755 \"\$target\"; " +
+        "fi; " +
+        "}; " +
+        "lampa_divert_stub /usr/bin/systemctl 0; " +
+        "lampa_divert_stub /usr/bin/systemd-machine-id-setup 0; " +
+        "lampa_divert_stub /usr/bin/deb-systemd-invoke 0; " +
+        "lampa_divert_stub /usr/bin/deb-systemd-helper 0; " +
+        "lampa_divert_stub /usr/sbin/policy-rc.d 101; " +
         "dpkg --root=/ --configure -a && " +
         command
 }
