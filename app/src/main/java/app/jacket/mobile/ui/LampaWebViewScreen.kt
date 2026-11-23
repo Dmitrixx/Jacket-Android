@@ -30,7 +30,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.unit.dp
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -38,21 +40,45 @@ import androidx.compose.ui.viewinterop.AndroidView
 import app.jacket.mobile.BuildConfig
 import app.jacket.mobile.data.LocalNetwork
 import app.jacket.mobile.torrent.TorrentDownloadService
+import app.jacket.mobile.torrent.PlaybackProgressStore
+import app.jacket.mobile.torrent.PlaybackSubtitle
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.suspendCancellableCoroutine
+import org.json.JSONArray
 import org.json.JSONObject
+import kotlin.coroutines.resume
 import java.io.ByteArrayInputStream
 import java.net.URI
 
 private const val LAMPA_LOCAL_ORIGIN = "http://127.0.0.1:9118"
 private const val LAMPA_ASSET_PREFIX = "/app/"
 
+data class LampaPlaybackRequest(
+    val id: String,
+    val title: String,
+    val url: String,
+    val progressKey: String,
+    val initialPositionMs: Long,
+    val subtitles: List<PlaybackSubtitle> = emptyList(),
+    val headers: Map<String, String> = emptyMap(),
+    val isTorrent: Boolean = false
+)
+
 @Composable
 fun LampaWebViewScreen(
     modifier: Modifier = Modifier,
-    onBack: () -> Unit
+    onBack: () -> Unit,
+    playbackRequest: LampaPlaybackRequest? = null,
+    onPlaybackCommandSent: (String) -> Unit = {},
+    onPlaybackError: (String, String) -> Unit = { _, _ -> },
+    onPlaybackClosed: (String) -> Unit = {}
 ) {
     val context = LocalContext.current
     val lampaPlayerOpen = remember { mutableStateOf(false) }
     val lampacStatus = remember { mutableStateOf("Lampac: ожидаем подключение") }
+    val currentOnBack by rememberUpdatedState(onBack)
+    val currentOnPlaybackError by rememberUpdatedState(onPlaybackError)
+    val currentOnPlaybackClosed by rememberUpdatedState(onPlaybackClosed)
     val chromeClient = remember(context) {
         context.findActivity()?.let(::LampaFullscreenChromeClient)
     }
@@ -79,9 +105,11 @@ fun LampaWebViewScreen(
             addJavascriptInterface(
                 LampaAndroidBridge(
                     context.applicationContext,
-                    onBack,
+                    onExit = { currentOnBack() },
                     onPlayerOpenChanged = { isOpen -> lampaPlayerOpen.value = isOpen },
-                    onLampacStateChanged = { state -> lampacStatus.value = state }
+                    onLampacStateChanged = { state -> lampacStatus.value = state },
+                    onPlaybackError = { id, message -> currentOnPlaybackError(id, message) },
+                    onPlaybackClosed = { id -> currentOnPlaybackClosed(id) }
                 ),
                 "AndroidJS"
             )
@@ -133,6 +161,22 @@ fun LampaWebViewScreen(
         }
     }
 
+    LaunchedEffect(playbackRequest?.id) {
+        val request = playbackRequest ?: return@LaunchedEffect
+        val script = buildLampaPlaybackScript(request)
+        for (attempt in 0 until 120) {
+            val dispatched = runCatching {
+                webView.evaluateJavascriptBoolean(script)
+            }.getOrDefault(false)
+            if (dispatched) {
+                onPlaybackCommandSent(request.id)
+                return@LaunchedEffect
+            }
+            delay(250)
+        }
+        onPlaybackError(request.id, "Интерфейс Lampa не успел подготовить плеер")
+    }
+
     BackHandler(enabled = true) {
         when {
             chromeClient?.hideCustomView() == true -> Unit
@@ -179,6 +223,88 @@ fun LampaWebViewScreen(
         )
     }
 }
+
+
+private fun buildLampaPlaybackScript(request: LampaPlaybackRequest): String {
+    val subtitles = JSONArray().apply {
+        request.subtitles.forEach { subtitle ->
+            put(
+                JSONObject()
+                    .put("url", subtitle.url)
+                    .put("label", subtitle.label)
+                    .put("language", subtitle.language ?: "")
+            )
+        }
+    }
+    val data = JSONObject()
+        .put("url", request.url)
+        .put("title", request.title.ifBlank { "Видео" })
+        .put("subtitles", subtitles)
+        .put("headers", JSONObject(request.headers))
+        .put("_jacketPlaybackId", request.id)
+        .put("_jacketProgressKey", request.progressKey)
+        .put(
+            "timeline",
+            JSONObject()
+                .put("time", request.initialPositionMs.coerceAtLeast(0L) / 1000.0)
+                .put("percent", if (request.initialPositionMs > 0L) 1 else 0)
+        )
+
+    return """
+        (function(data) {
+            if (!window.__JACKET_ANDROID_BRIDGE_READY__ ||
+                !window.Lampa || !Lampa.Player ||
+                typeof Lampa.Player.play !== 'function') return false;
+            var playbackId = data._jacketPlaybackId;
+            var progressKey = data._jacketProgressKey;
+            delete data._jacketPlaybackId;
+            delete data._jacketProgressKey;
+            data.timeline = data.timeline || {};
+            data.timeline.handler = function(percent, time, duration) {
+                try {
+                    if (window.AndroidJS && AndroidJS.savePlaybackProgress) {
+                        AndroidJS.savePlaybackProgress(
+                            progressKey,
+                            Number(time) || 0,
+                            Number(duration) || 0
+                        );
+                    }
+                } catch (error) {
+                    console.warn('Jacket: playback progress could not be saved', error);
+                }
+            };
+            window.__JACKET_PENDING_PLAYBACK_ID__ = playbackId;
+            window.__JACKET_ACTIVE_PLAYBACK_ID__ = null;
+            window.__JACKET_PLAYBACK_ERROR_SENT__ = null;
+            try {
+                Lampa.Player.play(data);
+                window.setTimeout(function() {
+                    if (window.__JACKET_PENDING_PLAYBACK_ID__ === playbackId) {
+                        window.__JACKET_PENDING_PLAYBACK_ID__ = null;
+                        try {
+                            AndroidJS.onJacketPlaybackError(
+                                playbackId,
+                                'Lampa не начала воспроизведение'
+                            );
+                        } catch (error) {}
+                    }
+                }, 15000);
+                return true;
+            } catch (error) {
+                window.__JACKET_PENDING_PLAYBACK_ID__ = null;
+                console.error('Jacket: could not start the Lampa player', error);
+                return false;
+            }
+        })($data);
+    """.trimIndent().replace("\$data", data.toString())
+}
+
+private suspend fun WebView.evaluateJavascriptBoolean(script: String): Boolean =
+    suspendCancellableCoroutine { continuation ->
+        evaluateJavascript(script) { result ->
+            if (continuation.isActive) continuation.resume(result == "true")
+        }
+    }
 
 private fun interceptLocalAsset(context: Context, request: WebResourceRequest): WebResourceResponse? {
     val uri = request.url
@@ -244,9 +370,11 @@ private fun errorResponse(status: Int, reason: String) = WebResourceResponse(
 
 private class LampaAndroidBridge(
     private val context: Context,
-    private val onBack: () -> Unit,
+    private val onExit: () -> Unit,
     private val onPlayerOpenChanged: (Boolean) -> Unit,
-    private val onLampacStateChanged: (String) -> Unit
+    private val onLampacStateChanged: (String) -> Unit,
+    private val onPlaybackError: (String, String) -> Unit,
+    private val onPlaybackClosed: (String) -> Unit
 ) {
     private val mainHandler = Handler(Looper.getMainLooper())
 
@@ -279,7 +407,33 @@ private class LampaAndroidBridge(
 
     @JavascriptInterface
     fun exit() {
-        mainHandler.post { onBack() }
+        mainHandler.post { onExit() }
+    }
+
+    @JavascriptInterface
+    fun savePlaybackProgress(rawKey: String?, positionSeconds: Double, durationSeconds: Double) {
+        val key = rawKey?.take(160)?.takeIf { it.isNotBlank() } ?: return
+        fun toMillis(seconds: Double): Long =
+            if (seconds.isFinite()) (seconds.coerceIn(0.0, 86_400_000.0) * 1000.0).toLong() else 0L
+        val positionMs = toMillis(positionSeconds)
+        val durationMs = toMillis(durationSeconds)
+        mainHandler.post {
+            runCatching { PlaybackProgressStore(context).save(key, positionMs, durationMs) }
+        }
+    }
+
+    @JavascriptInterface
+    fun onJacketPlaybackError(rawId: String?, rawMessage: String?) {
+        val id = rawId?.take(80)?.takeIf { it.isNotBlank() } ?: return
+        val message = rawMessage?.replace(Regex("[\\r\\n\\t]+"), " ")?.take(180)
+            ?.ifBlank { "Ошибка HTML5-плеера" } ?: "Ошибка HTML5-плеера"
+        mainHandler.post { onPlaybackError(id, message) }
+    }
+
+    @JavascriptInterface
+    fun onJacketPlaybackClosed(rawId: String?) {
+        val id = rawId?.take(80)?.takeIf { it.isNotBlank() } ?: return
+        mainHandler.post { onPlaybackClosed(id) }
     }
 
     @JavascriptInterface
