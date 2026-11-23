@@ -12,6 +12,7 @@ A personal Android and Android TV shell for the complete upstream Lampa web appl
 - Installer removes the OCI download-layer cache after Debian is installed and omits unused development-header packages; all Lampac modules and runtime dependencies are retained.
 - User-started local server on 127.0.0.1:9118.
 - Loopback-only external-media compatibility proxy for TorrServer: external players can probe media with HEAD and seek with HTTP Range requests.
+- In-app module manager discovers the actual installed module manifests, lets users enable/disable individual modules, and applies changes through `BaseModule.SkipModules` without reinstalling Lampac.
 
 ## First start
 
