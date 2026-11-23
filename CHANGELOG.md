@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.0.10 — Reduce persistent PRoot storage
+
+- Clear verified OCI image-layer download cache after the Debian rootfs is confirmed installed; keep the Debian rootfs itself and only delete direct regular files in the dedicated cache directory.
+- Remove unused development-header packages (OpenSSL, JPEG, PNG and WebP) from the runtime dependency set; runtime libraries remain installed through package dependencies.
+- Report the reclaimed OCI cache size in the installation log.
+
 ## 3.0.9 — Replace the disabled sysusers stub with opensysusers
 
 - The previous build returned success from `systemd-sysusers` without creating service accounts. Debian's `dbus-system-bus-common` requires that step to create the `messagebus` account, causing dbus and dependent GStreamer libraries to remain unconfigured.
