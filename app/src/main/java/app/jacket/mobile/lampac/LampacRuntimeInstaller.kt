@@ -488,15 +488,17 @@ internal fun buildLampacOfflineDpkgCommand(command: String): String {
     }
     return LAMPAC_OFFLINE_DPKG_ENV +
         "set -e; " +
-        "postinst=/var/lib/dpkg/info/systemd.postinst; " +
-        "backup=/tmp/lampa-systemd.postinst.original; " +
-        "restore_systemd_postinst() { if [ -f \"\$backup\" ]; then cp -p \"\$backup\" \"\$postinst\"; rm -f \"\$backup\"; fi; }; " +
-        "if [ -f \"\$backup\" ] && [ -f \"\$postinst\" ]; then cp -p \"\$backup\" \"\$postinst\"; rm -f \"\$backup\"; fi; " +
-        "if [ -f \"\$postinst\" ] && grep -q 'systemd-machine-id-setup' \"\$postinst\"; then " +
-        "cp -p \"\$postinst\" \"\$backup\"; sed -i 's/systemd-machine-id-setup/true/g' \"\$postinst\"; fi; " +
-        "trap 'restore_systemd_postinst' EXIT; " +
-        "dpkg --root=/ --configure -a; " +
-        "restore_systemd_postinst; " +
+        "shim=/usr/local/bin/systemd-machine-id-setup; " +
+        "backup=/tmp/lampa-systemd-machine-id-setup.original; " +
+        "mkdir -p /usr/local/bin; " +
+        "if [ -e \"\$backup\" ] || [ -L \"\$backup\" ]; then rm -f \"\$shim\"; mv \"\$backup\" \"\$shim\"; fi; " +
+        "if [ -e \"\$shim\" ] || [ -L \"\$shim\" ]; then mv \"\$shim\" \"\$backup\"; fi; " +
+        "printf '#!/bin/sh\\\\nexit 0\\\\n' > \"\$shim\"; " +
+        "chmod 755 \"\$shim\"; " +
+        "export PATH=/usr/local/bin:\\$PATH; " +
+        "hash -r 2>/dev/null || true; " +
+        "restore_systemd_machine_id_setup() { rm -f \"\$shim\"; if [ -e \"\$backup\" ] || [ -L \"\$backup\" ]; then mv \"\$backup\" \"\$shim\"; fi; }; " +
+        "trap 'restore_systemd_machine_id_setup' EXIT; " +
         command
 }
 
