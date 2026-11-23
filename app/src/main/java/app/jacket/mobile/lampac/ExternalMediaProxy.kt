@@ -472,7 +472,6 @@ private fun isExternalStreamPath(path: String): Boolean =
         path.startsWith("/ts/stream/") ||
         path == "/ts/gst" ||
         path.startsWith("/ts/gst/")
-}
 
 /** Process-wide proxy owner; the Lampac foreground service controls its lifetime. */
 internal object ExternalMediaProxy {
