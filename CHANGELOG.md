@@ -1,5 +1,15 @@
 # Changelog
 
+## 2.8.12 (unified-player candidate)
+
+- Route Jacket catalog streams and in-app torrent streams through the bundled Lampa HTML5 player first.
+- Keep the existing Media3 player as an automatic compatibility fallback for streams rejected by Android WebView, including sources that require HTTP headers or unsupported codecs.
+- Preserve resume position and supported external subtitle metadata when opening a Jacket source in Lampa; save Lampa timeline progress to the existing local playback store.
+- Bridge Lampa player close/error lifecycle to Android so torrent services stay alive during fallback and stop cleanly when the user closes playback.
+- Add loopback-only CORS for the embedded Lampa origin to the local torrent byte-range server, including OPTIONS requests.
+- Add regression tests for the restricted torrent-stream CORS policy.
+- Increment the app version to 2.8.12 (versionCode 24).
+
 ## 2.8.11 (release candidate)
 
 - Bundle the pinned upstream Lampa source tree and compile its web interface into APK assets.
