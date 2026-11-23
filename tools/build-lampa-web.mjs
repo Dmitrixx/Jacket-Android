@@ -71,13 +71,13 @@ await writeFile(appBundlePath, appBundle, "utf8");
 // Gulpfile so CI waits for every full plugin bundle and CSS include to finish.
 const gulpFilePath = path.join(sourceRoot, "gulpfile.js");
 let gulpFileText = await readFile(gulpFilePath, "utf8");
-const bubbleStreamMarker = "rollup({\\n        input: plgFolder+name,";
-if (!gulpFileText.includes(bubbleStreamMarker)) {
+const bubbleStreamPattern = /rollup\(\{\s*input: plgFolder\+name,/;
+if (!bubbleStreamPattern.test(gulpFileText)) {
   throw new Error("The upstream Lampa plugin bundler changed; review its build task before proceeding");
 }
-gulpFileText = gulpFileText.replace(bubbleStreamMarker, "return rollup({\\n        input: plgFolder+name,");
+gulpFileText = gulpFileText.replace(bubbleStreamPattern, match => "return " + match);
 const pluginsStart = gulpFileText.indexOf("function plugins(done) {");
-const pluginsEnd = gulpFileText.indexOf("\\nfunction plugin_sass", pluginsStart);
+const pluginsEnd = gulpFileText.indexOf("\nfunction plugin_sass", pluginsStart);
 if (pluginsStart < 0 || pluginsEnd < 0) {
   throw new Error("The upstream Lampa plugins task could not be located");
 }
