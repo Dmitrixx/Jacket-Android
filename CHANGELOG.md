@@ -6,6 +6,8 @@
 - Convert the player's HEAD media probe into a GET-to-headers probe because Lampac 1.90.2 blocks HEAD before the TorrServer route.
 - Forward byte-range requests and stream responses without buffering the full video.
 - Keep the compatibility proxy active only while the embedded Lampac foreground service is running.
+- Add an in-app module manager that discovers available modules from their installed manifest.json files.
+- Save per-module exclusions to BaseModule.SkipModules, preserve unrelated provider settings and custom exclusions, and restart Lampac to apply changes.
 
 
 ## 3.0.13 — Route torrent playback to external Android video players
