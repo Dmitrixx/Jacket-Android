@@ -1,5 +1,13 @@
 # Changelog
 
+## 3.0.14 — Fix external playback of Lampac torrents
+
+- Add a loopback-only media proxy for external Android players.
+- Convert the player's HEAD media probe into a GET-to-headers probe because Lampac 1.90.2 blocks HEAD before the TorrServer route.
+- Forward byte-range requests and stream responses without buffering the full video.
+- Keep the compatibility proxy active only while the embedded Lampac foreground service is running.
+
+
 ## 3.0.13 — Route torrent playback to external Android video players
 
 - Intercept Lampa's earlier torrent-specific inner-player branch before the generic HTML5 fallback.
