@@ -301,10 +301,14 @@ private object LampacZipInstaller {
                 require(all.any { !it.isDirectory && it.name.startsWith(prefix + "runtimes/references/") }) {
                     "В архиве Lampac отсутствуют зависимости runtimes/references"
                 }
-                require(all.any {
-                    !it.isDirectory && it.name == prefix + ".playwright/package/index.js"
-                }) {
-                    "В полном архиве Lampac отсутствует JavaScript-драйвер Playwright"
+                val requiredPlaywrightFiles = listOf(
+                    prefix + ".playwright/package/index.js",
+                    prefix + ".playwright/package/cli.js"
+                )
+                requiredPlaywrightFiles.forEach { required ->
+                    require(all.any { !it.isDirectory && it.name == required }) {
+                        "В полном архиве Lampac отсутствует файл Playwright: ${required.removePrefix(prefix)}"
+                    }
                 }
 
                 val freeSpace = StatFs(rootfs.absolutePath).availableBytes
@@ -458,8 +462,13 @@ internal fun isCompleteLampacRuntime(root: File, expectedVersion: String): Boole
  * Playwright's JS driver is portable; the native Node executable is supplied by
  * the device's ARM64 Debian package through PLAYWRIGHT_NODEJS_PATH.
  */
-internal fun isLampacPlaywrightPackageReady(lampacDirectory: File): Boolean =
-    File(lampacDirectory, ".playwright/package/index.js").isFile
+internal fun isLampacPlaywrightPackageReady(lampacDirectory: File): Boolean {
+    val packageDirectory = File(lampacDirectory, ".playwright/package")
+    // index.js is checked by Lampac's startup guard; cli.js is the actual
+    // Playwright driver entrypoint launched by Microsoft.Playwright.
+    return File(packageDirectory, "index.js").isFile &&
+        File(packageDirectory, "cli.js").isFile
+}
 
 
 /**
