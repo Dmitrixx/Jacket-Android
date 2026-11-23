@@ -4,15 +4,15 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
-val jacketSigningStoreFile = System.getenv("JACKET_SIGNING_STORE_FILE")
-val jacketSigningStorePassword = System.getenv("JACKET_SIGNING_STORE_PASSWORD")
-val jacketSigningKeyAlias = System.getenv("JACKET_SIGNING_KEY_ALIAS")
-val jacketSigningKeyPassword = System.getenv("JACKET_SIGNING_KEY_PASSWORD")
-val hasJacketReleaseSigning = listOf(
-    jacketSigningStoreFile,
-    jacketSigningStorePassword,
-    jacketSigningKeyAlias,
-    jacketSigningKeyPassword
+val releaseSigningStoreFile = System.getenv("JACKET_SIGNING_STORE_FILE")
+val releaseSigningStorePassword = System.getenv("JACKET_SIGNING_STORE_PASSWORD")
+val releaseSigningKeyAlias = System.getenv("JACKET_SIGNING_KEY_ALIAS")
+val releaseSigningKeyPassword = System.getenv("JACKET_SIGNING_KEY_PASSWORD")
+val hasReleaseSigning = listOf(
+    releaseSigningStoreFile,
+    releaseSigningStorePassword,
+    releaseSigningKeyAlias,
+    releaseSigningKeyPassword
 ).all { !it.isNullOrBlank() }
 
 val buildLampaWebAssets by tasks.registering(Exec::class) {
@@ -20,8 +20,10 @@ val buildLampaWebAssets by tasks.registering(Exec::class) {
     workingDir(rootProject.projectDir)
     commandLine("node", rootProject.file("tools/build-lampa-web.mjs").absolutePath)
     inputs.dir(lampaRoot.resolve("src"))
+    inputs.dir(lampaRoot.resolve("plugins"))
     inputs.dir(lampaRoot.resolve("public"))
     inputs.file(lampaRoot.resolve("package.json"))
+    inputs.file(lampaRoot.resolve("gulpfile.js"))
     inputs.file(lampaRoot.resolve("LICENSE"))
     inputs.file(rootProject.file("lampa-android/modification.js"))
     inputs.file(rootProject.file("tools/build-lampa-web.mjs"))
@@ -48,7 +50,7 @@ android {
         targetSdk = 35
         versionCode = 25
         versionName = "3.0.0"
-        buildConfigField("boolean", "PERSISTENT_SIGNING_CONFIGURED", hasJacketReleaseSigning.toString())
+        buildConfigField("boolean", "PERSISTENT_SIGNING_CONFIGURED", hasReleaseSigning.toString())
         vectorDrawables { useSupportLibrary = true }
     }
 
@@ -63,12 +65,12 @@ android {
     }
 
     signingConfigs {
-        if (hasJacketReleaseSigning) {
+        if (hasReleaseSigning) {
             create("jacketRelease") {
-                storeFile = file(requireNotNull(jacketSigningStoreFile))
-                storePassword = jacketSigningStorePassword
-                keyAlias = jacketSigningKeyAlias
-                keyPassword = jacketSigningKeyPassword
+                storeFile = file(requireNotNull(releaseSigningStoreFile))
+                storePassword = releaseSigningStorePassword
+                keyAlias = releaseSigningKeyAlias
+                keyPassword = releaseSigningKeyPassword
             }
         }
     }

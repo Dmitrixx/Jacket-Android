@@ -49,7 +49,7 @@ jobs:
 
       # A permanent keystore is supplied once through repository Actions secrets.
       # Never store the signing key or its passwords in git.
-      - name: Restore persistent Jacket signing key
+      - name: Restore persistent app signing key
         id: restore_signing
         if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
         shell: bash
