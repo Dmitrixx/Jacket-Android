@@ -762,7 +762,12 @@ class LampacRuntimeInstaller(context: android.content.Context) {
         if (isDebianRootfsReady(prepared.debianRootfsDir)) {
             val reclaimed = clearLampacProotDownloadCache(host.prefixDir)
             if (reclaimed > 0L) {
-                send("storage-cleanup", "Освобождено ${formatBytes(reclaimed)} из кэша слоёв Debian", reclaimed, reclaimed)
+                send(
+                    "storage-cleanup",
+                    "Освобождено ${formatBytes(reclaimed)} из кэша слоёв Debian",
+                    0,
+                    0
+                )
             }
         }
 
@@ -814,7 +819,12 @@ class LampacRuntimeInstaller(context: android.content.Context) {
             }
             val reclaimed = clearLampacProotDownloadCache(host.prefixDir)
             if (reclaimed > 0L) {
-                send("storage-cleanup", "Освобождено ${formatBytes(reclaimed)} из кэша слоёв Debian", reclaimed, reclaimed)
+                send(
+                    "storage-cleanup",
+                    "Освобождено ${formatBytes(reclaimed)} из кэша слоёв Debian",
+                    0,
+                    0
+                )
             }
         }
 
