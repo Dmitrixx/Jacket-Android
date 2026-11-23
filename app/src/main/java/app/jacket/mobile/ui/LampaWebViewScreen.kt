@@ -27,6 +27,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.viewinterop.AndroidView
+import app.jacket.mobile.BuildConfig
 import app.jacket.mobile.data.LocalNetwork
 import app.jacket.mobile.torrent.TorrentDownloadService
 import org.json.JSONObject
@@ -222,7 +223,7 @@ private class LampaAndroidBridge(
     private val mainHandler = Handler(Looper.getMainLooper())
 
     @JavascriptInterface
-    fun appVersion(): String = "Jacket-2.8.10-15"
+    fun appVersion(): String = "Jacket-${BuildConfig.VERSION_NAME}-${BuildConfig.VERSION_CODE}"
 
     @JavascriptInterface
     fun openTorrentLink(rawLink: String?, rawExtra: String?) {
