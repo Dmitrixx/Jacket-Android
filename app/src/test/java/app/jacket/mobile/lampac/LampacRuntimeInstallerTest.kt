@@ -35,6 +35,13 @@ class LampacRuntimeInstallerTest {
             assertFalse(isCompleteLampacRuntime(root, "1.90.2"))
 
             File(oldInstall, ".lampa-lampac-version").writeText("1.90.2")
+            assertFalse(isCompleteLampacRuntime(root, "1.90.2"))
+
+            val playwrightIndex = File(oldInstall, ".playwright/package/index.js")
+            playwrightIndex.parentFile?.mkdirs()
+            playwrightIndex.writeText("// Playwright Node driver entry")
+
+            assertTrue(isLampacPlaywrightPackageReady(oldInstall))
             assertTrue(isCompleteLampacRuntime(root, "1.90.2"))
             assertFalse(isCompleteLampacRuntime(root, "1.90.3"))
         } finally {
@@ -54,6 +61,10 @@ class LampacRuntimeInstallerTest {
                 listOf("server-assets", "probe.json").joinToString(File.separator)
         )
         assertTrue(lampacArchiveRelativePath("lampac/", "lampac/") == null)
+        assertTrue(
+            lampacArchiveRelativePath("lampac/.playwright/package/index.js", "lampac/") ==
+                listOf(".playwright", "package", "index.js").joinToString(File.separator)
+        )
         assertTrue(lampacArchiveRelativePath("Core.dll", "") == "Core.dll")
     }
 
@@ -269,6 +280,15 @@ class LampacRuntimeInstallerTest {
         assertTrue(checks == 1)
     }
 
+
+    @Test
+    fun arm64RuntimeUsesDebianNodeForThePortablePlaywrightDriver() {
+        val command = buildLampacServerCommand()
+
+        assertTrue(command.contains("PLAYWRIGHT_NODEJS_PATH=/usr/bin/node"))
+        assertTrue(command.contains("PATH=/opt/dotnet:\$PATH"))
+        assertTrue(command.endsWith("exec /opt/dotnet/dotnet /opt/lampac/Core.dll"))
+    }
 
     @Test
     fun dotnetInstallValidatesStagingBeforeReplacingCurrentRuntime() {
