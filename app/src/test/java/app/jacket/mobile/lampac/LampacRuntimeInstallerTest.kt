@@ -311,7 +311,9 @@ class LampacRuntimeInstallerTest {
             assertTrue(command.contains("dpkg-divert --local --rename --divert"))
             assertTrue(command.contains("lampa_divert_stub /usr/bin/systemctl 0"))
             assertTrue(command.contains("lampa_divert_stub /usr/bin/systemd-machine-id-setup 0"))
-            assertTrue(command.contains("lampa_divert_stub /usr/bin/systemd-sysusers 0"))
+            assertTrue(command.contains("lampa_divert_stub /usr/bin/systemd-sysusers 127"))
+            assertTrue(command.contains("exec /var/lib/lampa-disabled-init/_usr_bin_systemd-sysusers"))
+            assertTrue(command.contains("apt-get install -y --no-install-recommends opensysusers && dpkg --root=/ --configure -a &&"))
             assertTrue(command.contains("lampa_divert_stub /usr/bin/deb-systemd-invoke 0"))
             assertTrue(command.contains("lampa_divert_stub /usr/bin/deb-systemd-helper 0"))
             assertTrue(command.contains("lampa_divert_stub /usr/sbin/policy-rc.d 101"))
@@ -321,14 +323,19 @@ class LampacRuntimeInstallerTest {
             assertFalse(command.contains("/usr/local/bin/systemd-machine-id-setup"))
             assertFalse(command.contains("sed -i"))
         }
-        assertTrue(packageCommand.contains("dpkg --root=/ --configure -a && apt-get update &&"))
-        assertTrue(nodeRepairCommand.contains("dpkg --root=/ --configure -a && apt-get update &&"))
+        listOf(packageCommand, nodeRepairCommand).forEach { command ->
+            val opensysusersInstall = command.indexOf("apt-get install -y --no-install-recommends opensysusers")
+            val dpkgRecovery = command.indexOf("dpkg --root=/ --configure -a")
+            assertTrue(opensysusersInstall >= 0)
+            assertTrue(dpkgRecovery > opensysusersInstall)
+        }
 
         listOf(packageCommand, nodeRepairCommand).forEach { command ->
             assertTrue(command.contains("/tmp/lampa-dpkg-install.log 2>&1"))
             assertTrue(command.contains("tail -n 120 /tmp/lampa-dpkg-install.log"))
             assertTrue(command.contains("status=\$?"))
         }
+        assertTrue(packageCommand.contains("apt-get install -y --no-install-recommends opensysusers"))
         assertTrue(packageCommand.contains("apt-get install -y --no-install-recommends ca-certificates"))
         assertTrue(packageCommand.contains("google-chrome-stable_current_arm64.deb"))
         assertTrue(packageCommand.contains("gst-inspect-1.0 --version"))

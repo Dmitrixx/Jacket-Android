@@ -472,17 +472,16 @@ internal fun isCompleteLampacRuntime(root: File, expectedVersion: String): Boole
  * systemd-sysusers reports the misleading "Failed to read 'basic.conf'"
  * message even though the packaged config exists.
  *
- * Maintainer scripts invoke these helpers by absolute path, so PATH shims do
- * not intercept them, and apt restores real binaries on upgrade unless they
- * are diverted. Keep the app-private Debian rootfs free of systemd service
- * management: Lampac is started by Android, not by systemd. Debian's
- * base-passwd package already supplies the standard system groups from
- * systemd's basic.conf; daemon-specific sysusers entries are not needed because
- * no systemd-managed daemons are started in this rootfs.
+ * Maintainer scripts invoke service helpers by absolute path, so these tools
+ * must be diverted before dpkg configures packages. They are not needed:
+ * Lampac is started by Android, not by systemd.
  *
- * Divert the incompatible helpers to permanent exit-0 stubs before dpkg
- * configures the half-installed systemd package. policy-rc.d exits 101 so
- * invoke-rc.d skips service starts.
+ * Do NOT disable systemd-sysusers with a success-only stub. Debian packages
+ * such as dbus-system-bus-common rely on it to create required service users
+ * (notably messagebus). systemd 260's implementation needs STATX_MNT_ID,
+ * unavailable on this Android kernel, so we install Debian's opensysusers
+ * compatibility provider and forward /usr/bin/systemd-sysusers to its diverted
+ * executable. policy-rc.d exits 101 so invoke-rc.d skips service starts.
  */
 private const val LAMPAC_OFFLINE_DPKG_ENV =
     "export DEBIAN_FRONTEND=noninteractive DPKG_ROOT=/ SYSTEMD_OFFLINE=1 SYSTEMD_IN_CHROOT=1 LANG=C LC_ALL=C && "
@@ -514,11 +513,13 @@ internal fun buildLampacOfflineDpkgCommand(command: String): String {
         "}; " +
         "lampa_divert_stub /usr/bin/systemctl 0; " +
         "lampa_divert_stub /usr/bin/systemd-machine-id-setup 0; " +
-        "lampa_divert_stub /usr/bin/systemd-sysusers 0; " +
+        "lampa_divert_stub /usr/bin/systemd-sysusers 127; " +
+        "printf '%s\\n' '#!/bin/sh' 'exec /var/lib/lampa-disabled-init/_usr_bin_systemd-sysusers \"\$@\"' > /usr/bin/systemd-sysusers; " +
+        "chmod 755 /usr/bin/systemd-sysusers; " +
         "lampa_divert_stub /usr/bin/deb-systemd-invoke 0; " +
         "lampa_divert_stub /usr/bin/deb-systemd-helper 0; " +
         "lampa_divert_stub /usr/sbin/policy-rc.d 101; " +
-        "set +e; { dpkg --root=/ --configure -a && " +
+        "set +e; { " +
         command +
         "; } > /tmp/lampa-dpkg-install.log 2>&1; status=\$?; " +
         "echo '--- apt/dpkg output (last 120 lines) ---'; tail -n 120 /tmp/lampa-dpkg-install.log; " +
@@ -581,6 +582,8 @@ internal fun ensureLampacDebianMachineId(rootfs: File) {
 internal fun buildLampacSystemPackagesInstallCommand(): String =
     buildLampacOfflineDpkgCommand(
         "apt-get update && " +
+            "apt-get install -y --no-install-recommends opensysusers && " +
+            "dpkg --root=/ --configure -a && " +
             "apt-get install -y --no-install-recommends ca-certificates curl fontconfig libicu78 libssl-dev zlib1g tar nodejs " +
             "ffmpeg imagemagick xvfb libjpeg-dev libpng-dev libwebp-dev libnspr4 " +
             "gstreamer1.0-libav gstreamer1.0-plugins-bad gstreamer1.0-plugins-base gstreamer1.0-plugins-base-apps " +
@@ -600,6 +603,8 @@ internal fun buildLampacSystemPackagesInstallCommand(): String =
 internal fun buildLampacNodeInstallCommand(): String =
     buildLampacOfflineDpkgCommand(
         "apt-get update && " +
+            "apt-get install -y --no-install-recommends opensysusers && " +
+            "dpkg --root=/ --configure -a && " +
             "apt-get install -y --no-install-recommends nodejs && " +
             "test -x /usr/bin/node && node --version && " +
             "apt-get clean && rm -rf /var/lib/apt/lists/*"

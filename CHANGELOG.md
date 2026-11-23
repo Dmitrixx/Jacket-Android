@@ -1,5 +1,14 @@
 # Changelog
 
+## 3.0.9 — Replace the disabled sysusers stub with opensysusers
+
+- The previous build returned success from `systemd-sysusers` without creating service accounts. Debian's `dbus-system-bus-common` requires that step to create the `messagebus` account, causing dbus and dependent GStreamer libraries to remain unconfigured.
+- Install Forky's `opensysusers` compatibility provider before configuring pending packages.
+- Forward the diverted `/usr/bin/systemd-sysusers` entrypoint to the opensysusers executable so package `.conf` files create their required users/groups without the systemd 260 kernel-dependent implementation.
+- Continue disabling only systemd service-manager helpers and service starts, not sysusers account creation.
+- Keep Debian rootfs, Lampac payload and provider configuration for in-place retries.
+
+
 ## 3.0.8 — Full Debian install log access
 - Keep the final 160 installer log entries so the complete apt/dpkg tail is retained.
 - Make the log panel vertically scrollable instead of showing only the last eight rows.
