@@ -299,13 +299,25 @@ class LampacRuntimeInstallerTest {
 
 
     @Test
-    fun existingLampacCanInstallMissingNodeWithoutDownloadingTheServerAgain() {
-        val command = buildLampacNodeInstallCommand()
+    fun debianPackageInstallsUseOfflineDpkgRootAndRecoverInterruptedConfiguration() {
+        val packageCommand = buildLampacSystemPackagesInstallCommand()
+        val nodeRepairCommand = buildLampacNodeInstallCommand()
+        val offlineEnvironment =
+            "export DEBIAN_FRONTEND=noninteractive DPKG_ROOT=/ SYSTEMD_OFFLINE=1 && "
 
-        assertTrue(command.contains("apt-get install -y --no-install-recommends nodejs"))
-        assertTrue(command.contains("test -x /usr/bin/node"))
-        assertTrue(command.contains("node --version"))
-        assertTrue(command.contains("apt-get clean"))
+        listOf(packageCommand, nodeRepairCommand).forEach { command ->
+            assertTrue(command.startsWith(offlineEnvironment))
+            assertTrue(command.contains("dpkg --root=/ --configure -a && apt-get update &&"))
+        }
+
+        assertTrue(packageCommand.contains("apt-get install -y --no-install-recommends ca-certificates"))
+        assertTrue(packageCommand.contains("google-chrome-stable_current_arm64.deb"))
+        assertTrue(packageCommand.contains("gst-inspect-1.0 --version"))
+
+        assertTrue(nodeRepairCommand.contains("apt-get install -y --no-install-recommends nodejs"))
+        assertTrue(nodeRepairCommand.contains("test -x /usr/bin/node"))
+        assertTrue(nodeRepairCommand.contains("node --version"))
+        assertTrue(nodeRepairCommand.contains("apt-get clean"))
     }
 
     @Test
