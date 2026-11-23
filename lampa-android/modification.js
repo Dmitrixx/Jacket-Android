@@ -9,7 +9,18 @@
     var maxAttempts = 90;
     var timer = null;
 
+    function reportLampacState(state) {
+        try {
+            if (typeof AndroidJS !== 'undefined' && AndroidJS.setLampacState) {
+                AndroidJS.setLampacState(state);
+            }
+        } catch (error) {
+            console.warn('Jacket: could not update Lampac connection status', error);
+        }
+    }
+
     function loadLampacPlugin() {
+        reportLampacState('connecting');
         if (window.__JACKET_LAMPAC_PLUGIN_LOADED__) return;
 
         var script = document.createElement('script');
@@ -18,6 +29,7 @@
 
         script.onload = function () {
             window.__JACKET_LAMPAC_PLUGIN_LOADED__ = true;
+            reportLampacState('connected');
             console.info('Jacket: embedded Lampac Lampa plugin loaded');
         };
 
@@ -25,8 +37,10 @@
             script.remove();
             attempts += 1;
             if (attempts < maxAttempts) {
+                reportLampacState('connecting');
                 timer = window.setTimeout(loadLampacPlugin, 5000);
             } else {
+                reportLampacState('unavailable');
                 console.warn('Jacket: embedded Lampac is not available yet. Reopen Lampa after starting the server.');
             }
         };
