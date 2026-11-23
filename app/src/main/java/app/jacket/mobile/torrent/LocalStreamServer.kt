@@ -128,8 +128,8 @@ class LocalStreamServer(
                     return sendError(client.getOutputStream(), 400, "Bad Request")
                 }
                 val method = request[0].uppercase()
-                if (method != "GET" && method != "HEAD") {
-                    return sendError(client.getOutputStream(), 405, "Method Not Allowed", "Allow: GET, HEAD\r\n")
+                if (method != "GET" && method != "HEAD" && method != "OPTIONS") {
+                    return sendError(client.getOutputStream(), 405, "Method Not Allowed", "Allow: GET, HEAD, OPTIONS\r\n")
                 }
 
                 val headers = LinkedHashMap<String, String>()
@@ -161,6 +161,17 @@ class LocalStreamServer(
                 val route = LocalStreamRouteParser.parse(request[1])
                     ?: return sendError(client.getOutputStream(), 404, "Not Found")
                 if (!validAccessToken(route.token)) return sendError(client.getOutputStream(), 403, "Forbidden")
+                if (method == "OPTIONS") {
+                    val corsHeaders = LocalStreamCorsPolicy.responseHeaders(headers["origin"])
+                    if (corsHeaders.isEmpty()) return sendError(client.getOutputStream(), 403, "Forbidden")
+                    writeHeaders(
+                        client.getOutputStream(),
+                        204,
+                        "No Content",
+                        corsHeaders + listOf("Content-Length: 0", "Connection: close")
+                    )
+                    return
+                }
                 val fileIndex = route.fileIndex
                 val id = route.infoHash
                 val target = try {
@@ -183,7 +194,7 @@ class LocalStreamServer(
                         "Content-Range: bytes */${target.sizeBytes}",
                         "Accept-Ranges: bytes",
                         "Content-Length: 0"
-                    ))
+                    ) + LocalStreamCorsPolicy.responseHeaders(headers["origin"]))
                     return
                 }
                 val response = RangeResponseBuilder.build(range, target.sizeBytes, contentType(target.name))
@@ -191,7 +202,12 @@ class LocalStreamServer(
                 val end = response.endInclusive
                 val out = client.getOutputStream()
                 if (method == "HEAD") {
-                    writeHeaders(out, response.statusCode, response.reason, response.headers)
+                    writeHeaders(
+                        out,
+                        response.statusCode,
+                        response.reason,
+                        response.headers + LocalStreamCorsPolicy.responseHeaders(headers["origin"])
+                    )
                     return
                 }
 
@@ -210,7 +226,12 @@ class LocalStreamServer(
                     )
                 }
 
-                writeHeaders(out, response.statusCode, response.reason, response.headers)
+                writeHeaders(
+                    out,
+                    response.statusCode,
+                    response.reason,
+                    response.headers + LocalStreamCorsPolicy.responseHeaders(headers["origin"])
+                )
                 out.write(firstBytes)
                 out.flush()
 
