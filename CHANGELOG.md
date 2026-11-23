@@ -1,5 +1,12 @@
 # Changelog
 
+## 3.0.6 — Debian package failure diagnostics
+- Capture apt/dpkg output during system-library installation and Node.js repair.
+- On failure, show the final 120 lines of the package log, including the failing package's maintainer-script output.
+- Remove the temporary log after success.
+- Preserve Debian rootfs and Lampac configuration during retries.
+
+
 ## 3.0.5 — PRoot systemd-sysusers kernel compatibility
 
 - Divert `/usr/bin/systemd-sysusers` to an app-managed success stub before dpkg recovery and package installation.
