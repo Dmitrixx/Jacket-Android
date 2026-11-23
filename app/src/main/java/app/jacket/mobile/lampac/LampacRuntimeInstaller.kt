@@ -467,16 +467,22 @@ internal fun isCompleteLampacRuntime(root: File, expectedVersion: String): Boole
 /**
  * Debian Forky runs under PRoot, not as Android's init.
  *
- * systemd's own tools call statx(). PRoot returns EUNATCH for that syscall,
- * which systemd prints as "Protocol driver not attached" even when
- * SYSTEMD_OFFLINE=1 is set and /etc/machine-id already exists. Maintainer
- * scripts invoke /usr/bin/systemctl and /usr/bin/systemd-machine-id-setup by
- * absolute path, so a PATH shim does not intercept them, and apt restores the
- * real binaries on upgrade unless they are diverted.
+ * systemd 260 also uses statx(STATX_MNT_ID), which requires a newer kernel
+ * than the Android 4.19 kernel used by the POCO F3 (alioth). On that kernel,
+ * systemd-sysusers reports the misleading "Failed to read 'basic.conf'"
+ * message even though the packaged config exists.
  *
- * Divert those helpers to permanent exit-0 stubs before dpkg configures the
- * half-installed systemd package. policy-rc.d exits 101 so invoke-rc.d skips
- * service starts. Lampac is started by the Android service, not by systemd.
+ * Maintainer scripts invoke these helpers by absolute path, so PATH shims do
+ * not intercept them, and apt restores real binaries on upgrade unless they
+ * are diverted. Keep the app-private Debian rootfs free of systemd service
+ * management: Lampac is started by Android, not by systemd. Debian's
+ * base-passwd package already supplies the standard system groups from
+ * systemd's basic.conf; daemon-specific sysusers entries are not needed because
+ * no systemd-managed daemons are started in this rootfs.
+ *
+ * Divert the incompatible helpers to permanent exit-0 stubs before dpkg
+ * configures the half-installed systemd package. policy-rc.d exits 101 so
+ * invoke-rc.d skips service starts.
  */
 private const val LAMPAC_OFFLINE_DPKG_ENV =
     "export DEBIAN_FRONTEND=noninteractive DPKG_ROOT=/ SYSTEMD_OFFLINE=1 SYSTEMD_IN_CHROOT=1 LANG=C LC_ALL=C && "
@@ -508,6 +514,7 @@ internal fun buildLampacOfflineDpkgCommand(command: String): String {
         "}; " +
         "lampa_divert_stub /usr/bin/systemctl 0; " +
         "lampa_divert_stub /usr/bin/systemd-machine-id-setup 0; " +
+        "lampa_divert_stub /usr/bin/systemd-sysusers 0; " +
         "lampa_divert_stub /usr/bin/deb-systemd-invoke 0; " +
         "lampa_divert_stub /usr/bin/deb-systemd-helper 0; " +
         "lampa_divert_stub /usr/sbin/policy-rc.d 101; " +
