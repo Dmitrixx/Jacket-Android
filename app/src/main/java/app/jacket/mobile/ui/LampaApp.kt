@@ -238,7 +238,7 @@ fun LampaApp(onExit: () -> Unit) {
             }
         )
     }
-}
+
     if (modulesVisible) {
         val availableModules = moduleList.filter { it.enabledInManifest }
         val filteredModules = moduleList.filter { module ->
