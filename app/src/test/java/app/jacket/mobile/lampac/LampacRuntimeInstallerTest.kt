@@ -307,10 +307,11 @@ class LampacRuntimeInstallerTest {
 
         listOf(packageCommand, nodeRepairCommand).forEach { command ->
             assertTrue(command.startsWith(offlineEnvironment))
-            assertTrue(command.contains("dpkg --root=/ --configure -a && apt-get update &&"))
-            assertTrue(command.contains("systemd-machine-id-setup"))
-            assertTrue(command.contains("export PATH=/tmp/lampa-proot-dpkg-bin:\\$PATH"))
-            assertTrue(command.contains("trap 'rm -f /tmp/lampa-proot-dpkg-bin/systemd-machine-id-setup"))
+            assertTrue(command.contains("dpkg --root=/ --configure -a;"))
+            assertTrue(command.contains("sed -i 's/systemd-machine-id-setup/true/g'"))
+            assertTrue(command.contains("backup=/tmp/lampa-systemd.postinst.original"))
+            assertTrue(command.contains("trap 'restore_systemd_postinst' EXIT"))
+            assertTrue(command.contains("restore_systemd_postinst;"))
         }
 
         assertTrue(packageCommand.contains("apt-get install -y --no-install-recommends ca-certificates"))
@@ -355,9 +356,10 @@ class LampacRuntimeInstallerTest {
             Files.createSymbolicLink(File(etc, "machine-id").toPath(), java.nio.file.Paths.get("/var/lib/dbus/machine-id"))
 
             ensureLampacDebianMachineId(root)
-            val target = Files.readSymbolicLink(File(etc, "machine-id").toPath())
-            assertTrue(target.toString() != "/var/lib/dbus/machine-id")
+            assertFalse(Files.isSymbolicLink(File(etc, "machine-id").toPath()))
             assertTrue(File(etc, "machine-id").readText().trim().matches(Regex("(?i)^[0-9a-f]{32}$")))
+            assertTrue(Files.isSymbolicLink(File(dbus, "machine-id").toPath()))
+            assertEquals("/etc/machine-id", Files.readSymbolicLink(File(dbus, "machine-id").toPath()).toString())
         } finally {
             root.deleteRecursively()
         }
