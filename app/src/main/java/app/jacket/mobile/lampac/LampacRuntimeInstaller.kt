@@ -472,9 +472,9 @@ internal fun buildLampacNodeInstallCommand(): String =
         "apt-get clean && rm -rf /var/lib/apt/lists/*"
 
 /**
- * The official generic Lampac release is published from an x64 Linux runner.
- * Playwright's JS driver is portable; the native Node executable is supplied by
- * the device's ARM64 Debian package through PLAYWRIGHT_NODEJS_PATH.
+ * Playwright's JS package is architecture-independent. The runtime uses
+ * Debian's ARM64 Node.js through PLAYWRIGHT_NODEJS_PATH rather than assuming
+ * that a platform-specific executable in the release archive matches Android.
  */
 internal fun isLampacPlaywrightPackageReady(lampacDirectory: File): Boolean {
     val packageDirectory = File(lampacDirectory, ".playwright/package")
