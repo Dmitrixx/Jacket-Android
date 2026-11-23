@@ -35,7 +35,7 @@ class LampacEmbeddedConfigTest {
             )
             .put("chromium", JSONObject()
                 .put("enable", false)
-                .put("Args", JSONArray(listOf("--disable-gpu", "--no-sandbox"))))
+                .put("Args", JSONArray(listOf("--disable-gpu"))))
             .put("Filmix", JSONObject().put("token", "preserve-token").put("priority", 8))
             .put("custom", JSONObject().put("keep", true))
 
