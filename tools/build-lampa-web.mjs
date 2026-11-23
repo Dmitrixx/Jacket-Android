@@ -83,7 +83,7 @@ const embeddedAndroidShellCompatibility = {
       // Verify the handoff against the transformed upstream source before Rollup
       // renames imported module bindings in the generated bundle.
       torrentExternalHandoffPatched =
-        code.includes("Torserver.toPlayUrl(torrentData.url)") &&
+        code.includes("torrentData.url = Torserver.toPlayUrl(data.url)") &&
         code.includes("AndroidJS.openExternalPlayer(torrentData.url, JSON.stringify(torrentData))");
 
       // Keep the normal Lampa HTML5 player as fallback for non-torrent playback.
