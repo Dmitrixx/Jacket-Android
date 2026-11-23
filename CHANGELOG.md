@@ -1,5 +1,12 @@
 # Changelog
 
+## 3.0.2 — PRoot systemd post-install repair
+
+- Provision a persistent machine-id inside the private Debian rootfs before package configuration.
+- Temporarily intercept the systemd machine-id setup helper during dpkg transactions because systemd is not PID 1 in Android PRoot.
+- Keep the workaround scoped to package transactions and remove it automatically after success or failure.
+- Recover interrupted dpkg configuration without replacing the Debian container or Lampac data.
+
 ## 3.0.1 — PRoot package installation repair
 
 - Run Debian package maintainer scripts against the offline PRoot root instead of Android's init environment.

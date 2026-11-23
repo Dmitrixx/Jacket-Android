@@ -18,6 +18,7 @@ import java.net.URL
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
 import java.security.MessageDigest
+import java.security.SecureRandom
 import java.util.Enumeration
 import java.util.zip.ZipEntry
 import java.util.zip.ZipFile
@@ -465,39 +466,119 @@ internal fun isCompleteLampacRuntime(root: File, expectedVersion: String): Boole
 
 /**
  * Debian Forky runs under PRoot, not as the Android host's init system.
- * Tell Debian maintainer scripts to operate on the offline container root:
- * systemd then uses --root=/ for unit/machine-id setup instead of querying
- * Android's kernel or trying to contact a system manager that is not running.
+ * Keep service/package helpers in offline mode and direct unit operations to
+ * the private rootfs. The machine-id postinst workaround is scoped separately
+ * to the dpkg recovery pass below.
  */
 private const val LAMPAC_OFFLINE_DPKG_ENV =
     "export DEBIAN_FRONTEND=noninteractive DPKG_ROOT=/ SYSTEMD_OFFLINE=1 && "
 
+/**
+ * Temporarily bypass only the machine-id helper in Debian's systemd postinst.
+ *
+ * systemd is not PID 1 in Android PRoot. Its machine-id helper returns EUNATCH
+ * ("Protocol driver not attached") even when /etc/machine-id is valid. A
+ * persistent ID is provisioned in the app-private rootfs, so this one setup
+ * step is not needed. The package script is restored immediately after dpkg
+ * recovery, including when the command fails.
+ */
+internal fun buildLampacOfflineDpkgCommand(command: String): String {
+    require(command.isNotBlank() && '\u0000' !in command) {
+        "Команда Debian пуста или содержит нулевой байт"
+    }
+    return LAMPAC_OFFLINE_DPKG_ENV +
+        "set -e; " +
+        "postinst=/var/lib/dpkg/info/systemd.postinst; " +
+        "backup=/tmp/lampa-systemd.postinst.original; " +
+        "restore_systemd_postinst() { if [ -f \"\$backup\" ]; then cp -p \"\$backup\" \"\$postinst\"; rm -f \"\$backup\"; fi; }; " +
+        "if [ -f \"\$backup\" ] && [ -f \"\$postinst\" ]; then cp -p \"\$backup\" \"\$postinst\"; rm -f \"\$backup\"; fi; " +
+        "if [ -f \"\$postinst\" ] && grep -q 'systemd-machine-id-setup' \"\$postinst\"; then " +
+        "cp -p \"\$postinst\" \"\$backup\"; sed -i 's/systemd-machine-id-setup/true/g' \"\$postinst\"; fi; " +
+        "trap 'restore_systemd_postinst' EXIT; " +
+        "dpkg --root=/ --configure -a; " +
+        "restore_systemd_postinst; " +
+        command
+}
+
+/** Ensure the private Debian rootfs has a persistent, standard 32-hex machine-id. */
+internal fun ensureLampacDebianMachineId(rootfs: File) {
+    require(rootfs.isDirectory) { "Debian rootfs недоступен" }
+    val root = rootfs.canonicalFile
+    val etc = File(root, "etc")
+    if (!etc.exists() && !etc.mkdirs()) throw IOException("Не удалось создать /etc в Debian")
+    require(etc.canonicalFile == etc) { "Каталог /etc в Debian указывает за пределы rootfs" }
+
+    val machineIdFile = File(etc, "machine-id")
+    val dbusDirectory = File(root, "var/lib/dbus")
+    val dbusMachineId = File(dbusDirectory, "machine-id")
+
+    fun readRootRelativeFile(file: File): String? = runCatching {
+        val path = file.toPath()
+        val resolved = if (Files.isSymbolicLink(path)) {
+            val linkTarget = Files.readSymbolicLink(path)
+            if (linkTarget.isAbsolute) {
+                File(root, linkTarget.toString().trimStart(File.separatorChar))
+            } else {
+                File(file.parentFile, linkTarget.toString())
+            }
+        } else {
+            file
+        }.canonicalFile
+        resolved.takeIf { it.toPath().startsWith(root.toPath()) && it.isFile }
+            ?.readText(Charsets.UTF_8)?.trim()
+    }.getOrNull()
+
+    val validId = listOf(machineIdFile, dbusMachineId)
+        .asSequence()
+        .mapNotNull(::readRootRelativeFile)
+        .firstOrNull { it.matches(Regex("(?i)^[0-9a-f]{32}$")) }
+
+    val machineId = validId ?: ByteArray(16).also { SecureRandom().nextBytes(it) }
+        .joinToString("") { "%02x".format(it.toInt() and 0xff) }
+
+    if (Files.isSymbolicLink(machineIdFile.toPath())) Files.deleteIfExists(machineIdFile.toPath())
+    if (validId == null || readRootRelativeFile(machineIdFile) != machineId) {
+        machineIdFile.writeText("$machineId\n", Charsets.UTF_8)
+    }
+
+    if (!dbusDirectory.exists() && !dbusDirectory.mkdirs()) {
+        throw IOException("Не удалось создать /var/lib/dbus в Debian")
+    }
+    val dbusPath = dbusMachineId.toPath()
+    val correctDbusLink = Files.isSymbolicLink(dbusPath) &&
+        Files.readSymbolicLink(dbusPath).toString() == "/etc/machine-id"
+    if (!correctDbusLink) {
+        Files.deleteIfExists(dbusPath)
+        Files.createSymbolicLink(dbusPath, java.nio.file.Paths.get("/etc/machine-id"))
+    }
+}
+
 internal fun buildLampacSystemPackagesInstallCommand(): String =
-    LAMPAC_OFFLINE_DPKG_ENV +
-        "dpkg --root=/ --configure -a && " +
+    buildLampacOfflineDpkgCommand(
         "apt-get update && " +
-        "apt-get install -y --no-install-recommends ca-certificates curl fontconfig libicu78 libssl-dev zlib1g tar nodejs " +
-        "ffmpeg imagemagick xvfb libjpeg-dev libpng-dev libwebp-dev libnspr4 " +
-        "gstreamer1.0-libav gstreamer1.0-plugins-bad gstreamer1.0-plugins-base gstreamer1.0-plugins-base-apps " +
-        "gstreamer1.0-plugins-good gstreamer1.0-plugins-ugly gstreamer1.0-tools " +
-        "libgstreamer-plugins-base1.0-0 libgstreamer1.0-0 && " +
-        "curl -fSL --retry 3 https://dl.google.com/linux/direct/google-chrome-stable_current_arm64.deb -o /tmp/google-chrome-stable.deb && " +
-        "test \"$(dpkg-deb -f /tmp/google-chrome-stable.deb Architecture)\" = arm64 && " +
-        "apt-get install -y --no-install-recommends /tmp/google-chrome-stable.deb && " +
-        "ln -sf /usr/bin/google-chrome-stable /usr/bin/chromium && " +
-        "rm -f /tmp/google-chrome-stable.deb && " +
-        "test -x /usr/bin/node && node --version && " +
-        "test -x /usr/bin/chromium && chromium --version && ffmpeg -version && gst-inspect-1.0 --version && " +
-        "apt-get clean && rm -rf /var/lib/apt/lists/*"
+            "apt-get install -y --no-install-recommends ca-certificates curl fontconfig libicu78 libssl-dev zlib1g tar nodejs " +
+            "ffmpeg imagemagick xvfb libjpeg-dev libpng-dev libwebp-dev libnspr4 " +
+            "gstreamer1.0-libav gstreamer1.0-plugins-bad gstreamer1.0-plugins-base gstreamer1.0-plugins-base-apps " +
+            "gstreamer1.0-plugins-good gstreamer1.0-plugins-ugly gstreamer1.0-tools " +
+            "libgstreamer-plugins-base1.0-0 libgstreamer1.0-0 && " +
+            "curl -fSL --retry 3 https://dl.google.com/linux/direct/google-chrome-stable_current_arm64.deb -o /tmp/google-chrome-stable.deb && " +
+            "test \"$(dpkg-deb -f /tmp/google-chrome-stable.deb Architecture)\" = arm64 && " +
+            "apt-get install -y --no-install-recommends /tmp/google-chrome-stable.deb && " +
+            "ln -sf /usr/bin/google-chrome-stable /usr/bin/chromium && " +
+            "rm -f /tmp/google-chrome-stable.deb && " +
+            "test -x /usr/bin/node && node --version && " +
+            "test -x /usr/bin/chromium && chromium --version && ffmpeg -version && gst-inspect-1.0 --version && " +
+            "apt-get clean && rm -rf /var/lib/apt/lists/*"
+    )
 
 /** A lightweight repair for older installs: it adds only ARM64 Node.js. */
 internal fun buildLampacNodeInstallCommand(): String =
-    LAMPAC_OFFLINE_DPKG_ENV +
-        "dpkg --root=/ --configure -a && " +
+    buildLampacOfflineDpkgCommand(
         "apt-get update && " +
-        "apt-get install -y --no-install-recommends nodejs && " +
-        "test -x /usr/bin/node && node --version && " +
-        "apt-get clean && rm -rf /var/lib/apt/lists/*"
+            "apt-get install -y --no-install-recommends nodejs && " +
+            "test -x /usr/bin/node && node --version && " +
+            "apt-get clean && rm -rf /var/lib/apt/lists/*"
+    )
 
 /**
  * Playwright's JS package is architecture-independent. The runtime uses
@@ -619,6 +700,7 @@ class LampacRuntimeInstaller(context: android.content.Context) {
             isLampacRuntimePayloadReady(prepared.debianRootfsDir, LampacRuntimeArtifacts.LAMPAC_VERSION) &&
             !isLampacNodeReady(prepared.debianRootfsDir)
         ) {
+            ensureLampacDebianMachineId(prepared.debianRootfsDir)
             send("nodejs-migration", "Добавляем ARM64 Node.js для Playwright без повторной загрузки Lampac…", 0, 0)
             val nodeInstall = commandRunner.runAsRoot(buildLampacNodeInstallCommand()) { line ->
                 send("nodejs-migration", line.take(220), 0, 0)
@@ -659,6 +741,7 @@ class LampacRuntimeInstaller(context: android.content.Context) {
             }
         }
 
+        ensureLampacDebianMachineId(prepared.debianRootfsDir)
         send("packages", "Подготавливаем системные библиотеки Debian…", 0, 0)
         val apt = commandRunner.runAsRoot(buildLampacSystemPackagesInstallCommand()) { line ->
             send("packages", line.take(220), 0, 0)

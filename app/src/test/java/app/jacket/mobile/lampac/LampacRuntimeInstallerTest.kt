@@ -8,6 +8,7 @@ import java.io.File
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.IOException
+import java.nio.file.Files
 
 class LampacRuntimeInstallerTest {
     @Test
@@ -307,7 +308,12 @@ class LampacRuntimeInstallerTest {
 
         listOf(packageCommand, nodeRepairCommand).forEach { command ->
             assertTrue(command.startsWith(offlineEnvironment))
-            assertTrue(command.contains("dpkg --root=/ --configure -a && apt-get update &&"))
+            assertEquals(1, command.split("dpkg --root=/ --configure -a").size - 1)
+            assertTrue(command.contains("dpkg --root=/ --configure -a;"))
+            assertTrue(command.contains("sed -i 's/systemd-machine-id-setup/true/g'"))
+            assertTrue(command.contains("backup=/tmp/lampa-systemd.postinst.original"))
+            assertTrue(command.contains("trap 'restore_systemd_postinst' EXIT"))
+            assertTrue(command.contains("restore_systemd_postinst;"))
         }
 
         assertTrue(packageCommand.contains("apt-get install -y --no-install-recommends ca-certificates"))
@@ -320,6 +326,46 @@ class LampacRuntimeInstallerTest {
         assertTrue(nodeRepairCommand.contains("apt-get clean"))
     }
 
+    @Test
+    fun provisionsPersistentDebianMachineIdWithoutOverwritingValidId() {
+        val root = java.nio.file.Files.createTempDirectory("lampa-machine-id").toFile()
+        try {
+            val etc = File(root, "etc")
+            assertTrue(etc.mkdirs())
+            val machineIdFile = File(etc, "machine-id")
+
+            ensureLampacDebianMachineId(root)
+            val generated = machineIdFile.readText().trim()
+            assertTrue(generated.matches(Regex("(?i)^[0-9a-f]{32}$")))
+
+            ensureLampacDebianMachineId(root)
+            assertEquals(generated, machineIdFile.readText().trim())
+            assertTrue(Files.isSymbolicLink(File(root, "var/lib/dbus/machine-id").toPath()))
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun replacesInvalidDebianMachineIdAndResolvesRootRelativeSymlinks() {
+        val root = java.nio.file.Files.createTempDirectory("lampa-machine-id-link").toFile()
+        try {
+            val etc = File(root, "etc")
+            val dbus = File(root, "var/lib/dbus")
+            assertTrue(etc.mkdirs())
+            assertTrue(dbus.mkdirs())
+            File(dbus, "machine-id").writeText("invalid")
+            Files.createSymbolicLink(File(etc, "machine-id").toPath(), java.nio.file.Paths.get("/var/lib/dbus/machine-id"))
+
+            ensureLampacDebianMachineId(root)
+            assertFalse(Files.isSymbolicLink(File(etc, "machine-id").toPath()))
+            assertTrue(File(etc, "machine-id").readText().trim().matches(Regex("(?i)^[0-9a-f]{32}$")))
+            assertTrue(Files.isSymbolicLink(File(dbus, "machine-id").toPath()))
+            assertEquals("/etc/machine-id", Files.readSymbolicLink(File(dbus, "machine-id").toPath()).toString())
+        } finally {
+            root.deleteRecursively()
+        }
+    }
     @Test
     fun arm64RuntimeUsesDebianNodeForThePortablePlaywrightDriver() {
         val command = buildLampacServerCommand()
