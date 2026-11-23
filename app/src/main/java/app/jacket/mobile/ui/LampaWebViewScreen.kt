@@ -289,7 +289,7 @@ private class LampaAndroidBridge(
     @JavascriptInterface
     fun openExternalPlayer(rawUrl: String?, rawData: String?): Boolean {
         val uri = rawUrl?.let(::safeVideoUri)?.let { parsed ->
-            routeExternalMediaUrl(parsed.toString(), ExternalMediaProxy.port)?.let(Uri::parse)
+            routeExternalMediaUrl(parsed.toString(), ExternalMediaProxy.port)?.let { Uri.parse(it) }
         } ?: return false
         val payload = runCatching {
             JSONObject(rawData.orEmpty().ifBlank { "{}" })
@@ -333,7 +333,7 @@ private class LampaAndroidBridge(
                     val item = playlist.optJSONObject(index) ?: continue
                     val itemUri = safeVideoUri(item.optString("url"))
                         ?.let { parsed ->
-                            routeExternalMediaUrl(parsed.toString(), ExternalMediaProxy.port)?.let(Uri::parse)
+                            routeExternalMediaUrl(parsed.toString(), ExternalMediaProxy.port)?.let { Uri.parse(it) }
                         }
                         ?: continue
                     urls += itemUri.toString()
