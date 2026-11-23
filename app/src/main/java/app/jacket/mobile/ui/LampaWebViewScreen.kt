@@ -21,7 +21,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.viewinterop.AndroidView
-import app.jacket.mobile.data.LocalNetwork
 import app.jacket.mobile.torrent.TorrentDownloadService
 import org.json.JSONObject
 import java.io.ByteArrayInputStream
@@ -33,8 +32,7 @@ private const val LAMPA_ASSET_PREFIX = "/app/"
 @Composable
 fun LampaWebViewScreen(
     modifier: Modifier = Modifier,
-    onBack: () -> Unit,
-    onPlay: (title: String, url: String, headers: Map<String, String>) -> Unit
+    onBack: () -> Unit
 ) {
     val context = LocalContext.current
     val webView = remember(context) {
@@ -48,6 +46,8 @@ fun LampaWebViewScreen(
             settings.mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
             settings.setSupportMultipleWindows(false)
             settings.javaScriptCanOpenWindowsAutomatically = false
+            // Do not add Lampa's "lampa_client" marker: it selects the native
+            // Android player path. Without it Lampa uses its own WebView player.
             settings.userAgentString = settings.userAgentString + " Jacket-Lampa/1"
             isVerticalScrollBarEnabled = false
             isHorizontalScrollBarEnabled = false
@@ -56,7 +56,7 @@ fun LampaWebViewScreen(
             scrollBarStyle = View.SCROLLBARS_INSIDE_OVERLAY
 
             addJavascriptInterface(
-                LampaAndroidBridge(context.applicationContext, onPlay, onBack),
+                LampaAndroidBridge(context.applicationContext, onBack),
                 "AndroidJS"
             )
 
@@ -185,27 +185,12 @@ private fun errorResponse(status: Int, reason: String) = WebResourceResponse(
 
 private class LampaAndroidBridge(
     private val context: Context,
-    private val onPlay: (String, String, Map<String, String>) -> Unit,
     private val onBack: () -> Unit
 ) {
     private val mainHandler = Handler(Looper.getMainLooper())
 
     @JavascriptInterface
     fun appVersion(): String = "Jacket-2.8.10-15"
-
-    @JavascriptInterface
-    fun openPlayer(rawUrl: String?, rawData: String?) {
-        val url = safeMediaUrl(rawUrl) ?: return notify("Ссылка Lampa не поддерживается")
-        val data = runCatching { JSONObject(rawData.orEmpty()) }.getOrDefault(JSONObject())
-        val card = data.optJSONObject("card") ?: data.optJSONObject("movie") ?: data
-        val title = card.optString("title")
-            .ifBlank { card.optString("name") }
-            .ifBlank { data.optString("title") }
-            .ifBlank { "Видео из Lampa" }
-            .take(180)
-        val headers = safeHeaders(data.optJSONObject("headers"))
-        mainHandler.post { onPlay(title, url, headers) }
-    }
 
     @JavascriptInterface
     fun openTorrentLink(rawLink: String?, rawExtra: String?) {
@@ -240,29 +225,6 @@ private class LampaAndroidBridge(
     }
 }
 
-private fun safeMediaUrl(raw: String?): String? {
-    val value = raw?.trim().orEmpty()
-    if (value.isBlank()) return null
-    val resolved = if (value.startsWith("/")) "$LAMPA_LOCAL_ORIGIN$value" else value
-    return resolved.takeIf(LocalNetwork::isAllowedUrl)
-}
-
-private fun safeHeaders(source: JSONObject?): Map<String, String> {
-    if (source == null) return emptyMap()
-    val result = LinkedHashMap<String, String>()
-    source.keys().forEach { key ->
-        val name = when {
-            key.equals("Referer", true) -> "Referer"
-            key.equals("User-Agent", true) -> "User-Agent"
-            else -> return@forEach
-        }
-        val value = source.optString(key).trim()
-        if (value.isNotBlank() && value.length <= 1_000 &&
-            value.none { it == '\r' || it == '\n' }
-        ) result[name] = value
-    }
-    return result
-}
 
 private fun handleTorrent(context: Context, link: String, title: String) {
     if (link.startsWith("magnet:", true)) {

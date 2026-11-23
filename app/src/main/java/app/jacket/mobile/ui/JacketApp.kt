@@ -195,18 +195,6 @@ fun JacketApp(viewModel: MainViewModel) {
         isTorrentPlayback = false
     }
 
-    fun openLampaPlayer(title: String, url: String, headers: Map<String, String>) {
-        playerTitle = title
-        playerUrl = url
-        playerProgressKey = PlaybackProgressStore.urlKey(url)
-        playerInitialPosition = PlaybackProgressStore(context).position(playerProgressKey!!)
-        playerSubtitles = emptyList()
-        playerHeaders = headers.filterKeys {
-            it.equals("Referer", true) || it.equals("User-Agent", true)
-        }
-        isTorrentPlayback = false
-    }
-
     // Android TV remotes dispatch Back through the system dispatcher; unwind the current screen first.
     BackHandler(
         enabled = playerUrl != null || showSettings || showDownloads ||
@@ -409,7 +397,6 @@ fun JacketApp(viewModel: MainViewModel) {
                     onShowMovies = { selectedTab = TAB_MOVIES },
                     onDownloads = { showDownloads = true },
                     onLampaBack = { selectedTab = TAB_HOME },
-                    onLampaPlay = ::openLampaPlayer
                 )
             }
         } else {
@@ -420,7 +407,6 @@ fun JacketApp(viewModel: MainViewModel) {
                 onShowMovies = { selectedTab = TAB_MOVIES },
                 onDownloads = { showDownloads = true },
                 onLampaBack = { selectedTab = TAB_HOME },
-                onLampaPlay = ::openLampaPlayer
             )
         }
         }
@@ -481,8 +467,7 @@ private fun MainTabContent(
     modifier: Modifier,
     onShowMovies: () -> Unit,
     onDownloads: () -> Unit,
-    onLampaBack: () -> Unit,
-    onLampaPlay: (title: String, url: String, headers: Map<String, String>) -> Unit
+    onLampaBack: () -> Unit
 ) {
     val loading by viewModel.isLoading.collectAsState()
     val tabStateHolder = rememberSaveableStateHolder()
@@ -517,8 +502,7 @@ private fun MainTabContent(
             )
             TAB_LAMPA -> LampaWebViewScreen(
                 modifier = modifier,
-                onBack = onLampaBack,
-                onPlay = onLampaPlay
+                onBack = onLampaBack
             )
             else -> LibraryScreen(
                 viewModel = viewModel,

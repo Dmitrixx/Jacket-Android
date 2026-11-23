@@ -36,11 +36,16 @@ Jacket's modification script retries the Lampac plugin while the local server
 is stopped and loads it once `/online.js` becomes available. Starting Lampac
 does not require reinstalling the APK.
 
-The limited `AndroidJS` bridge maps Lampa playback requests to Jacket's
-Media3/ExoPlayer screen and direct magnet / `.torrent` links to Jacket's
-integrated torrent queue. It also handles exit and YouTube handoff. Only HTTPS
-media URLs and loopback HTTP URLs are accepted for playback; torrent links are
-restricted to valid magnets or HTTPS / loopback `.torrent` files.
+Playback stays inside Lampa: the WebView deliberately does not identify itself
+with Lampa's `lampa_client` marker, so Lampa selects its own HTML5/WebView
+player rather than handing streams to Jacket's Media3/ExoPlayer screen. The
+Jacket player remains available for Jacket's own catalog and torrent flows,
+but Lampa playback is not routed through it.
+
+The limited `AndroidJS` bridge handles direct magnet / `.torrent` links,
+exit and YouTube handoff only. Torrent links are restricted to valid magnets
+or HTTPS / loopback `.torrent` files. The bridge does not expose an
+`openPlayer` method.
 
 Lampa's remote account synchronization, plugin store and socket service are
 disabled in this initial embedded profile. The local Lampac plugin remains
@@ -54,8 +59,8 @@ This is an experimental first integration, not yet an accepted release:
 
 - CI must verify Node dependency installation, Lampa bundling, Android lint,
   unit tests and APK assembly.
-- Playback handoff, torrent handoff and provider discovery need physical tests
-  on the Android 12 phone.
+- Lampa's built-in WebView player, torrent handoff and provider discovery need
+  physical tests on the Android 12 phone.
 - Android TV remote navigation, WebView memory use, resume after process death,
   and mixed long-running video sessions also need device acceptance tests.
 - Lampa's catalog and images still use the upstream public metadata services;
