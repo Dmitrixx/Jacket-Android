@@ -44,7 +44,7 @@ const embeddedAndroidShellCompatibility = {
     if (sourceId === playerSourcePath) {
       // Keep the normal Lampa HTML5 player as fallback, but hand media streams
       // to Android's external-player resolver when this is our installed APK.
-      const upstreamFallback = "    }\\n    else launchInner()\\n\\n    if(data.launch_player) delete data.launch_player";
+      const upstreamFallback = "    }\n    else launchInner()\n\n    if(data.launch_player) delete data.launch_player";
       const externalFallback = `    }
     else if (
         navigator.userAgent.toLowerCase().indexOf('lampa-android') >= 0 &&
