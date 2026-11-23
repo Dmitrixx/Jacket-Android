@@ -485,17 +485,30 @@ private const val LAMPAC_DPKG_SHIM_DIR = "/tmp/lampa-proot-dpkg-bin"
  * rootfs machine-id itself and makes only this one maintainer-script call a
  * no-op for the duration of the package transaction.
  */
+/**
+ * Temporarily bypass only the machine-id helper in Debian's systemd postinst.
+ *
+ * systemd is not PID 1 in Android PRoot. Its machine-id helper returns EUNATCH
+ * ("Protocol driver not attached") even when /etc/machine-id is valid. A
+ * persistent ID is provisioned in the app-private rootfs, so this one setup
+ * step is not needed. The package script is restored immediately after dpkg
+ * recovery, including when the command fails.
+ */
 internal fun buildLampacOfflineDpkgCommand(command: String): String {
     require(command.isNotBlank() && '\u0000' !in command) {
         "Команда Debian пуста или содержит нулевой байт"
     }
     return LAMPAC_OFFLINE_DPKG_ENV +
         "set -e; " +
-        "mkdir -p $LAMPAC_DPKG_SHIM_DIR; " +
-        "printf '#!/bin/sh\\nexit 0\\n' > $LAMPAC_DPKG_SHIM_DIR/systemd-machine-id-setup; " +
-        "chmod 755 $LAMPAC_DPKG_SHIM_DIR/systemd-machine-id-setup; " +
-        "export PATH=$LAMPAC_DPKG_SHIM_DIR:\$PATH; " +
-        "trap 'rm -f $LAMPAC_DPKG_SHIM_DIR/systemd-machine-id-setup; rmdir $LAMPAC_DPKG_SHIM_DIR 2>/dev/null || true' EXIT; " +
+        "postinst=/var/lib/dpkg/info/systemd.postinst; " +
+        "backup=/tmp/lampa-systemd.postinst.original; " +
+        "restore_systemd_postinst() { if [ -f \"$backup\" ]; then cp -p \"$backup\" \"$postinst\"; rm -f \"$backup\"; fi; }; " +
+        "if [ -f \"$backup\" ] && [ -f \"$postinst\" ]; then cp -p \"$backup\" \"$postinst\"; rm -f \"$backup\"; fi; " +
+        "if [ -f \"$postinst\" ] && grep -q 'systemd-machine-id-setup' \"$postinst\"; then " +
+        "cp -p \"$postinst\" \"$backup\"; sed -i 's/systemd-machine-id-setup/true/g' \"$postinst\"; fi; " +
+        "trap 'restore_systemd_postinst' EXIT; " +
+        "dpkg --root=/ --configure -a; " +
+        "restore_systemd_postinst; " +
         command
 }
 
@@ -508,37 +521,47 @@ internal fun ensureLampacDebianMachineId(rootfs: File) {
     require(etc.canonicalFile == etc) { "Каталог /etc в Debian указывает за пределы rootfs" }
 
     val machineIdFile = File(etc, "machine-id")
-    val machineIdPath = machineIdFile.toPath()
-    val existingContent = runCatching {
-        val contentFile = if (Files.isSymbolicLink(machineIdPath)) {
-            val linkTarget = Files.readSymbolicLink(machineIdPath)
-            val resolved = if (linkTarget.isAbsolute) {
+    val dbusDirectory = File(root, "var/lib/dbus")
+    val dbusMachineId = File(dbusDirectory, "machine-id")
+
+    fun readRootRelativeFile(file: File): String? = runCatching {
+        val path = file.toPath()
+        val resolved = if (Files.isSymbolicLink(path)) {
+            val linkTarget = Files.readSymbolicLink(path)
+            if (linkTarget.isAbsolute) {
                 File(root, linkTarget.toString().trimStart(File.separatorChar))
             } else {
-                File(etc, linkTarget.toString())
+                File(file.parentFile, linkTarget.toString())
             }
-            val canonical = resolved.canonicalFile
-            canonical.takeIf { it.toPath().startsWith(root.toPath()) }
         } else {
-            machineIdFile
-        }
-        contentFile?.takeIf { it.isFile }?.readText(Charsets.UTF_8)?.trim()
+            file
+        }.canonicalFile
+        resolved.takeIf { it.toPath().startsWith(root.toPath()) && it.isFile }
+            ?.readText(Charsets.UTF_8)?.trim()
     }.getOrNull()
 
-    if (existingContent?.matches(Regex("(?i)^[0-9a-f]{32}$")) == true) return
+    val validId = listOf(machineIdFile, dbusMachineId)
+        .asSequence()
+        .mapNotNull(::readRootRelativeFile)
+        .firstOrNull { it.matches(Regex("(?i)^[0-9a-f]{32}$")) }
 
-    if (Files.isSymbolicLink(machineIdPath)) Files.deleteIfExists(machineIdPath)
-    val idBytes = ByteArray(16).also { SecureRandom().nextBytes(it) }
-    val machineId = idBytes.joinToString("") { "%02x".format(it.toInt() and 0xff) }
-    machineIdFile.writeText("$machineId\\n", Charsets.UTF_8)
+    val machineId = validId ?: ByteArray(16).also { SecureRandom().nextBytes(it) }
+        .joinToString("") { "%02x".format(it.toInt() and 0xff) }
 
-    val dbusDirectory = File(root, "var/lib/dbus")
+    if (Files.isSymbolicLink(machineIdFile.toPath())) Files.deleteIfExists(machineIdFile.toPath())
+    if (validId == null || readRootRelativeFile(machineIdFile) != machineId) {
+        machineIdFile.writeText("$machineId\\n", Charsets.UTF_8)
+    }
+
     if (!dbusDirectory.exists() && !dbusDirectory.mkdirs()) {
         throw IOException("Не удалось создать /var/lib/dbus в Debian")
     }
-    val dbusMachineId = File(dbusDirectory, "machine-id")
-    if (!dbusMachineId.exists() && !Files.isSymbolicLink(dbusMachineId.toPath())) {
-        Files.createSymbolicLink(dbusMachineId.toPath(), java.nio.file.Paths.get("/etc/machine-id"))
+    val dbusPath = dbusMachineId.toPath()
+    val correctDbusLink = Files.isSymbolicLink(dbusPath) &&
+        Files.readSymbolicLink(dbusPath).toString() == "/etc/machine-id"
+    if (!correctDbusLink) {
+        Files.deleteIfExists(dbusPath)
+        Files.createSymbolicLink(dbusPath, java.nio.file.Paths.get("/etc/machine-id"))
     }
 }
 
