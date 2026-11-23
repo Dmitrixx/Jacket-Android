@@ -499,6 +499,7 @@ internal fun buildLampacOfflineDpkgCommand(command: String): String {
         "hash -r 2>/dev/null || true; " +
         "restore_systemd_machine_id_setup() { rm -f \"\$shim\"; if [ -e \"\$backup\" ] || [ -L \"\$backup\" ]; then mv \"\$backup\" \"\$shim\"; fi; }; " +
         "trap 'restore_systemd_machine_id_setup' EXIT; " +
+        "dpkg --root=/ --configure -a && " +
         command
 }
 
