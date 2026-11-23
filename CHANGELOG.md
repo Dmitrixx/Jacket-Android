@@ -1,5 +1,12 @@
 # Changelog
 
+## 3.0.8 — Full Debian install log access
+- Keep the final 160 installer log entries so the complete apt/dpkg tail is retained.
+- Make the log panel vertically scrollable instead of showing only the last eight rows.
+- Add a one-tap copy action for the full sanitized installer log so support can identify the failing Debian package.
+- Keep the copy output sanitized by the existing Lampac log sanitizer.
+
+
 ## 3.0.7 — POSIX-safe Debian installer diagnostics
 
 - Capture dpkg and apt output with POSIX shell redirection instead of Bash-only pipeline status variables.
