@@ -24,6 +24,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -87,6 +88,7 @@ class LampacRuntimeService : Service() {
                 when (action) {
                     ACTION_INSTALL_AND_START -> installAndStart()
                     ACTION_START -> startInstalledServer()
+                    ACTION_RESTART -> restartInstalledServer()
                     else -> {
                         LampacRuntimeState.update(LampacRuntimePhase.ERROR, "Неизвестная команда Lampac")
                         finishService()
@@ -287,6 +289,28 @@ class LampacRuntimeService : Service() {
         }
     }
 
+    private suspend fun restartInstalledServer() {
+        if (!LampacRuntimeInstaller(applicationContext).isInstalled()) {
+            LampacRuntimeState.update(
+                LampacRuntimePhase.ERROR,
+                "Встроенный Lampac не установлен. Сначала выберите «Установить полный Lampac»."
+            )
+            finishService()
+            return
+        }
+
+        LampacRuntimeState.update(LampacRuntimePhase.STOPPING, "Применяем настройки модулей и перезапускаем Lampac…")
+        updateNotification("Перезапуск Lampac…")
+        isStopping.set(true)
+        ExternalMediaProxy.stop()
+        stopSession()
+        monitorJob?.cancelAndJoin()
+        monitorJob = null
+        serverSession = null
+        isStopping.set(false)
+        startInstalledServer()
+    }
+
     private fun stopServer() {
         if (!isStopping.compareAndSet(false, true)) return
         ExternalMediaProxy.stop()
@@ -411,6 +435,7 @@ class LampacRuntimeService : Service() {
 
         const val ACTION_INSTALL_AND_START = "app.jacket.mobile.lampac.INSTALL_AND_START"
         const val ACTION_START = "app.jacket.mobile.lampac.START"
+        const val ACTION_RESTART = "app.jacket.mobile.lampac.RESTART"
         const val ACTION_STOP = "app.jacket.mobile.lampac.STOP"
 
         fun installAndStart(context: Context) =
@@ -418,6 +443,9 @@ class LampacRuntimeService : Service() {
 
         fun start(context: Context) =
             startForeground(context, ACTION_START)
+
+        fun restart(context: Context) =
+            startForeground(context, ACTION_RESTART)
 
         fun stop(context: Context) {
             val intent = Intent(context, LampacRuntimeService::class.java).setAction(ACTION_STOP)
