@@ -1,5 +1,4 @@
-# libtorrent4j uses JNI-generated SWIG classes and native method bindings.
--keep class org.libtorrent4j.swig.libtorrent_jni { *; }
+# Preserve native method bindings used by PRoot JNI.
 -keepclasseswithmembernames class * { native <methods>; }
 
 # Preserve Kotlin metadata used by reflection in AndroidX/Compose.

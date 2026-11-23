@@ -17,7 +17,7 @@ The Android application ID remains app.jacket.mobile so the new build updates th
 
 The installer retrieves the full official Lampac release archive and does not exclude or delete upstream module directories. The archive is checked for size, SHA-256, traversal paths, excessive expansion and incomplete ZIP entries before activation.
 
-The ARM64 Debian environment installs ASP.NET Core Runtime 10, Google Chrome/Chromium, FFmpeg/FFprobe, GStreamer plugins and tools, ImageMagick, Xvfb, fonts and the native libraries used by the upstream deployment.
+The ARM64 Debian environment installs ASP.NET Core Runtime 10, Debian Chromium, FFmpeg/FFprobe, GStreamer plugins and tools, ImageMagick, Xvfb, fonts and the native libraries used by the upstream deployment.
 
 A fresh init.conf loads every module with an empty SkipModules array. Existing configs retain provider credentials and custom sections; previous app-added module exclusions are cleared. Explicit choices such as chromium.enable=false remain intact. The local HTTP listener is kept on loopback.
 
