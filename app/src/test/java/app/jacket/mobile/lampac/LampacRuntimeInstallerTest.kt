@@ -39,8 +39,12 @@ class LampacRuntimeInstallerTest {
 
             val playwrightIndex = File(oldInstall, ".playwright/package/index.js")
             playwrightIndex.parentFile?.mkdirs()
-            playwrightIndex.writeText("// Playwright Node driver entry")
+            playwrightIndex.writeText("// Playwright package index")
 
+            assertFalse(isLampacPlaywrightPackageReady(oldInstall))
+            assertFalse(isCompleteLampacRuntime(root, "1.90.2"))
+
+            File(oldInstall, ".playwright/package/cli.js").writeText("// Playwright driver entry")
             assertTrue(isLampacPlaywrightPackageReady(oldInstall))
             assertTrue(isCompleteLampacRuntime(root, "1.90.2"))
             assertFalse(isCompleteLampacRuntime(root, "1.90.3"))
@@ -64,6 +68,10 @@ class LampacRuntimeInstallerTest {
         assertTrue(
             lampacArchiveRelativePath("lampac/.playwright/package/index.js", "lampac/") ==
                 listOf(".playwright", "package", "index.js").joinToString(File.separator)
+        )
+        assertTrue(
+            lampacArchiveRelativePath("lampac/.playwright/package/cli.js", "lampac/") ==
+                listOf(".playwright", "package", "cli.js").joinToString(File.separator)
         )
         assertTrue(lampacArchiveRelativePath("Core.dll", "") == "Core.dll")
     }
