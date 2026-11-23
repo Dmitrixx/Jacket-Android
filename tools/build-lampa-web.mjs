@@ -66,16 +66,75 @@ const appBundle = (await readFile(appBundlePath, "utf8"))
   .replace(/return kIsNodeJS/g, "return false");
 await writeFile(appBundlePath, appBundle, "utf8");
 
-// Compile every first-party Lampa plugin using the source repository's own
-// pack_plugins task. Copy plugin assets and generated scripts into the APK.
-execFileSync(
-  process.execPath,
-  [path.join(sourceRoot, "node_modules", "gulp", "bin", "gulp.js"), "pack_plugins"],
-  { cwd: sourceRoot, stdio: "inherit" }
-);
+// The upstream Gulp plugins task starts Rollup streams but calls done()
+// synchronously. Wrap those streams in a Promise in a temporary build-only
+// Gulpfile so CI waits for every full plugin bundle and CSS include to finish.
+const gulpFilePath = path.join(sourceRoot, "gulpfile.js");
+let gulpFileText = await readFile(gulpFilePath, "utf8");
+const bubbleStreamMarker = "rollup({\\n        input: plgFolder+name,";
+if (!gulpFileText.includes(bubbleStreamMarker)) {
+  throw new Error("The upstream Lampa plugin bundler changed; review its build task before proceeding");
+}
+gulpFileText = gulpFileText.replace(bubbleStreamMarker, "return rollup({\\n        input: plgFolder+name,");
+const pluginsStart = gulpFileText.indexOf("function plugins(done) {");
+const pluginsEnd = gulpFileText.indexOf("\\nfunction plugin_sass", pluginsStart);
+if (pluginsStart < 0 || pluginsEnd < 0) {
+  throw new Error("The upstream Lampa plugins task could not be located");
+}
+const awaitedPluginsTask = `function plugins() {
+    const jobs = [];
+    fs.readdirSync(plgFolder).filter(function (file) {
+        return fs.statSync(plgFolder + '/' + file).isDirectory();
+    }).forEach(folder => {
+        const entry = plgFolder + folder + '/' + folder + '.js';
+        if (fs.existsSync(entry)) {
+            const stream = bubbleFile(folder + '/' + folder + '.js');
+            jobs.push(new Promise((resolve, reject) => {
+                stream.once('error', reject);
+                stream.once('finish', resolve);
+            }));
+        }
+
+        const cssDir = plgFolder + folder + '/css';
+        if (fs.existsSync(cssDir) &&
+            fs.readdirSync(cssDir).some(file => file.endsWith('.scss'))) {
+            const stream = plugin_sass(plgFolder + folder);
+            jobs.push(new Promise((resolve, reject) => {
+                stream.once('error', reject);
+                stream.once('finish', resolve);
+            }));
+        }
+    });
+    return Promise.all(jobs);
+}`;
+gulpFileText = gulpFileText.slice(0, pluginsStart) +
+  awaitedPluginsTask + gulpFileText.slice(pluginsEnd);
+const temporaryGulpFile = path.join(sourceRoot, ".lampa-build-gulpfile.js");
+const gulpCli = path.join(sourceRoot, "node_modules", "gulp", "bin", "gulp.js");
+await writeFile(temporaryGulpFile, gulpFileText, "utf8");
+try {
+  execFileSync(
+    process.execPath,
+    [gulpCli, "--gulpfile", temporaryGulpFile, "pack_plugins"],
+    { cwd: sourceRoot, stdio: "inherit" }
+  );
+} finally {
+  await rm(temporaryGulpFile, { force: true });
+}
 const pluginSourceRoot = path.join(sourceRoot, "plugins");
 const pluginOutputRoot = path.join(outputRoot, "plugins");
 const compiledPluginRoot = path.join(sourceRoot, "dest", "plugins");
+const requiredPluginBundles = [
+  "collections/collections.js",
+  "dlna/dlna.js",
+  "iptv/iptv.js",
+  "online/online.js",
+  "radio/radio.js",
+  "tracks/tracks.js"
+];
+for (const relative of requiredPluginBundles) {
+  await readFile(path.join(compiledPluginRoot, relative));
+}
 await cp(pluginSourceRoot, pluginOutputRoot, { recursive: true, force: true });
 await cp(compiledPluginRoot, pluginOutputRoot, { recursive: true, force: true });
 
