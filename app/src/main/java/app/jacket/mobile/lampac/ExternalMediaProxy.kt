@@ -14,6 +14,7 @@ import java.net.URI
 import java.net.URL
 import java.nio.charset.StandardCharsets
 import java.util.Locale
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.ThreadFactory
 import java.util.concurrent.ThreadPoolExecutor
@@ -50,6 +51,7 @@ internal class ExternalMediaProxyServer(
         private set
 
     private val running = AtomicBoolean(false)
+    private val activeClients = ConcurrentHashMap.newKeySet<Socket>()
 
     @Synchronized
     fun start(): Boolean {
@@ -68,7 +70,7 @@ internal class ExternalMediaProxyServer(
                 8,
                 30L,
                 TimeUnit.SECONDS,
-                LinkedBlockingQueue(32),
+                LinkedBlockingQueue<Runnable>(32),
                 daemonThreadFactory("ExternalMediaProxy-Worker"),
                 ThreadPoolExecutor.CallerRunsPolicy()
             )
@@ -105,6 +107,11 @@ internal class ExternalMediaProxyServer(
         runCatching { serverSocket?.close() }
         serverSocket = null
 
+        activeClients.toList().forEach { client ->
+            runCatching { client.close() }
+        }
+        activeClients.clear()
+
         executor?.shutdownNow()
         executor = null
         acceptThread = null
@@ -123,10 +130,23 @@ internal class ExternalMediaProxyServer(
                 continue
             }
 
+            if (!running.get()) {
+                runCatching { client.close() }
+                break
+            }
+
+            activeClients.add(client)
             try {
                 client.tcpNoDelay = true
-                pool.execute { handleClient(client) }
+                pool.execute {
+                    try {
+                        handleClient(client)
+                    } finally {
+                        activeClients.remove(client)
+                    }
+                }
             } catch (_: Exception) {
+                activeClients.remove(client)
                 runCatching { client.close() }
             }
         }
