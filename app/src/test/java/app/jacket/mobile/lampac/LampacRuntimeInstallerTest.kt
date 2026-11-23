@@ -20,6 +20,33 @@ class LampacRuntimeInstallerTest {
     }
 
     @Test
+    fun clearsOnlyRegularFilesFromCompletedDebianImageLayerCache() {
+        val prefix = Files.createTempDirectory("lampa-proot-cache").toFile()
+        try {
+            val cache = File(prefix, "var/lib/pr/dlcache")
+            assertTrue(cache.mkdirs())
+
+            val layer = File(cache, "sha256_layer").apply { writeBytes(ByteArray(1024)) }
+            val partial = File(cache, "sha256_partial.partial").apply { writeBytes(ByteArray(256)) }
+            val nestedDirectory = File(cache, "unexpected-directory").apply { mkdirs() }
+            val nestedFile = File(nestedDirectory, "keep.bin").apply { writeText("keep") }
+            val outside = File(prefix, "outside.bin").apply { writeText("outside") }
+            val link = File(cache, "external-link")
+            Files.createSymbolicLink(link.toPath(), outside.toPath())
+
+            assertEquals(1280L, clearLampacProotDownloadCache(prefix))
+            assertFalse(layer.exists())
+            assertFalse(partial.exists())
+            assertTrue(nestedFile.isFile)
+            assertTrue(Files.isSymbolicLink(link.toPath()))
+            assertTrue(outside.isFile)
+            assertEquals(0L, clearLampacProotDownloadCache(prefix))
+        } finally {
+            prefix.deleteRecursively()
+        }
+    }
+
+    @Test
     fun oldTrimmedLampacInstallIsMarkedForOneTimeFullReplacement() {
         val root = java.nio.file.Files.createTempDirectory("lampa-runtime-migration").toFile()
         try {
@@ -337,6 +364,9 @@ class LampacRuntimeInstallerTest {
         }
         assertTrue(packageCommand.contains("apt-get install -y --no-install-recommends opensysusers"))
         assertTrue(packageCommand.contains("apt-get install -y --no-install-recommends ca-certificates"))
+        listOf("libssl-dev", "libjpeg-dev", "libpng-dev", "libwebp-dev").forEach { packageName ->
+            assertFalse("Build-only package should not be installed: $packageName", packageCommand.contains(packageName))
+        }
         assertTrue(packageCommand.contains("google-chrome-stable_current_arm64.deb"))
         assertTrue(packageCommand.contains("gst-inspect-1.0 --version"))
 

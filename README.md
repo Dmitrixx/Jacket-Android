@@ -9,6 +9,7 @@ A personal Android and Android TV shell for the complete upstream Lampa web appl
 - Unmodified Lampa UI and its own HTML5 player, built into private APK assets.
 - Official full Lampac release archive, checksum-verified and extracted without filtering module files.
 - App-private ARM64 Debian Forky-slim PRoot runtime with .NET 10, Google Chrome/Chromium, FFmpeg, GStreamer and the dependencies used by the upstream Lampac image.
+- Installer removes the OCI download-layer cache after Debian is installed and omits unused development-header packages; all Lampac modules and runtime dependencies are retained.
 - User-started local server on 127.0.0.1:9118.
 
 ## First start
@@ -19,6 +20,9 @@ A personal Android and Android TV shell for the complete upstream Lampa web appl
 4. Keep the foreground service notification active while the server installs and starts.
 
 The server data, providers and init.conf are stored in the app-private directory and survive APK upgrades.
+
+The embedded WebView identifies itself with a private `Lampa-Android` marker. The build suppresses the upstream Android-APK recommendation only inside this installed wrapper; browser and Media Station X users continue to see the original recommendation.
+
 
 ## Updating
 
