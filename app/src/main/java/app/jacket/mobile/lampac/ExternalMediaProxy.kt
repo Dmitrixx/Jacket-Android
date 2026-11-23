@@ -169,7 +169,7 @@ internal class ExternalMediaProxyServer(
                 val path = target?.rawPath
                 val decodedPath = target?.path
                 if (target == null || target.isAbsolute || target.rawAuthority != null ||
-                    path.isNullOrBlank() || !path.startsWith("/ts/") ||
+                    path.isNullOrBlank() || !isExternalStreamPath(path) ||
                     decodedPath.orEmpty().split('/').any { it == "." || it == ".." } ||
                     '\\' in path || (target.rawQuery?.length ?: 0) > MAX_QUERY_LENGTH
                 ) {
@@ -435,15 +435,23 @@ internal fun routeExternalMediaUrl(rawUrl: String, proxyPort: Int?): String? {
         uri.scheme.equals("http", true) &&
             uri.host.equals("127.0.0.1", true) &&
             uri.port == 9118 &&
-            uri.rawPath?.startsWith("/ts/") == true
+            uri.rawPath?.let(::isExternalStreamPath) == true
 
     if (!isEmbeddedTorrServerUrl) return rawUrl
     if (proxyPort == null || proxyPort !in 1..65535) return null
 
     return rawUrl.replaceFirst(
         "http://127.0.0.1:9118",
-        "http://127.0.0.1:$proxyPort"
+        "http://127.0.0.1:$proxyPort",
+        ignoreCase = true
     )
+}
+
+private fun isExternalStreamPath(path: String): Boolean =
+    path == "/ts/stream" ||
+        path.startsWith("/ts/stream/") ||
+        path == "/ts/gst" ||
+        path.startsWith("/ts/gst/")
 }
 
 /** Process-wide proxy owner; the Lampac foreground service controls its lifetime. */
