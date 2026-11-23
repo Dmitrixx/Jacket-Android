@@ -241,7 +241,6 @@ private fun buildLampaPlaybackScript(request: LampaPlaybackRequest): String {
         .put("url", request.url)
         .put("title", request.title.ifBlank { "Видео" })
         .put("subtitles", subtitles)
-        .put("headers", JSONObject(request.headers))
         .put("_jacketPlaybackId", request.id)
         .put("_jacketProgressKey", request.progressKey)
         .put(
