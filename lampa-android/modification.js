@@ -65,6 +65,24 @@
                 window.__JACKET_ACTIVE_PLAYBACK_ID__ = pendingId;
                 window.__JACKET_PENDING_PLAYBACK_ID__ = null;
             }
+            var activeId = window.__JACKET_ACTIVE_PLAYBACK_ID__;
+            if (activeId) {
+                window.__JACKET_PLAYBACK_READY__ = false;
+                window.__JACKET_PLAYBACK_ERROR_SENT__ = null;
+                if (window.__JACKET_PLAYER_WATCHDOG__) {
+                    window.clearTimeout(window.__JACKET_PLAYER_WATCHDOG__);
+                }
+                window.__JACKET_PLAYER_WATCHDOG__ = window.setTimeout(function () {
+                    if (window.__JACKET_ACTIVE_PLAYBACK_ID__ === activeId &&
+                        !window.__JACKET_PLAYBACK_READY__ &&
+                        window.__JACKET_PLAYBACK_ERROR_SENT__ !== activeId) {
+                        reportPlaybackFailure(activeId, 'Поток не начал воспроизведение за 30 секунд');
+                        if (window.Lampa && Lampa.Player && Lampa.Player.opened()) {
+                            Lampa.Player.close();
+                        }
+                    }
+                }, 30000);
+            }
             AndroidJS.setPlayerOpen(true);
         });
         player.listener.follow('close', function () {
@@ -75,16 +93,47 @@
             if (playbackId && !failedPlayback) {
                 AndroidJS.onJacketPlaybackClosed(String(playbackId));
             }
+            if (window.__JACKET_PLAYER_WATCHDOG__) {
+                window.clearTimeout(window.__JACKET_PLAYER_WATCHDOG__);
+                window.__JACKET_PLAYER_WATCHDOG__ = null;
+            }
             window.__JACKET_ACTIVE_PLAYBACK_ID__ = null;
             window.__JACKET_PENDING_PLAYBACK_ID__ = null;
+            window.__JACKET_PLAYBACK_READY__ = false;
             AndroidJS.setPlayerOpen(false);
         });
         AndroidJS.setPlayerOpen(Boolean(player.opened && player.opened()));
     }
 
+    function reportPlaybackFailure(playbackId, message) {
+        if (!playbackId || window.__JACKET_PLAYBACK_ERROR_SENT__ === playbackId) return;
+        window.__JACKET_PLAYBACK_ERROR_SENT__ = playbackId;
+        try {
+            AndroidJS.onJacketPlaybackError(String(playbackId), String(message || 'Ошибка HTML5-плеера'));
+        } catch (error) {
+            console.warn('Jacket: could not report Lampa playback error', error);
+        }
+    }
+
     function observeVideoErrors() {
         if (window.__JACKET_VIDEO_ERROR_BRIDGE__) return;
         window.__JACKET_VIDEO_ERROR_BRIDGE__ = true;
+
+        function markVideoReady(event) {
+            var video = event.target;
+            if (!video || String(video.tagName).toUpperCase() !== 'VIDEO') return;
+            var playbackId = window.__JACKET_ACTIVE_PLAYBACK_ID__;
+            if (!playbackId) return;
+            window.__JACKET_PLAYBACK_READY__ = true;
+            if (window.__JACKET_PLAYER_WATCHDOG__) {
+                window.clearTimeout(window.__JACKET_PLAYER_WATCHDOG__);
+                window.__JACKET_PLAYER_WATCHDOG__ = null;
+            }
+        }
+
+        document.addEventListener('playing', markVideoReady, true);
+        document.addEventListener('loadeddata', markVideoReady, true);
+
         document.addEventListener('error', function (event) {
             var video = event.target;
             if (!video || String(video.tagName).toUpperCase() !== 'VIDEO') return;
@@ -93,15 +142,8 @@
                 window.__JACKET_PENDING_PLAYBACK_ID__;
             if (!playbackId || window.__JACKET_PLAYBACK_ERROR_SENT__ === playbackId) return;
 
-            window.__JACKET_PLAYBACK_ERROR_SENT__ = playbackId;
             var code = video.error && video.error.code ? video.error.code : 0;
-            var message = 'HTML5 video error ' + code;
-
-            try {
-                AndroidJS.onJacketPlaybackError(String(playbackId), message);
-            } catch (error) {
-                console.warn('Jacket: could not report Lampa playback error', error);
-            }
+            reportPlaybackFailure(playbackId, 'HTML5 video error ' + code);
 
             window.setTimeout(function () {
                 if (window.Lampa && Lampa.Player && Lampa.Player.opened()) {
