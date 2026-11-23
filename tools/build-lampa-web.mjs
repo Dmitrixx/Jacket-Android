@@ -36,6 +36,7 @@ await cp(publicRoot, outputRoot, { recursive: true });
 // This wrapper-specific transform is build-time only; the vendored upstream source stays untouched.
 const torrentSourcePath = path.join(sourceRoot, "src", "interaction", "torrent.js").replace(/\\/g, "/");
 const playerSourcePath = path.join(sourceRoot, "src", "interaction", "player.js").replace(/\\/g, "/");
+let torrentExternalHandoffPatched = false;
 const embeddedAndroidShellCompatibility = {
   name: "lampa-android-shell-compatibility",
   transform(code, id) {
@@ -79,6 +80,11 @@ const embeddedAndroidShellCompatibility = {
         );
       }
       code = code.replace(upstreamTorrentStart, externalTorrentStart);
+      // Verify the handoff against the transformed upstream source before Rollup
+      // renames imported module bindings in the generated bundle.
+      torrentExternalHandoffPatched =
+        code.includes("Torserver.toPlayUrl(torrentData.url)") &&
+        code.includes("AndroidJS.openExternalPlayer(torrentData.url, JSON.stringify(torrentData))");
 
       // Keep the normal Lampa HTML5 player as fallback for non-torrent playback.
       const upstreamFallback = "    }\n    else launchInner()\n\n    if(data.launch_player) delete data.launch_player";
@@ -281,10 +287,7 @@ if (!builtAppJs.includes("lampa-android")) {
 if (!builtAppJs.includes("openExternalPlayer")) {
   throw new Error("The external Android player integration is missing from the Lampa bundle");
 }
-if (
-  !builtAppJs.includes("toPlayUrl(torrentData.url)") ||
-  !builtAppJs.includes("openExternalPlayer")
-) {
+if (!torrentExternalHandoffPatched || !builtAppJs.includes("openExternalPlayer")) {
   throw new Error("The external Android torrent handoff is missing from the Lampa bundle");
 }
 if (appJs.length < 100_000 || css.length < 20_000) {
