@@ -60,12 +60,53 @@
         if (player.__jacketBackBridgeInstalled) return;
         player.__jacketBackBridgeInstalled = true;
         player.listener.follow('start', function () {
+            var pendingId = window.__JACKET_PENDING_PLAYBACK_ID__;
+            if (pendingId) {
+                window.__JACKET_ACTIVE_PLAYBACK_ID__ = pendingId;
+                window.__JACKET_PENDING_PLAYBACK_ID__ = null;
+            }
             AndroidJS.setPlayerOpen(true);
         });
         player.listener.follow('close', function () {
+            var playbackId = window.__JACKET_ACTIVE_PLAYBACK_ID__ ||
+                window.__JACKET_PENDING_PLAYBACK_ID__;
+            if (playbackId) {
+                AndroidJS.onJacketPlaybackClosed(String(playbackId));
+            }
+            window.__JACKET_ACTIVE_PLAYBACK_ID__ = null;
+            window.__JACKET_PENDING_PLAYBACK_ID__ = null;
             AndroidJS.setPlayerOpen(false);
         });
         AndroidJS.setPlayerOpen(Boolean(player.opened && player.opened()));
+    }
+
+    function observeVideoErrors() {
+        if (window.__JACKET_VIDEO_ERROR_BRIDGE__) return;
+        window.__JACKET_VIDEO_ERROR_BRIDGE__ = true;
+        document.addEventListener('error', function (event) {
+            var video = event.target;
+            if (!video || String(video.tagName).toUpperCase() !== 'VIDEO') return;
+
+            var playbackId = window.__JACKET_ACTIVE_PLAYBACK_ID__ ||
+                window.__JACKET_PENDING_PLAYBACK_ID__;
+            if (!playbackId || window.__JACKET_PLAYBACK_ERROR_SENT__ === playbackId) return;
+
+            window.__JACKET_PLAYBACK_ERROR_SENT__ = playbackId;
+            var code = video.error && video.error.code ? video.error.code : 0;
+            var message = 'HTML5 video error ' + code;
+
+            try {
+                AndroidJS.onJacketPlaybackError(String(playbackId), message);
+            } catch (error) {
+                console.warn('Jacket: could not report Lampa playback error', error);
+            }
+
+            window.setTimeout(function () {
+                if (window.Lampa && Lampa.Player && Lampa.Player.opened()) {
+                    Lampa.Player.close();
+                }
+            }, 0);
+        }, true);
     }
 
     if (document.readyState === 'loading') {
@@ -75,6 +116,8 @@
     }
 
     observeLampaPlayer();
+    observeVideoErrors();
+    window.__JACKET_ANDROID_BRIDGE_READY__ = true;
 
     window.addEventListener('beforeunload', function () {
         if (timer) window.clearTimeout(timer);
