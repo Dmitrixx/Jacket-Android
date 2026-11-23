@@ -294,7 +294,13 @@ private fun buildLampaPlaybackScript(request: LampaPlaybackRequest): String {
             } catch (error) {
                 window.__JACKET_PENDING_PLAYBACK_ID__ = null;
                 console.error('Jacket: could not start the Lampa player', error);
-                return false;
+                try {
+                    AndroidJS.onJacketPlaybackError(
+                        playbackId,
+                        error && error.message ? error.message : 'Lampa отказала в запуске плеера'
+                    );
+                } catch (bridgeError) {}
+                return true;
             }
         })($data);
     """.trimIndent().replace("\$data", data.toString())
