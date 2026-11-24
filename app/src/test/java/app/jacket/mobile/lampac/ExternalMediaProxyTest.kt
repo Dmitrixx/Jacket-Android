@@ -80,7 +80,7 @@ class ExternalMediaProxyTest {
             )
             upstreamThread.join(3_000)
 
-            assertTrue(receivedRequest.get().first().startsWith("GET /proxy/q0j7token.m3u8?audio=0 "))
+            assertTrue(receivedRequest.get().first().startsWith("GET /ts/stream/heart.mkv "))
             assertTrue(receivedRequest.get().any { it.startsWith("Host: 127.0.0.1:${proxy.port}", true) })
             assertTrue(response.startsWith("HTTP/1.1 200 OK"))
             assertTrue(response.contains("Content-Length: 777777"))
@@ -178,7 +178,8 @@ class ExternalMediaProxyTest {
             )
             upstreamThread.join(3_000)
 
-            assertTrue(receivedRequest.get().first().startsWith("GET /ts/stream/heart.mkv "))
+            assertTrue(receivedRequest.get().first().startsWith("GET /proxy/q0j7token.m3u8?audio=0 "))
+            assertTrue(receivedRequest.get().any { it.startsWith("Host: 127.0.0.1:${proxy.port}", true) })
             assertTrue(response.startsWith("HTTP/1.1 200 OK"))
             assertTrue(response.contains("Transfer-Encoding: chunked"))
             assertTrue(response.endsWith("4\r\ndata\r\n0\r\n\r\n"))
