@@ -41,6 +41,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import app.jacket.mobile.BuildConfig
 import app.jacket.mobile.lampac.ExternalMediaProxy
+import app.jacket.mobile.lampac.LampaWebAssetUpdater
 import app.jacket.mobile.lampac.routeExternalMediaUrl
 import java.io.ByteArrayInputStream
 
@@ -194,7 +195,7 @@ private fun interceptLampaAsset(
             200,
             "OK",
             mapOf("Cache-Control" to "no-store"),
-            context.assets.open("lampa/$relative")
+            LampaWebAssetUpdater.openAsset(context, relative) ?: return textResponse(404, "Not Found")
         )
     } catch (_: Exception) {
         textResponse(404, "Not Found")
