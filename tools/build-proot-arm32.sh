@@ -22,7 +22,11 @@ RUST_LINKER="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/armv7a-linux-android
 rustup target add "$RUST_TARGET"
 (
   cd "$PR_ROOT/src/pr-cli"
-  CARGO_TARGET_ARMV7_LINUX_ANDROIDEABI_LINKER="$RUST_LINKER" \
+  CC="$RUST_LINKER" \
+    CC_armv7_linux_androideabi="$RUST_LINKER" \
+    AR="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar" \
+    AR_armv7_linux_androideabi="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar" \
+    CARGO_TARGET_ARMV7_LINUX_ANDROIDEABI_LINKER="$RUST_LINKER" \
     cargo build --release --target "$RUST_TARGET"
 )
 
