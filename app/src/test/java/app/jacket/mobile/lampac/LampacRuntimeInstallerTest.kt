@@ -246,11 +246,11 @@ class LampacRuntimeInstallerTest {
             assertTrue(apt.setExecutable(true))
 
             val osRelease = File(root, "etc/os-release")
-            osRelease.writeText("ID=debian\\nVERSION_CODENAME=forky\\n")
+            osRelease.writeText("ID=debian\nVERSION_CODENAME=forky\n")
             assertFalse(isDebianRootfsReady(root, LampacRuntimeArchitecture.ARM32))
             assertTrue(isDebianRootfsReady(root, LampacRuntimeArchitecture.ARM64))
 
-            osRelease.writeText("ID=debian\\nVERSION_CODENAME=trixie\\n")
+            osRelease.writeText("ID=debian\nVERSION_CODENAME=trixie\n")
             assertTrue(isDebianRootfsReady(root, LampacRuntimeArchitecture.ARM32))
             assertFalse(isDebianRootfsReady(root, LampacRuntimeArchitecture.ARM64))
         } finally {
