@@ -12,7 +12,11 @@ fi
 # The pinned PRoot source can build Android ARMv7. Its checked-in native
 # payload currently contains ARM64 only, so create the matching ARM32 files
 # before Gradle packages the armeabi-v7a APK split.
-git -C "$PR_ROOT" config --local --add url."https://github.com/".insteadOf "git@github.com:"
+# vendor/samba's .gitmodules entry uses SSH. Override the exact submodule
+# URL in this checkout so a clean GitHub Actions runner never needs an SSH key.
+git -C "$PR_ROOT" config --local --replace-all submodule.vendor/samba.url \
+  "https://github.com/samba-team/samba.git"
+git -C "$PR_ROOT" submodule sync -- vendor/samba
 git -C "$PR_ROOT" submodule update --init vendor/samba
 
 "$PR_ROOT/scripts/build.sh" --arch=arm --ndk-path="$NDK"
