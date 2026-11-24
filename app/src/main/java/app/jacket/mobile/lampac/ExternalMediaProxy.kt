@@ -4,7 +4,6 @@ import java.io.BufferedInputStream
 import java.io.BufferedOutputStream
 import java.io.Closeable
 import java.io.IOException
-import java.net.HttpURLConnection
 import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.ServerSocket
@@ -222,117 +221,125 @@ internal class ExternalMediaProxyServer(
         rawQuery: String?,
         requestHeaders: Map<String, String>
     ) {
-        val querySuffix = rawQuery?.let { "?$it" }.orEmpty()
-        val upstreamUrl = "http://$upstreamHost:$upstreamPort$rawPath$querySuffix"
-        val connection = try {
-            (URL(upstreamUrl).openConnection() as HttpURLConnection).apply {
-                requestMethod = "GET"
-                connectTimeout = UPSTREAM_CONNECT_TIMEOUT_MS
-                readTimeout = 0
-                instanceFollowRedirects = false
-                setRequestProperty("Connection", "close")
-                setRequestProperty("Accept-Encoding", "identity")
-
-                listOf(
-                    "Range",
-                    "If-Range",
-                    "If-Modified-Since",
-                    "If-None-Match",
-                    "Accept",
-                    "User-Agent"
-                ).forEach { name ->
-                    requestHeaders.entries.firstOrNull { it.key.equals(name, true) }
-                        ?.value
-                        ?.takeIf { '\r' !in it && '\n' !in it }
-                        ?.let { setRequestProperty(name, it) }
-                }
-            }
-        } catch (_: Exception) {
-            writeSimpleResponse(output, 502, "Bad Gateway")
-            return
-        }
-
+        val upstream = Socket()
+        var responseStarted = false
         try {
-            val status = connection.responseCode
-            writeUpstreamHeaders(output, status, connection)
+            upstream.tcpNoDelay = true
+            upstream.connect(
+                InetSocketAddress(upstreamHost, upstreamPort),
+                UPSTREAM_CONNECT_TIMEOUT_MS
+            )
+            upstream.soTimeout = 0
+
+            val upstreamInput = BufferedInputStream(upstream.getInputStream(), IO_BUFFER_SIZE)
+            val upstreamOutput = BufferedOutputStream(upstream.getOutputStream(), IO_BUFFER_SIZE)
+            val querySuffix = rawQuery?.let { "?$it" }.orEmpty()
+
+            // The upstream server's middleware blocks HEAD before its TorrServer
+            // route. Use GET to obtain media headers, but omit the body for HEAD.
+            upstreamOutput.write(
+                "GET $rawPath$querySuffix HTTP/1.1\\r\\n".toByteArray(StandardCharsets.ISO_8859_1)
+            )
+            upstreamOutput.write(
+                "Host: $upstreamHost:$upstreamPort\\r\\n".toByteArray(StandardCharsets.ISO_8859_1)
+            )
+            upstreamOutput.write("Connection: close\\r\\n".toByteArray(StandardCharsets.ISO_8859_1))
+            upstreamOutput.write("Accept-Encoding: identity\\r\\n".toByteArray(StandardCharsets.ISO_8859_1))
+
+            listOf(
+                "Range",
+                "If-Range",
+                "If-Modified-Since",
+                "If-None-Match",
+                "Accept",
+                "User-Agent",
+                "Referer",
+                "Origin"
+            ).forEach { name ->
+                requestHeaders.entries.firstOrNull { it.key.equals(name, true) }
+                    ?.value
+                    ?.takeIf { '\\r' !in it && '\\n' !in it }
+                    ?.let { value ->
+                        upstreamOutput.write(
+                            "$name: $value\\r\\n".toByteArray(StandardCharsets.ISO_8859_1)
+                        )
+                    }
+            }
+            upstreamOutput.write("\\r\\n".toByteArray(StandardCharsets.ISO_8859_1))
+            upstreamOutput.flush()
+
+            val statusLine = readLine(upstreamInput, MAX_HEADER_LINE_BYTES)
+                ?: throw IOException("Lampac закрыл соединение без HTTP-ответа")
+            val statusParts = statusLine.split(' ', limit = 3)
+            if (statusParts.size < 2 ||
+                (statusParts[0] != "HTTP/1.0" && statusParts[0] != "HTTP/1.1")
+            ) {
+                throw IOException("Некорректная строка HTTP-статуса от Lampac")
+            }
+            val status = statusParts[1].toIntOrNull()
+                ?: throw IOException("Некорректный HTTP-статус от Lampac")
+
+            val responseHeaders = ArrayList<Pair<String, String>>()
+            var totalHeaderBytes = statusLine.length
+            var headerCount = 0
+            while (true) {
+                if (++headerCount > MAX_HEADER_COUNT) {
+                    throw IOException("Слишком много HTTP-заголовков от Lampac")
+                }
+                val line = readLine(upstreamInput, MAX_HEADER_LINE_BYTES)
+                    ?: throw IOException("Lampac оборвал HTTP-заголовки")
+                totalHeaderBytes += line.length
+                if (totalHeaderBytes > MAX_HEADER_BYTES) {
+                    throw IOException("HTTP-заголовки Lampac слишком большие")
+                }
+                if (line.isEmpty()) break
+
+                val separator = line.indexOf(':')
+                if (separator <= 0) throw IOException("Некорректный HTTP-заголовок от Lampac")
+                val name = line.substring(0, separator).trim()
+                val value = line.substring(separator + 1).trim()
+                if (name.isBlank() || value.any { it == '\\r' || it == '\\n' }) {
+                    throw IOException("Некорректное значение HTTP-заголовка от Lampac")
+                }
+                responseHeaders += name to value
+            }
+
+            // Keep the origin's exact body framing. HttpURLConnection transparently
+            // de-chunks responses; that breaks clients expecting a streaming response
+            // with Transfer-Encoding: chunked and no Content-Length.
+            responseStarted = true
+            output.write("$statusLine\\r\\n".toByteArray(StandardCharsets.ISO_8859_1))
+            responseHeaders.forEach { (name, rawValue) ->
+                if (name.equals("Connection", true) ||
+                    name.equals("Keep-Alive", true) ||
+                    name.equals("Proxy-Connection", true) ||
+                    (method == "HEAD" && name.equals("Transfer-Encoding", true))
+                ) return@forEach
+
+                val value = if (name.equals("Location", true)) rewriteLocation(rawValue) else rawValue
+                output.write(
+                    "$name: $value\\r\\n".toByteArray(StandardCharsets.ISO_8859_1)
+                )
+            }
+            output.write("Connection: close\\r\\n\\r\\n".toByteArray(StandardCharsets.ISO_8859_1))
+            output.flush()
 
             if (method == "GET" && status !in BODYLESS_STATUS_CODES) {
-                val body = runCatching { connection.inputStream }
-                    .getOrElse { connection.errorStream }
-
-                if (body != null) {
-                    body.use { stream ->
-                        val buffer = ByteArray(IO_BUFFER_SIZE)
-                        while (true) {
-                            val count = stream.read(buffer)
-                            if (count < 0) break
-                            output.write(buffer, 0, count)
-                            output.flush()
-                        }
-                    }
+                val buffer = ByteArray(IO_BUFFER_SIZE)
+                while (true) {
+                    val count = upstreamInput.read(buffer)
+                    if (count < 0) break
+                    output.write(buffer, 0, count)
+                    output.flush()
                 }
             }
-            output.flush()
         } catch (_: Exception) {
-            // The external player may close the socket while seeking or stopping.
+            if (!responseStarted) {
+                runCatching { writeSimpleResponse(output, 502, "Bad Gateway") }
+            }
         } finally {
-            connection.disconnect()
+            runCatching { upstream.close() }
         }
-    }
-
-    private fun writeUpstreamHeaders(
-        output: BufferedOutputStream,
-        status: Int,
-        connection: HttpURLConnection
-    ) {
-        val reason = reasonPhrase(status)
-        output.write(
-            "HTTP/1.1 $status $reason\r\n"
-                .toByteArray(StandardCharsets.ISO_8859_1)
-        )
-
-        val headers = listOf(
-            "Content-Type",
-            "Content-Length",
-            "Content-Range",
-            "Accept-Ranges",
-            "Content-Disposition",
-            "Last-Modified",
-            "ETag",
-            "Cache-Control",
-            "Expires",
-            "Date",
-            "Retry-After",
-            "WWW-Authenticate",
-            "Allow"
-        )
-
-        headers.forEach { name ->
-            val value = connection.getHeaderField(name) ?: return@forEach
-            val safeValue = if (name.equals("Location", true)) {
-                rewriteLocation(value)
-            } else {
-                value
-            }
-            if ('\r' !in safeValue && '\n' !in safeValue) {
-                output.write(
-                    "$name: $safeValue\r\n".toByteArray(StandardCharsets.ISO_8859_1)
-                )
-            }
-        }
-
-        // Some Lampac/TorrServer builds redirect between /ts/* paths. Keep the
-        // redirect on this compatibility port instead of sending the player
-        // back to the HEAD-blocking 9118 listener.
-        connection.getHeaderField("Location")?.let(::rewriteLocation)?.let { location ->
-            if ('\r' !in location && '\n' !in location) {
-                output.write(
-                    "Location: $location\r\n".toByteArray(StandardCharsets.ISO_8859_1)
-                )
-            }
-        }
-
-        output.write("Connection: close\r\n\r\n".toByteArray(StandardCharsets.ISO_8859_1))
     }
 
     private fun rewriteLocation(location: String): String {
