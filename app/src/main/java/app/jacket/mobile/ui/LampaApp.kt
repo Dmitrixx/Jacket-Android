@@ -42,6 +42,9 @@ import app.jacket.mobile.lampac.LampacModuleInfo
 import app.jacket.mobile.lampac.LampacRuntimePhase
 import app.jacket.mobile.lampac.LampacRuntimeService
 import app.jacket.mobile.lampac.LampacRuntimeState
+import app.jacket.mobile.lampac.LampaUpdateManager
+import app.jacket.mobile.lampac.UpdateCheckResult
+import androidx.compose.runtime.key
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -62,6 +65,13 @@ fun LampaApp(onExit: () -> Unit) {
     var enabledModuleIds by remember { mutableStateOf(emptySet<String>()) }
     var installed by remember { mutableStateOf(false) }
     var checkingInstallation by remember { mutableStateOf(true) }
+    var updatesVisible by remember { mutableStateOf(false) }
+    var updateChecking by remember { mutableStateOf(false) }
+    var updateCheck by remember { mutableStateOf<UpdateCheckResult?>(null) }
+    var updateError by remember { mutableStateOf<String?>(null) }
+    var lampaUpdating by remember { mutableStateOf(false) }
+    var lampaUpdateProgress by remember { mutableStateOf<Int?>(null) }
+    var webAssetRevision by remember { mutableStateOf(0) }
     val busy = checkingInstallation || runtime.phase == LampacRuntimePhase.INSTALLING ||
         runtime.phase == LampacRuntimePhase.STARTING ||
         runtime.phase == LampacRuntimePhase.STOPPING
@@ -94,6 +104,20 @@ fun LampaApp(onExit: () -> Unit) {
         }
     }
 
+    LaunchedEffect(runtime.phase, updatesVisible) {
+        // Refresh the displayed Lampac version when the update service has
+        // completed its restart, and whenever the update centre is opened.
+        if (updatesVisible && runtime.phase == LampacRuntimePhase.RUNNING && updateCheck != null) {
+            updateChecking = true
+            val result = withContext(Dispatchers.IO) {
+                runCatching { LampaUpdateManager(context).checkUpdates() }
+            }
+            result.onSuccess { updateCheck = it }
+                .onFailure { updateError = it.message ?: "Не удалось обновить сведения о версиях" }
+            updateChecking = false
+        }
+    }
+
     LaunchedEffect(modulesVisible) {
         if (modulesVisible) {
             moduleLoading = true
@@ -117,10 +141,12 @@ fun LampaApp(onExit: () -> Unit) {
             .fillMaxSize()
             .background(Color.Black)
     ) {
-        LampaWebViewScreen(
-            modifier = Modifier.fillMaxSize(),
-            onBack = onExit
-        )
+        key(webAssetRevision) {
+            LampaWebViewScreen(
+                modifier = Modifier.fillMaxSize(),
+                onBack = onExit
+            )
+        }
 
         Surface(
             modifier = Modifier
@@ -159,6 +185,15 @@ fun LampaApp(onExit: () -> Unit) {
                         style = MaterialTheme.typography.bodySmall
                     )
                     if (installed) {
+                        TextButton(
+                            enabled = !busy && !moduleSaving && !lampaUpdating,
+                            onClick = {
+                                settingsVisible = false
+                                updatesVisible = true
+                            }
+                        ) {
+                            Text("Обновления Lampa и Lampac")
+                        }
                         TextButton(
                             enabled = !busy && !moduleSaving,
                             onClick = {
@@ -420,6 +455,149 @@ fun LampaApp(onExit: () -> Unit) {
                     ) { Text("Отмена") }
                 }
             }
+
         )
     }
+
+    if (updatesVisible) {
+        val latestLampa = updateCheck?.lampa
+        val latestLampac = updateCheck?.lampac
+        AlertDialog(
+            onDismissRequest = { if (!updateChecking && !lampaUpdating) updatesVisible = false },
+            title = { Text("Центр обновлений", fontWeight = FontWeight.Bold) },
+            text = {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 520.dp)
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Text("Lampa и Lampac обновляются независимо от APK приложения.")
+                    Button(
+                        enabled = !updateChecking && !lampaUpdating && !busy,
+                        onClick = {
+                            coroutineScope.launch {
+                                updateChecking = true
+                                updateError = null
+                                val result = withContext(Dispatchers.IO) {
+                                    runCatching { LampaUpdateManager(context).checkUpdates() }
+                                }
+                                result.onSuccess { updateCheck = it }
+                                    .onFailure { updateError = it.message ?: "Не удалось проверить обновления" }
+                                updateChecking = false
+                            }
+                        }
+                    ) {
+                        Text(if (updateChecking) "Проверяем…" else "Проверить обновления")
+                    }
+                    if (updateChecking) {
+                        LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                    }
+                    if (updateError != null) {
+                        Text(
+                            updateError.orEmpty(),
+                            color = MaterialTheme.colorScheme.error,
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+                    if (runtime.phase == LampacRuntimePhase.INSTALLING ||
+                        runtime.phase == LampacRuntimePhase.STOPPING ||
+                        runtime.phase == LampacRuntimePhase.STARTING
+                    ) {
+                        Text(runtime.message)
+                        if (runtime.progress != null) {
+                            LinearProgressIndicator(
+                                progress = { runtime.progress!!.coerceIn(0, 100) / 100f },
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        }
+                    }
+                    updateCheck?.let { checked ->
+                        Text("LAMPA", fontWeight = FontWeight.Bold)
+                        Text("Установлена сборка: ${checked.localLampaBuild.take(7)}")
+                        if (checked.lampaError != null) {
+                            Text("Проверка Lampa: ${checked.lampaError}", color = MaterialTheme.colorScheme.error)
+                        } else if (latestLampa == null) {
+                            Text("Новых веб-обновлений нет.")
+                        } else {
+                            Text("Доступна сборка: ${latestLampa.displayVersion} • Lampa ${latestLampa.versionName}")
+                            Text("Исходники: ${latestLampa.sourceCommit.take(7)}")
+                            Button(
+                                enabled = !lampaUpdating && !updateChecking && !busy,
+                                onClick = {
+                                    coroutineScope.launch {
+                                        lampaUpdating = true
+                                        lampaUpdateProgress = 0
+                                        updateError = null
+                                        val result = runCatching {
+                                            LampaUpdateManager(context).updateLampa(latestLampa) { percent, message ->
+                                                lampaUpdateProgress = percent
+                                                LampacRuntimeState.appendLog(message)
+                                            }
+                                        }
+                                        result.onSuccess {
+                                            webAssetRevision += 1
+                                            val refreshed = withContext(Dispatchers.IO) {
+                                                runCatching { LampaUpdateManager(context).checkUpdates() }
+                                            }
+                                            refreshed.onSuccess { updateCheck = it }
+                                            updateError = "Lampa обновлена. Интерфейс перезагружен."
+                                        }.onFailure {
+                                            updateError = it.message ?: "Не удалось обновить Lampa"
+                                        }
+                                        lampaUpdating = false
+                                    }
+                                }
+                            ) {
+                                Text(if (lampaUpdating) "Обновление…" else "Обновить Lampa")
+                            }
+                            if (lampaUpdating) {
+                                LinearProgressIndicator(
+                                    progress = { (lampaUpdateProgress ?: 0).coerceIn(0, 100) / 100f },
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                                Text("${lampaUpdateProgress ?: 0}%")
+                            }
+                        }
+
+                        Text("LAMPAC NEXTGEN", fontWeight = FontWeight.Bold)
+                        Text("Установлена версия: ${checked.localLampacVersion ?: "не обнаружена"}")
+                        if (checked.lampacError != null) {
+                            Text("Проверка Lampac: ${checked.lampacError}", color = MaterialTheme.colorScheme.error)
+                        } else if (latestLampac == null) {
+                            Text("Новой стабильной версии Lampac не найдено.")
+                        } else {
+                            Text("Доступна версия: ${latestLampac.version}")
+                            Text("Архив будет проверен по SHA-256 перед установкой.")
+                            Button(
+                                enabled = !updateChecking && !busy && !lampaUpdating,
+                                onClick = {
+                                    LampacRuntimeService.updateLampac(
+                                        context = context,
+                                        version = latestLampac.version,
+                                        url = latestLampac.assetUrl,
+                                        sha256 = latestLampac.sha256,
+                                        sizeBytes = latestLampac.sizeBytes
+                                    )
+                                }
+                            ) { Text("Обновить Lampac") }
+                        }
+                    } ?: Text("Нажмите «Проверить обновления», чтобы получить актуальные версии.")
+                    Text(
+                        "Обновление самого Android-приложения по-прежнему устанавливается отдельным APK.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = !updateChecking && !lampaUpdating && !busy,
+                    onClick = { updatesVisible = false }
+                ) { Text("Закрыть") }
+            }
+        )
+    }
+
 }

@@ -102,6 +102,7 @@ class LampacRuntimeService : Service() {
                     ACTION_INSTALL_AND_START -> installAndStart()
                     ACTION_START -> startInstalledServer()
                     ACTION_RESTART -> restartInstalledServer()
+                    ACTION_UPDATE_LAMPAC -> updateInstalledLampac(intent)
                     else -> {
                         LampacRuntimeState.update(LampacRuntimePhase.ERROR, "Неизвестная команда Lampac")
                         finishService()
@@ -142,7 +143,70 @@ class LampacRuntimeService : Service() {
         }
     }
 
-    private suspend fun startInstalledServer(aladinPatchRestartAttempt: Int = 0) {
+    private suspend fun updateInstalledLampac(intent: Intent?) {
+        val version = intent?.getStringExtra(EXTRA_UPDATE_VERSION).orEmpty()
+        val url = intent?.getStringExtra(EXTRA_UPDATE_URL).orEmpty()
+        val sha256 = intent?.getStringExtra(EXTRA_UPDATE_SHA256).orEmpty()
+        val sizeBytes = intent?.getLongExtra(EXTRA_UPDATE_SIZE, -1L) ?: -1L
+
+        LampacRuntimeState.clearLogs()
+        try {
+            val installer = LampacRuntimeInstaller(applicationContext)
+            check(installer.isInstalled()) { "Сначала установите встроенный Lampac" }
+            check(version.isNotBlank() && url.isNotBlank() && sha256.isNotBlank() && sizeBytes > 0L) {
+                "Данные обновления Lampac неполные"
+            }
+
+            LampacRuntimeState.update(LampacRuntimePhase.STOPPING, "Останавливаем Lampac перед обновлением…")
+            updateNotification("Обновление Lampac…")
+            isStopping.set(true)
+            ExternalMediaProxy.stop()
+            stopSession()
+            monitorJob?.cancelAndJoin()
+            monitorJob = null
+            serverSession = null
+            isStopping.set(false)
+
+            var lastNotificationAt = 0L
+            installer.updateFromRelease(version, url, sha256, sizeBytes) { progress ->
+                LampacRuntimeState.update(LampacRuntimePhase.INSTALLING, progress.message, progress.percent)
+                LampacRuntimeState.appendLog(progress.message)
+                val now = android.os.SystemClock.elapsedRealtime()
+                if (now - lastNotificationAt >= NOTIFICATION_UPDATE_INTERVAL_MS ||
+                    progress.phase == "updated" || progress.percent == 100
+                ) {
+                    lastNotificationAt = now
+                    updateNotification(progress.percent?.let { "${progress.message} • $it%" } ?: progress.message)
+                }
+            }
+            LampacRuntimeState.update(LampacRuntimePhase.INSTALLED, "Lampac обновлён. Запускаем сервер…")
+            startInstalledServer()
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Exception) {
+            val message = "Обновление Lampac не завершилось: ${safeMessage(error)}"
+            LampacRuntimeState.appendLog(message)
+            val installer = LampacRuntimeInstaller(applicationContext)
+            val rollback = runCatching { installer.rollbackPendingUpdateBackup() }
+            if (rollback.getOrDefault(false)) {
+                LampacRuntimeState.appendLog("Восстановлена предыдущая версия Lampac после ошибки обновления.")
+                LampacRuntimeState.update(LampacRuntimePhase.INSTALLED, "Запускаем восстановленную версию Lampac…")
+                runCatching { startInstalledServer(rollbackAttempt = true) }
+                if (LampacRuntimeState.state.value.phase != LampacRuntimePhase.RUNNING) fail(message)
+            } else if (installer.isInstalled()) {
+                LampacRuntimeState.update(LampacRuntimePhase.INSTALLED, "Обновление не активировано. Запускаем прежний Lampac…")
+                runCatching { startInstalledServer() }
+                if (LampacRuntimeState.state.value.phase != LampacRuntimePhase.RUNNING) fail(message)
+            } else {
+                rollback.exceptionOrNull()?.let {
+                    LampacRuntimeState.appendLog("Ошибка отката Lampac: ${safeMessage(it)}")
+                }
+                fail(message)
+            }
+        }
+    }
+
+    private suspend fun startInstalledServer(aladinPatchRestartAttempt: Int = 0, rollbackAttempt: Boolean = false) {
         val installer = LampacRuntimeInstaller(applicationContext)
         if (!installer.isInstalled()) {
             LampacRuntimeState.update(
@@ -262,7 +326,7 @@ class LampacRuntimeService : Service() {
                 monitorJob = null
                 serverSession = null
                 isStopping.set(false)
-                startInstalledServer(aladinPatchRestartAttempt + 1)
+                startInstalledServer(aladinPatchRestartAttempt + 1, rollbackAttempt)
                 return
             }
 
@@ -270,6 +334,9 @@ class LampacRuntimeService : Service() {
                 if (!ExternalMediaProxy.start()) {
                     LampacRuntimeState.appendLog("Не удалось запустить локальный прокси внешнего плеера.")
                 }
+                // The staged server has now passed its first startup probe.
+                // Only at this point is the previous release safe to discard.
+                installer.commitPendingUpdateBackup()
                 LampacRuntimeState.update(LampacRuntimePhase.RUNNING, "Lampac работает • http://127.0.0.1:9118")
                 updateNotification("Lampac работает • 127.0.0.1:9118")
             }
@@ -281,8 +348,25 @@ class LampacRuntimeService : Service() {
             isStopping.set(true)
             ExternalMediaProxy.stop()
             stopSession()
-            monitorJob?.cancel()
+            monitorJob?.cancelAndJoin()
+            monitorJob = null
             serverSession = null
+
+            if (!rollbackAttempt) {
+                val rollback = runCatching { installer.rollbackPendingUpdateBackup() }
+                if (rollback.getOrDefault(false)) {
+                    LampacRuntimeState.appendLog(
+                        "Новая версия Lampac не запустилась. Восстановлена предыдущая версия."
+                    )
+                    isStopping.set(false)
+                    startInstalledServer(aladinPatchRestartAttempt, rollbackAttempt = true)
+                    return
+                }
+                rollback.exceptionOrNull()?.let {
+                    LampacRuntimeState.appendLog("Не удалось выполнить откат Lampac: ${safeMessage(it)}")
+                }
+            }
+
             fail("Не удалось запустить Lampac: ${safeMessage(error)}")
         }
     }
@@ -515,7 +599,13 @@ class LampacRuntimeService : Service() {
         const val ACTION_INSTALL_AND_START = "app.jacket.mobile.lampac.INSTALL_AND_START"
         const val ACTION_START = "app.jacket.mobile.lampac.START"
         const val ACTION_RESTART = "app.jacket.mobile.lampac.RESTART"
+        const val ACTION_UPDATE_LAMPAC = "app.jacket.mobile.lampac.UPDATE_LAMPAC"
         const val ACTION_STOP = "app.jacket.mobile.lampac.STOP"
+
+        private const val EXTRA_UPDATE_VERSION = "update_version"
+        private const val EXTRA_UPDATE_URL = "update_url"
+        private const val EXTRA_UPDATE_SHA256 = "update_sha256"
+        private const val EXTRA_UPDATE_SIZE = "update_size"
 
         fun installAndStart(context: Context) =
             startForeground(context, ACTION_INSTALL_AND_START)
@@ -525,6 +615,22 @@ class LampacRuntimeService : Service() {
 
         fun restart(context: Context) =
             startForeground(context, ACTION_RESTART)
+
+        fun updateLampac(
+            context: Context,
+            version: String,
+            url: String,
+            sha256: String,
+            sizeBytes: Long
+        ) {
+            val intent = Intent(context, LampacRuntimeService::class.java)
+                .setAction(ACTION_UPDATE_LAMPAC)
+                .putExtra(EXTRA_UPDATE_VERSION, version)
+                .putExtra(EXTRA_UPDATE_URL, url)
+                .putExtra(EXTRA_UPDATE_SHA256, sha256)
+                .putExtra(EXTRA_UPDATE_SIZE, sizeBytes)
+            ContextCompat.startForegroundService(context, intent)
+        }
 
         fun stop(context: Context) {
             val intent = Intent(context, LampacRuntimeService::class.java).setAction(ACTION_STOP)

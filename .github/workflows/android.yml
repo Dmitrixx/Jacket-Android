@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: android-ci-${{ github.ref }}
@@ -87,6 +87,48 @@ jobs:
         uses: gradle/actions/setup-gradle@v6
       - name: Run lint, unit tests and debug/release builds
         run: ./gradlew --no-daemon --stacktrace lint testDebugUnitTest assembleDebug assembleRelease
+
+      # Publish the standalone Lampa web bundle separately from the APK.
+      # Android can update these assets without reinstalling the application.
+      - name: Publish Lampa web update bundle
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          bundle="dist/lampa-web-update.zip"
+          manifest="dist/lampa-web-update.json"
+          (cd app/src/main/assets/lampa && zip -qr "$GITHUB_WORKSPACE/$bundle" .)
+          source_commit="$(jq -r '.sourceCommit // .commit' app/src/main/assets/lampa/build-info.json)"
+          bundle_id="$(jq -r '.buildId' app/src/main/assets/lampa/build-info.json)"
+          app_version="$(jq -r '.appVersion' app/src/main/assets/lampa/build-info.json)"
+          zip_bytes="$(stat -c '%s' "$bundle")"
+          if [[ ! "$bundle_id" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "Generated Lampa web bundle identity is missing or invalid" >&2
+            exit 1
+          fi
+          zip_sha256="$(sha256sum "$bundle" | awk '{print $1}')"
+          jq -n \
+            --arg buildId "$bundle_id" \
+            --arg sourceCommit "$source_commit" \
+            --arg versionName "$app_version" \
+            --arg assetName "lampa-web-update.zip" \
+            --arg sha256 "$zip_sha256" \
+            --argjson sizeBytes "$zip_bytes" \
+            '{schemaVersion:1, buildId:$buildId, sourceCommit:$sourceCommit, versionName:$versionName, assetName:$assetName, sha256:$sha256, sizeBytes:$sizeBytes}' \
+            > "$manifest"
+          tag="lampa-web-${GITHUB_SHA:0:12}"
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$tag" "$bundle" "$manifest" --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            gh release create "$tag" "$bundle" "$manifest" \
+              --repo "$GITHUB_REPOSITORY" \
+              --target "$GITHUB_SHA" \
+              --title "Lampa web bundle ${GITHUB_SHA:0:12}" \
+              --notes "Standalone Lampa web assets for in-app updates. App source revision: $GITHUB_SHA. Upstream Lampa source revision: $source_commit."
+          fi
 
       - name: Prepare universal APK and checksum
         if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && steps.restore_signing.outputs.ready == 'true'

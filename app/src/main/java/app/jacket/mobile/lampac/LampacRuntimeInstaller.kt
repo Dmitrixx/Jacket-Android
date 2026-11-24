@@ -250,6 +250,8 @@ private object LampacZipInstaller {
     suspend fun install(
         archive: File,
         rootfs: File,
+        version: String = LampacRuntimeArtifacts.LAMPAC_VERSION,
+        retainBackup: Boolean = false,
         onProgress: (Long, Long) -> Unit
     ): File = withContext(Dispatchers.IO) {
         val context = currentCoroutineContext()
@@ -270,7 +272,12 @@ private object LampacZipInstaller {
             file.readText(Charsets.UTF_8)
         }
         stage.deleteRecursively()
-        backup.deleteRecursively()
+        if (backup.exists()) {
+            require(!retainBackup) {
+                "Найдена неподтверждённая резервная копия Lampac. Сначала восстановите или подтвердите предыдущее обновление."
+            }
+            backup.deleteRecursively()
+        }
 
         try {
             ZipFile(archive).use { zip ->
@@ -380,9 +387,15 @@ private object LampacZipInstaller {
                 } else {
                     LampacEmbeddedConfig.importInitConfig(stage, previousInitConfig)
                 }
-                File(stage, MARKER_FILE).writeText(LampacRuntimeArtifacts.LAMPAC_VERSION)
+                File(stage, MARKER_FILE).writeText(version)
                 onProgress(totalBytes, totalBytes)
             }
+
+            // Keep private runtime data and user-managed overrides across a
+            // server release refresh. Official code/modules are replaced by the
+            // new archive; only data, local databases, credentials and overrides
+            // are merged from the previous tree.
+            preserveUserRuntimeData(target, stage)
 
             if (target.exists() && !target.renameTo(backup)) {
                 throw IOException("Не удалось подготовить предыдущую установку Lampac к обновлению")
@@ -391,12 +404,95 @@ private object LampacZipInstaller {
                 if (backup.exists()) backup.renameTo(target)
                 throw IOException("Не удалось активировать новую установку Lampac")
             }
-            backup.deleteRecursively()
+            if (!retainBackup) backup.deleteRecursively()
             target
         } catch (error: Exception) {
             stage.deleteRecursively()
             if (!target.exists() && backup.exists()) backup.renameTo(target)
             throw error
+        }
+    }
+
+    private fun preserveUserRuntimeData(previous: File, staged: File) {
+        if (!previous.isDirectory) return
+
+        val preservedPaths = listOf(
+            "data",
+            "database",
+            "cache",
+            "logs",
+            "mods",
+            "torrserver",
+            "TorrServer",
+            "wwwroot",
+            "plugins/override",
+            "module/NextHUB/override",
+            "module/Catalog/override"
+        )
+        preservedPaths.forEach { relative ->
+            val source = File(previous, relative)
+            if (!source.exists()) return@forEach
+            val destination = File(staged, relative)
+            destination.parentFile?.let { if (!it.exists()) it.mkdirs() }
+            if (relative == "mods" && source.isDirectory) {
+                // Preserve user-added modules without copying old official binaries
+                // over the newer release's module implementations.
+                mergeMissingUserFiles(source, destination, source.canonicalFile)
+            } else if (source.isDirectory) {
+                source.copyRecursively(destination, overwrite = true)
+            } else {
+                source.copyTo(destination, overwrite = true)
+            }
+        }
+
+        // Preserve override directories for any installed module, not only
+        // the currently known provider modules.
+        val previousModules = File(previous, "module")
+        if (previousModules.isDirectory) {
+            previousModules.listFiles()?.filter { it.isDirectory }?.forEach { module ->
+                val override = File(module, "override")
+                if (override.isDirectory) {
+                    val destination = File(staged, "module/${module.name}/override")
+                    destination.parentFile?.let { if (!it.exists()) it.mkdirs() }
+                    override.copyRecursively(destination, overwrite = true)
+                }
+            }
+        }
+
+        listOf("users.json", "passwd", "current.conf", "excludes.conf").forEach { name ->
+            val source = File(previous, name)
+            if (source.isFile) source.copyTo(File(staged, name), overwrite = true)
+        }
+    }
+
+    private fun mergeMissingUserFiles(source: File, destination: File, sourceRoot: File) {
+        require(destination.canonicalPath.startsWith(destination.parentFile!!.canonicalPath + File.separator) ||
+            destination.canonicalFile == destination.parentFile!!.canonicalFile) {
+            "Недопустимый путь пользовательского модуля"
+        }
+        if (!destination.exists() && !destination.mkdirs()) {
+            throw IOException("Не удалось создать каталог пользовательских модулей")
+        }
+
+        source.walkTopDown().forEach { item ->
+            val relative = item.relativeTo(sourceRoot).path
+            val target = if (relative.isBlank()) destination else File(destination, relative)
+            require(target.canonicalPath.startsWith(destination.canonicalPath + File.separator) ||
+                target.canonicalFile == destination.canonicalFile) {
+                "Путь пользовательского модуля выходит за пределы каталога"
+            }
+            if (item.isDirectory) {
+                if (!target.exists() && !target.mkdirs()) {
+                    throw IOException("Не удалось восстановить каталог пользовательского модуля")
+                }
+            } else if (!target.exists()) {
+                target.parentFile?.let {
+                    if (!it.exists() && !it.mkdirs()) {
+                        throw IOException("Не удалось восстановить каталог пользовательского модуля")
+                    }
+                }
+                item.copyTo(target, overwrite = false)
+            }
         }
     }
 
@@ -710,10 +806,67 @@ class LampacRuntimeInstaller(context: android.content.Context) {
     private val commandRunner = LampacProotCommandRunner(commands)
     private val downloads = File(appContext.filesDir, "lampac/downloads")
 
+    fun installedVersion(): String? {
+        val opt = File(host.debianRootfsDir, "opt")
+        val target = File(opt, "lampac")
+        val backup = File(opt, ".lampac-backup")
+        // Recover the previous server if the process died between the two
+        // directory renames that activate an update.
+        if (!target.exists() && backup.isDirectory) backup.renameTo(target)
+        val marker = File(host.debianRootfsDir, "opt/lampac/.lampa-lampac-version")
+        val version = runCatching { marker.readText(Charsets.UTF_8).trim() }.getOrNull()
+        return version?.takeIf { it.matches(Regex("[0-9]+\\.[0-9]+\\.[0-9]+")) }
+    }
+
     fun isInstalled(): Boolean {
         val root = host.debianRootfsDir
-        return isDebianRootfsReady(root) &&
-            isCompleteLampacRuntime(root, LampacRuntimeArtifacts.LAMPAC_VERSION)
+        val version = installedVersion()
+        if (version != null && isDebianRootfsReady(root) && isCompleteLampacRuntime(root, version)) {
+            return true
+        }
+
+        // If activation completed but the process was interrupted before the
+        // new tree could be used, restore the staged backup before reporting
+        // the runtime as missing. Also handle a missing marker in a partial tree.
+        if (hasPendingUpdateBackup()) {
+            rollbackPendingUpdateBackup()
+            val restoredVersion = installedVersion()
+            return restoredVersion != null &&
+                isDebianRootfsReady(root) &&
+                isCompleteLampacRuntime(root, restoredVersion)
+        }
+        return false
+    }
+
+    private fun lampacInstallBackup(): File =
+        File(host.debianRootfsDir, "opt/.lampac-backup")
+
+    fun hasPendingUpdateBackup(): Boolean = lampacInstallBackup().isDirectory
+
+    fun commitPendingUpdateBackup() {
+        val backup = lampacInstallBackup()
+        if (backup.exists() && !backup.deleteRecursively()) {
+            LampacRuntimeState.appendLog("Не удалось удалить резервную копию предыдущего Lampac.")
+        }
+    }
+
+    fun rollbackPendingUpdateBackup(): Boolean {
+        val opt = File(host.debianRootfsDir, "opt")
+        val target = File(opt, "lampac")
+        val backup = lampacInstallBackup()
+        if (!backup.isDirectory) return false
+
+        val failed = File(opt, ".lampac-failed")
+        failed.deleteRecursively()
+        if (target.exists() && !target.renameTo(failed)) {
+            throw IOException("Не удалось переместить неудачную версию Lampac")
+        }
+        if (!backup.renameTo(target)) {
+            if (failed.exists()) failed.renameTo(target)
+            throw IOException("Не удалось восстановить предыдущую версию Lampac")
+        }
+        failed.deleteRecursively()
+        return true
     }
 
     fun availableBytes(): Long = StatFs(appContext.filesDir.absolutePath).availableBytes
@@ -799,8 +952,10 @@ class LampacRuntimeInstaller(context: android.content.Context) {
         // Newer APKs may add an ARM64 runtime prerequisite without changing the
         // Lampac payload. Repair that in place before requiring space for a
         // second 480 MB archive or replacing the user's existing init.conf.
+        val existingVersion = installedVersion()
         if (isDebianRootfsReady(prepared.debianRootfsDir) &&
-            isLampacRuntimePayloadReady(prepared.debianRootfsDir, LampacRuntimeArtifacts.LAMPAC_VERSION) &&
+            existingVersion != null &&
+            isLampacRuntimePayloadReady(prepared.debianRootfsDir, existingVersion) &&
             !isLampacNodeReady(prepared.debianRootfsDir)
         ) {
             ensureLampacDebianMachineId(prepared.debianRootfsDir)
@@ -902,7 +1057,11 @@ class LampacRuntimeInstaller(context: android.content.Context) {
         }
 
         send("lampac-extract", "Проверяем архив и устанавливаем Lampac…", 0, 0)
-        val serverDir = LampacZipInstaller.install(lampacArchive, prepared.debianRootfsDir) { done, total ->
+        val serverDir = LampacZipInstaller.install(
+            archive = lampacArchive,
+            rootfs = prepared.debianRootfsDir,
+            version = LampacRuntimeArtifacts.LAMPAC_VERSION
+        ) { done, total ->
             send("lampac-extract", "Распаковка Lampac: ${formatBytes(done)}", done, total)
         }
         lampacArchive.delete()
@@ -912,6 +1071,87 @@ class LampacRuntimeInstaller(context: android.content.Context) {
         }
         send("installed", "Lampac установлен. Сервер пока остановлен.", 1, 1)
         serverDir
+    }
+
+    suspend fun updateFromRelease(
+        version: String,
+        url: String,
+        sha256: String,
+        expectedBytes: Long,
+        onProgress: (LampacInstallProgress) -> Unit = {}
+    ): File = withContext(Dispatchers.IO) {
+        require(version.matches(Regex("[0-9]+\\.[0-9]+\\.[0-9]+"))) {
+            "Версия Lampac в релизе некорректна"
+        }
+        require(sha256.matches(Regex("[0-9a-fA-F]{64}"))) {
+            "В релизе Lampac отсутствует корректная SHA-256"
+        }
+        require(expectedBytes in 1..1024L * 1024L * 1024L) {
+            "Размер архива Lampac превышает лимит обновления"
+        }
+        val current = installedVersion() ?: throw IOException("Не найдена установленная версия Lampac")
+        require(compareSemanticVersions(version, current) > 0) {
+            "Релиз Lampac не новее установленной версии"
+        }
+        check(isInstalled()) { "Текущая установка Lampac неполная; обновление отменено" }
+        check(!hasPendingUpdateBackup()) {
+            "Предыдущее обновление Lampac ещё не подтверждено запуском. Перезапустите сервер и повторите проверку."
+        }
+
+        val send = { phase: String, message: String, done: Long, total: Long ->
+            onProgress(
+                LampacInstallProgress(
+                    phase = phase,
+                    message = message,
+                    downloadedBytes = done,
+                    totalBytes = total,
+                    percent = if (total > 0) ((done * 100L) / total).toInt().coerceIn(0, 100) else null
+                )
+            )
+        }
+        send("update-download", "Загружаем Lampac $version…", 0, expectedBytes)
+        val archive = LampacArtifactDownloader.download(
+            LampacArtifactSpec(
+                fileName = "lampac-nextgen-$version.zip",
+                url = url,
+                digestAlgorithm = "SHA-256",
+                expectedDigest = sha256.lowercase(),
+                expectedBytes = expectedBytes,
+                maxBytes = expectedBytes
+            ),
+            downloads
+        ) { done, total ->
+            send("update-download", "Загрузка Lampac: ${formatBytes(done)}", done, total)
+        }
+
+        try {
+            send("update-extract", "Проверяем и устанавливаем Lampac $version…", 0, expectedBytes)
+            val updated = LampacZipInstaller.install(
+                archive = archive,
+                rootfs = host.debianRootfsDir,
+                version = version,
+                retainBackup = true
+            ) { done, total ->
+                send("update-extract", "Установка Lampac: ${formatBytes(done)}", done, total)
+            }
+            check(isInstalled() && installedVersion() == version) {
+                "После обновления проверка целостности Lampac не пройдена"
+            }
+            send("updated", "Lampac обновлён до $version. Настройки и данные сохранены.", expectedBytes, expectedBytes)
+            updated
+        } finally {
+            archive.delete()
+        }
+    }
+
+    private fun compareSemanticVersions(first: String, second: String): Int {
+        val a = first.split('.').map { it.toInt() }
+        val b = second.split('.').map { it.toInt() }
+        for (index in 0..2) {
+            val compare = a[index].compareTo(b[index])
+            if (compare != 0) return compare
+        }
+        return 0
     }
 
     private fun shellQuote(value: String): String = "'" + value.replace("'", "'\\''") + "'"
