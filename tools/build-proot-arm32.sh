@@ -19,6 +19,10 @@ git -C "$PR_ROOT" config --local --replace-all submodule.vendor/samba.url \
   "https://github.com/samba-team/samba.git"
 git -C "$PR_ROOT" submodule update --init vendor/samba
 
+# Android's ARM EABI seccomp filter blocks rseq (398) and fchmodat2 (452).
+# Teach PRoot the ARM32 syscall numbers and emulate fchmodat2(flags=0).
+python3 "$ROOT/tools/patch-proot-arm32-syscalls.py" "$PR_ROOT"
+
 # The pinned upstream build script uses the compiler triple for the sysroot directory too.
 # NDK r27c names the ARMv7 sysroot library directory arm-linux-androideabi,
 # while the compiler executable remains armv7a-linux-androideabi28-clang.
