@@ -104,6 +104,20 @@ fun LampaApp(onExit: () -> Unit) {
         }
     }
 
+    LaunchedEffect(runtime.phase, updatesVisible) {
+        // Refresh the displayed Lampac version when the update service has
+        // completed its restart, and whenever the update centre is opened.
+        if (updatesVisible && runtime.phase == LampacRuntimePhase.RUNNING && updateCheck != null) {
+            updateChecking = true
+            val result = withContext(Dispatchers.IO) {
+                runCatching { LampaUpdateManager(context).checkUpdates() }
+            }
+            result.onSuccess { updateCheck = it }
+                .onFailure { updateError = it.message ?: "Не удалось обновить сведения о версиях" }
+            updateChecking = false
+        }
+    }
+
     LaunchedEffect(modulesVisible) {
         if (modulesVisible) {
             moduleLoading = true
