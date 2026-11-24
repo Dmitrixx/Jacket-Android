@@ -623,7 +623,8 @@ internal fun buildLampacOfflineDpkgCommand(command: String): String {
         command +
         "; } > /tmp/lampa-dpkg-install.log 2>&1; status=\$?; " +
         "echo '--- apt/dpkg output (last 120 lines) ---'; tail -n 120 /tmp/lampa-dpkg-install.log; " +
-        "rm -f /tmp/lampa-dpkg-install.log; if [ \"\$status\" -ne 0 ]; then " +
+        "if [ \"\$status\" -eq 0 ]; then rm -f /tmp/lampa-dpkg-install.log; else " +
+        "echo '--- apt/dpkg failure log preserved for Android diagnostics ---'; " +
         "apt-get clean >/dev/null 2>&1 || true; " +
         "rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*.deb; " +
         "exit \"\$status\"; fi"
@@ -1083,6 +1084,7 @@ class LampacRuntimeInstaller(context: android.content.Context) {
                         tail.forEach { row ->
                             send("packages-diagnostic", row.take(220), 0, 0)
                         }
+                        diagnosticFile.delete()
                     }.onFailure { error ->
                         send(
                             "packages-diagnostic",
