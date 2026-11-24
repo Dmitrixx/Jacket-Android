@@ -428,7 +428,11 @@ private object LampacZipInstaller {
             if (!source.exists()) return@forEach
             val destination = File(staged, relative)
             destination.parentFile?.let { if (!it.exists()) it.mkdirs() }
-            if (source.isDirectory) {
+            if (relative == "mods" && source.isDirectory) {
+                // Preserve user-added modules without copying old official binaries
+                // over the newer release's module implementations.
+                mergeMissingUserFiles(source, destination, source.canonicalFile)
+            } else if (source.isDirectory) {
                 source.copyRecursively(destination, overwrite = true)
             } else {
                 source.copyTo(destination, overwrite = true)
@@ -438,6 +442,37 @@ private object LampacZipInstaller {
         listOf("users.json", "passwd", "current.conf", "excludes.conf").forEach { name ->
             val source = File(previous, name)
             if (source.isFile) source.copyTo(File(staged, name), overwrite = true)
+        }
+    }
+
+    private fun mergeMissingUserFiles(source: File, destination: File, sourceRoot: File) {
+        require(destination.canonicalPath.startsWith(destination.parentFile!!.canonicalPath + File.separator) ||
+            destination.canonicalFile == destination.parentFile!!.canonicalFile) {
+            "Недопустимый путь пользовательского модуля"
+        }
+        if (!destination.exists() && !destination.mkdirs()) {
+            throw IOException("Не удалось создать каталог пользовательских модулей")
+        }
+
+        source.walkTopDown().forEach { item ->
+            val relative = item.relativeTo(sourceRoot).path
+            val target = if (relative.isBlank()) destination else File(destination, relative)
+            require(target.canonicalPath.startsWith(destination.canonicalPath + File.separator) ||
+                target.canonicalFile == destination.canonicalFile) {
+                "Путь пользовательского модуля выходит за пределы каталога"
+            }
+            if (item.isDirectory) {
+                if (!target.exists() && !target.mkdirs()) {
+                    throw IOException("Не удалось восстановить каталог пользовательского модуля")
+                }
+            } else if (!target.exists()) {
+                target.parentFile?.let {
+                    if (!it.exists() && !it.mkdirs()) {
+                        throw IOException("Не удалось восстановить каталог пользовательского модуля")
+                    }
+                }
+                item.copyTo(target, overwrite = false)
+            }
         }
     }
 
