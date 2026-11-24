@@ -142,7 +142,7 @@ class LampacRuntimeService : Service() {
         }
     }
 
-    private suspend fun startInstalledServer() {
+    private suspend fun startInstalledServer(aladinPatchRestartAttempt: Int = 0) {
         val installer = LampacRuntimeInstaller(applicationContext)
         if (!installer.isInstalled()) {
             LampacRuntimeState.update(
@@ -216,6 +216,33 @@ class LampacRuntimeService : Service() {
             serverSession = session
             monitorServer(session)
             waitForServerReady(session)
+
+            // ModuleRepository.UpdateModules runs inside Core.dll startup and may
+            // download/replace the dynamic Aladin source after our pre-start patch.
+            // Re-apply after the first ready signal; if it changed the source, restart
+            // once so Lampac compiles the patched source (DynamicModule is off in the
+            // Android profile, so a file change alone cannot trigger hot recompilation).
+            val postStartupPatch = withContext(Dispatchers.IO) {
+                LampacProviderCompatibilityPatches.apply(File(host.debianRootfsDir, "opt/lampac"))
+            }
+            if (postStartupPatch.updatedFiles > 0) {
+                LampacRuntimeState.appendLog(
+                    "Aladin: исходник обновлён репозиторием модулей; перезапускаем Lampac для компиляции исправления."
+                )
+                if (aladinPatchRestartAttempt >= 1) {
+                    throw IOException("Исходник Aladin повторно заменён во время запуска; исправление не удалось закрепить.")
+                }
+
+                isStopping.set(true)
+                stopSession()
+                monitorJob?.cancelAndJoin()
+                monitorJob = null
+                serverSession = null
+                isStopping.set(false)
+                startInstalledServer(aladinPatchRestartAttempt + 1)
+                return
+            }
+
             if (serverSession === session && !isStopping.get()) {
                 if (!ExternalMediaProxy.start()) {
                     LampacRuntimeState.appendLog("Не удалось запустить локальный прокси внешнего плеера.")
