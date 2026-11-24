@@ -793,6 +793,12 @@ class LampacRuntimeInstaller(context: android.content.Context) {
     private val downloads = File(appContext.filesDir, "lampac/downloads")
 
     fun installedVersion(): String? {
+        val opt = File(host.debianRootfsDir, "opt")
+        val target = File(opt, "lampac")
+        val backup = File(opt, ".lampac-backup")
+        // Recover the previous server if the process died between the two
+        // directory renames that activate an update.
+        if (!target.exists() && backup.isDirectory) backup.renameTo(target)
         val marker = File(host.debianRootfsDir, "opt/lampac/.lampa-lampac-version")
         val version = runCatching { marker.readText(Charsets.UTF_8).trim() }.getOrNull()
         return version?.takeIf { it.matches(Regex("[0-9]+\\.[0-9]+\\.[0-9]+")) }
@@ -801,7 +807,19 @@ class LampacRuntimeInstaller(context: android.content.Context) {
     fun isInstalled(): Boolean {
         val root = host.debianRootfsDir
         val version = installedVersion() ?: return false
-        return isDebianRootfsReady(root) && isCompleteLampacRuntime(root, version)
+        if (isDebianRootfsReady(root) && isCompleteLampacRuntime(root, version)) return true
+
+        // If activation completed but the process was interrupted before the
+        // new tree could be used, restore the staged backup before reporting
+        // the runtime as missing.
+        if (hasPendingUpdateBackup()) {
+            rollbackPendingUpdateBackup()
+            val restoredVersion = installedVersion()
+            return restoredVersion != null &&
+                isDebianRootfsReady(root) &&
+                isCompleteLampacRuntime(root, restoredVersion)
+        }
+        return false
     }
 
     private fun lampacInstallBackup(): File =
