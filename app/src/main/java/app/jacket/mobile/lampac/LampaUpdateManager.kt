@@ -156,7 +156,9 @@ class LampaUpdateManager(context: Context) {
         val archive = archiveAsset ?: return null
         require(archive.optLong("size") == sizeBytes) { "Размер архива Lampa не совпадает с манифестом" }
         val apiDigest = archive.optString("digest").removePrefix("sha256:").lowercase()
-        require(apiDigest.isBlank() || apiDigest == sha256) { "Контрольная сумма релиза Lampa не совпадает с API GitHub" }
+        require(apiDigest.matches(Regex("[0-9a-f]{64}")) && apiDigest == sha256) {
+            "GitHub не подтвердил SHA-256 архива Lampa или контрольные суммы не совпадают"
+        }
 
         return LampaWebUpdateInfo(
             buildId = buildId,
