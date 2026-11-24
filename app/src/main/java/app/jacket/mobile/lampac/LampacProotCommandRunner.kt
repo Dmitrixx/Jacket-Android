@@ -16,10 +16,16 @@ import java.nio.charset.StandardCharsets
  */
 internal const val LAMPAC_DEBIAN_ALIAS = "lampac-debian"
 internal const val LAMPAC_DEBIAN_OCI_IMAGE = "docker.io/library/debian:forky-slim"
+internal const val LAMPAC_DEBIAN_ARM32_OCI_IMAGE = "docker.io/library/debian:trixie-slim"
 
-internal fun lampacDebianInstallArguments(): List<String> = listOf(
+internal fun lampacDebianInstallArguments(
+    architecture: LampacRuntimeArchitecture = LampacRuntimeArchitecture.ARM64
+): List<String> = listOf(
     "install",
-    LAMPAC_DEBIAN_OCI_IMAGE,
+    when (architecture) {
+        LampacRuntimeArchitecture.ARM64 -> LAMPAC_DEBIAN_OCI_IMAGE
+        LampacRuntimeArchitecture.ARM32 -> LAMPAC_DEBIAN_ARM32_OCI_IMAGE
+    },
     "--override-alias",
     LAMPAC_DEBIAN_ALIAS
 )
@@ -33,8 +39,10 @@ internal fun lampacDebianInstallArguments(): List<String> = listOf(
 class LampacProotCommandRunner(
     private val commands: LampacProotCommands
 ) {
-    suspend fun installDebian(onOutput: (String) -> Unit = {}): Int =
-        execute(lampacDebianInstallArguments(), onOutput)
+    suspend fun installDebian(
+        architecture: LampacRuntimeArchitecture,
+        onOutput: (String) -> Unit = {}
+    ): Int = execute(lampacDebianInstallArguments(architecture), onOutput)
 
     suspend fun runAsRoot(
         command: String,
