@@ -295,7 +295,7 @@ private class LampaAndroidBridge(
             } else {
                 null
             }
-        val uri = routedUrl?.let(Uri::parse) ?: run {
+        val uri = routedUrl?.let { Uri.parse(it) } ?: run {
             mainHandler.post {
                 Toast.makeText(
                     context,
