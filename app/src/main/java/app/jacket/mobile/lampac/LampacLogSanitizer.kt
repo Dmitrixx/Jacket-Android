@@ -10,7 +10,7 @@ package app.jacket.mobile.lampac
 internal object LampacLogSanitizer {
     // PRoot writes ANSI colour sequences; strip both the ESC-prefixed form and
     // the bracket-only fragments left by Android terminal/log sanitisation.
-    private val ansiControl = Regex("""(?:\\u001B|\\u009B)?\\[(?:[0-9;?]*)(?:[ -/]*)(?:[@-~])""")
+    private val ansiControl = Regex("""(?:\x1B|\x9B)?\[[0-?]*[ -/]*[@-~]""")
     private val bearerCredential = Regex("""(?i)\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+""")
     private val cookieHeader = Regex("""(?i)\b(?:cookie|set-cookie)\s*:\s*[^\r\n]*""")
     private val credentialAssignment = Regex(
