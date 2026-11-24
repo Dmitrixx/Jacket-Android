@@ -14,6 +14,8 @@ A personal Android and Android TV shell for the complete upstream Lampa web appl
 - Loopback-only external-media compatibility proxy for Lampac online VOD (`/proxy/`, `/proxy-dash/`) and TorrServer/GStreamer (`/ts/stream`, `/ts/gst`): external players can probe media with HEAD, seek with HTTP Range requests, and receive the original Content-Length/chunked streaming framing.
 - In-app module manager discovers the actual installed module manifests, lets users enable/disable individual modules, and applies changes through `BaseModule.SkipModules` without reinstalling Lampac.
 - Applies an idempotent compatibility patch to the dynamic Aladin module before Lampac starts, preventing oversized `/proxy/` URLs while preserving the existing server installation and provider configuration.
+- Keeps checked online balancers available for manual retry in Lampa's source selector and records safe HTTP diagnostics when VLC/MX requests a proxied media URL.
+- Keeps all checked online balancers available for manual retry in Lampa's source selector and records safe HTTP diagnostics when VLC/MX requests a proxied media URL.
 
 ## First start
 

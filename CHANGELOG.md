@@ -1,5 +1,13 @@
 # Changelog
 
+## 3.0.18 — Balancer selection and external-player diagnostics
+
+- Keep every checked Lampac balancer in the source selector, including grey entries marked as no-result, so the user can force-open/retry each provider.
+- Preserve automatic selection of the best positive match; this change does not merge unrelated provider results into one combined list.
+- Patch `Online/plugin.js` in-place before server startup; no Lampac reinstall or settings reset is needed.
+- Add external-player relay diagnostics to Lampac logs: HTTP status and media content type for HEAD probes, playlists, and failed responses, without logging encrypted stream tokens or query strings.
+- Add unit tests for idempotent selector patching and retain the existing Aladin short-proxy fix.
+
 ## 3.0.17 — Fix long Aladin proxy links
 
 - Patch the dynamic Aladin controller before Lampac starts, enabling compact MD5 proxy keys for HLS URLs with large `Accepts-Controls` headers.

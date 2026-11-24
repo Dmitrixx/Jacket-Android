@@ -6,6 +6,9 @@ import java.io.Closeable
 import java.io.IOException
 import java.net.InetAddress
 import java.net.InetSocketAddress
+import java.net.ConnectException
+import java.net.SocketTimeoutException
+import java.net.UnknownHostException
 import java.net.ServerSocket
 import java.net.Socket
 import java.net.SocketException
@@ -310,6 +313,34 @@ internal class ExternalMediaProxyServer(
                 responseHeaders += name to value
             }
 
+            val contentType = responseHeaders.firstOrNull { it.first.equals("Content-Type", true) }
+                ?.second
+                ?.substringBefore(';')
+                ?.take(80)
+            val shouldLogResponse = method == "HEAD" ||
+                status !in 200..299 ||
+                (method == "GET" && (
+                    rawPath.endsWith(".m3u8", ignoreCase = true) ||
+                        rawPath.endsWith(".mpd", ignoreCase = true) ||
+                        contentType?.contains("mpegurl", ignoreCase = true) == true ||
+                        contentType?.contains("dash+xml", ignoreCase = true) == true
+                    ))
+            if (shouldLogResponse) {
+                val length = responseHeaders.firstOrNull { it.first.equals("Content-Length", true) }?.second
+                val detail = buildString {
+                    append("Внешний плеер: ")
+                    append(if (method == "HEAD") "HEAD→GET" else method)
+                    append(' ')
+                    append(mediaRouteLabel(rawPath))
+                    append(" → HTTP ")
+                    append(status)
+                    append(", ")
+                    append(contentType ?: "тип не указан")
+                    if (!length.isNullOrBlank()) append(", $length байт")
+                }
+                LampacRuntimeState.appendLog(detail)
+            }
+
             // Keep the origin's exact body framing. HttpURLConnection transparently
             // de-chunks responses; that breaks clients expecting a streaming response
             // with Transfer-Encoding: chunked and no Content-Length.
@@ -339,13 +370,30 @@ internal class ExternalMediaProxyServer(
                     output.flush()
                 }
             }
-        } catch (_: Exception) {
+        } catch (error: Exception) {
             if (!responseStarted) {
                 runCatching { writeSimpleResponse(output, 502, "Bad Gateway") }
             }
+            val failure = when (error) {
+                is SocketTimeoutException -> "тайм-аут"
+                is ConnectException -> "соединение отклонено"
+                is UnknownHostException -> "ошибка DNS"
+                else -> error.javaClass.simpleName
+            }
+            LampacRuntimeState.appendLog(
+                "Внешний плеер: ${mediaRouteLabel(rawPath)} — ошибка relay ($failure)."
+            )
         } finally {
             runCatching { upstream.close() }
         }
+    }
+
+    private fun mediaRouteLabel(rawPath: String): String = when {
+        rawPath.startsWith("/proxy-dash/", ignoreCase = true) -> "/proxy-dash"
+        rawPath.startsWith("/proxy/", ignoreCase = true) -> "/proxy"
+        rawPath.startsWith("/ts/stream", ignoreCase = true) -> "/ts/stream"
+        rawPath.startsWith("/ts/gst", ignoreCase = true) -> "/ts/gst"
+        else -> "media"
     }
 
     private fun rewriteLocation(location: String): String {
