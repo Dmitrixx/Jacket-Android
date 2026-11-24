@@ -44,11 +44,11 @@ class ExternalMediaProxyTest {
                 socket.getOutputStream().apply {
                     write(
                         (
-                            "HTTP/1.1 200 OK\\r\\n" +
-                                "Content-Type: video/x-matroska\\r\\n" +
-                                "Content-Length: 777777\\r\\n" +
-                                "Accept-Ranges: bytes\\r\\n" +
-                                "Connection: close\\r\\n\\r\\n"
+                            "HTTP/1.1 200 OK\r\n" +
+                                "Content-Type: video/x-matroska\r\n" +
+                                "Content-Length: 777777\r\n" +
+                                "Accept-Ranges: bytes\r\n" +
+                                "Connection: close\r\n\r\n"
                             ).toByteArray(StandardCharsets.ISO_8859_1)
                     )
                     flush()
@@ -61,9 +61,9 @@ class ExternalMediaProxyTest {
             assertTrue(proxy.start())
             val response = sendRequest(
                 proxy.port!!,
-                "HEAD /ts/stream/heart.mkv HTTP/1.1\\r\\n" +
-                    "Host: 127.0.0.1\\r\\n" +
-                    "User-Agent: VLC-test\\r\\n\\r\\n"
+                "HEAD /ts/stream/heart.mkv HTTP/1.1\r\n" +
+                    "Host: 127.0.0.1\r\n" +
+                    "User-Agent: VLC-test\r\n\r\n"
             )
             upstreamThread.join(3_000)
 
@@ -71,7 +71,7 @@ class ExternalMediaProxyTest {
             assertTrue(response.startsWith("HTTP/1.1 200 OK"))
             assertTrue(response.contains("Content-Length: 777777"))
             assertTrue(response.contains("Content-Type: video/x-matroska"))
-            assertFalse(response.substringAfter("\\r\\n\\r\\n").contains("video"))
+            assertFalse(response.substringAfter("\r\n\r\n").contains("video"))
         } finally {
             proxy.stop()
             upstream.close()
@@ -89,12 +89,12 @@ class ExternalMediaProxyTest {
                 socket.getOutputStream().apply {
                     write(
                         (
-                            "HTTP/1.1 206 Partial Content\\r\\n" +
-                                "Content-Type: video/x-matroska\\r\\n" +
-                                "Content-Length: 4\\r\\n" +
-                                "Content-Range: bytes 0-3/100\\r\\n" +
-                                "Accept-Ranges: bytes\\r\\n" +
-                                "Connection: close\\r\\n\\r\\n" +
+                            "HTTP/1.1 206 Partial Content\r\n" +
+                                "Content-Type: video/x-matroska\r\n" +
+                                "Content-Length: 4\r\n" +
+                                "Content-Range: bytes 0-3/100\r\n" +
+                                "Accept-Ranges: bytes\r\n" +
+                                "Connection: close\r\n\r\n" +
                                 "data"
                             ).toByteArray(StandardCharsets.ISO_8859_1)
                     )
@@ -108,9 +108,9 @@ class ExternalMediaProxyTest {
             assertTrue(proxy.start())
             val response = sendRequest(
                 proxy.port!!,
-                "GET /ts/stream/heart.mkv HTTP/1.1\\r\\n" +
-                    "Host: 127.0.0.1\\r\\n" +
-                    "Range: bytes=0-3\\r\\n\\r\\n"
+                "GET /ts/stream/heart.mkv HTTP/1.1\r\n" +
+                    "Host: 127.0.0.1\r\n" +
+                    "Range: bytes=0-3\r\n\r\n"
             )
             upstreamThread.join(3_000)
 
