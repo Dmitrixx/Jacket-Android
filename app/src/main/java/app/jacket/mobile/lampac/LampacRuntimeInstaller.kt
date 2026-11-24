@@ -619,7 +619,10 @@ internal fun buildLampacOfflineDpkgCommand(command: String): String {
         command +
         "; } > /tmp/lampa-dpkg-install.log 2>&1; status=\$?; " +
         "echo '--- apt/dpkg output (last 120 lines) ---'; tail -n 120 /tmp/lampa-dpkg-install.log; " +
-        "rm -f /tmp/lampa-dpkg-install.log; if [ \"\$status\" -ne 0 ]; then exit \"\$status\"; fi"
+        "rm -f /tmp/lampa-dpkg-install.log; if [ \"\$status\" -ne 0 ]; then " +
+        "apt-get clean >/dev/null 2>&1 || true; " +
+        "rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*.deb; " +
+        "exit \"\$status\"; fi"
 }
 
 /** Ensure the private Debian rootfs has a persistent, standard 32-hex machine-id. */
@@ -971,11 +974,11 @@ class LampacRuntimeInstaller(context: android.content.Context) {
             return@withContext existingServer
         }
 
-        val requiredBeforeDownload = LampacRuntimeArtifacts.LAMPAC_BYTES +
-            4L * 1024L * 1024L * 1024L
-        check(availableBytes() >= requiredBeforeDownload) {
-            "Для установки полного Lampac нужно не менее 4,5 ГБ свободного места во внутренней памяти телефона."
-        }
+        // Do not apply the former fixed 4.5 GiB preflight threshold here.
+        // On some Android TV sticks it can exceed the entire /data partition.
+        // The exact Lampac ZIP expansion size is checked after its central
+        // directory has been read and before extraction; temporary archives
+        // are removed in finally blocks so a failed low-space attempt is retryable.
 
         val legacyInitConfig = readLegacyLampacInitConfig(host.prefixDir)
         if (!isDebianRootfsReady(prepared.debianRootfsDir)) {
@@ -1027,13 +1030,17 @@ class LampacRuntimeInstaller(context: android.content.Context) {
             downloads
         ) { done, total -> send("dotnet-download", "Загрузка .NET: ${formatBytes(done)}", done, total) }
 
-        send("dotnet-install", "Устанавливаем .NET в Debian…", 0, 0)
-        val dotnetPath = shellQuote(dotnetArchive.absolutePath)
-        val dotnetInstall = commandRunner.runAsRoot(
-            buildDotnetInstallCommand(dotnetArchive.absolutePath)
-        ) { line -> send("dotnet-install", line.take(220), 0, 0) }
-        check(dotnetInstall == 0) { "Не удалось установить .NET Runtime (код $dotnetInstall)" }
-        dotnetArchive.delete()
+        try {
+            send("dotnet-install", "Устанавливаем .NET в Debian…", 0, 0)
+            val dotnetInstall = commandRunner.runAsRoot(
+                buildDotnetInstallCommand(dotnetArchive.absolutePath)
+            ) { line -> send("dotnet-install", line.take(220), 0, 0) }
+            check(dotnetInstall == 0) { "Не удалось установить .NET Runtime (код $dotnetInstall)" }
+        } finally {
+            // The verified .NET archive is only a temporary installation input.
+            // Free it even when extraction or validation fails on a small /data partition.
+            dotnetArchive.delete()
+        }
 
         send("lampac-download", "Загружаем Lampac NextGen ${LampacRuntimeArtifacts.LAMPAC_VERSION} (~480 МБ)…", 0, 0)
         val lampacArchive = LampacArtifactDownloader.download(
@@ -1048,29 +1055,34 @@ class LampacRuntimeInstaller(context: android.content.Context) {
             downloads
         ) { done, total -> send("lampac-download", "Загрузка Lampac: ${formatBytes(done)}", done, total) }
 
-        if (legacyInitConfig != null) {
-            val newServerDirectory = File(prepared.debianRootfsDir, "opt/lampac")
-            if (!File(newServerDirectory, "init.conf").isFile) {
-                LampacEmbeddedConfig.importInitConfig(newServerDirectory, legacyInitConfig)
-                send("config-migration", "Сохранены прежние настройки и ключи источников Lampac.", 1, 1)
+        try {
+            if (legacyInitConfig != null) {
+                val newServerDirectory = File(prepared.debianRootfsDir, "opt/lampac")
+                if (!File(newServerDirectory, "init.conf").isFile) {
+                    LampacEmbeddedConfig.importInitConfig(newServerDirectory, legacyInitConfig)
+                    send("config-migration", "Сохранены прежние настройки и ключи источников Lampac.", 1, 1)
+                }
             }
-        }
 
-        send("lampac-extract", "Проверяем архив и устанавливаем Lampac…", 0, 0)
-        val serverDir = LampacZipInstaller.install(
-            archive = lampacArchive,
-            rootfs = prepared.debianRootfsDir,
-            version = LampacRuntimeArtifacts.LAMPAC_VERSION
-        ) { done, total ->
-            send("lampac-extract", "Распаковка Lampac: ${formatBytes(done)}", done, total)
-        }
-        lampacArchive.delete()
+            send("lampac-extract", "Проверяем архив и устанавливаем Lampac…", 0, 0)
+            val serverDir = LampacZipInstaller.install(
+                archive = lampacArchive,
+                rootfs = prepared.debianRootfsDir,
+                version = LampacRuntimeArtifacts.LAMPAC_VERSION
+            ) { done, total ->
+                send("lampac-extract", "Распаковка Lampac: ${formatBytes(done)}", done, total)
+            }
 
-        check(File(serverDir, "Core.dll").isFile && File(prepared.debianRootfsDir, "opt/dotnet/dotnet").isFile) {
-            "Установка Lampac завершилась без обязательных файлов"
+            check(File(serverDir, "Core.dll").isFile && File(prepared.debianRootfsDir, "opt/dotnet/dotnet").isFile) {
+                "Установка Lampac завершилась без обязательных файлов"
+            }
+            send("installed", "Lampac установлен. Сервер пока остановлен.", 1, 1)
+            serverDir
+        } finally {
+            // Keep /data recoverable after a failed extraction: the archive is
+            // downloaded again on retry, while the ZIP installer removes its stage.
+            lampacArchive.delete()
         }
-        send("installed", "Lampac установлен. Сервер пока остановлен.", 1, 1)
-        serverDir
     }
 
     suspend fun updateFromRelease(
