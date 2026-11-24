@@ -55,6 +55,10 @@ fun LampaApp(onExit: () -> Unit) {
     val clipboardManager = LocalClipboardManager.current
     val runtime by LampacRuntimeState.state.collectAsState()
     val coroutineScope = rememberCoroutineScope()
+    val runtimeLogScrollState = rememberScrollState()
+    LaunchedEffect(runtime.logs.size) {
+        runtimeLogScrollState.scrollTo(runtimeLogScrollState.maxValue)
+    }
     var settingsVisible by remember { mutableStateOf(false) }
     var modulesVisible by remember { mutableStateOf(false) }
     var moduleLoading by remember { mutableStateOf(false) }
@@ -209,7 +213,7 @@ fun LampaApp(onExit: () -> Unit) {
                             Column(
                                 modifier = Modifier
                                     .padding(10.dp)
-                                    .verticalScroll(rememberScrollState()),
+                                    .verticalScroll(runtimeLogScrollState),
                                 verticalArrangement = Arrangement.spacedBy(4.dp)
                             ) {
                                 runtime.logs.forEach { line ->
