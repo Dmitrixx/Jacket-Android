@@ -3,6 +3,7 @@ package app.jacket.mobile.lampac
 import android.content.Context
 import android.net.ConnectivityManager
 import android.os.Build
+import android.os.Process
 import android.system.Os
 import id.or.oo.pr.engine.ProotHost
 import id.or.oo.pr.engine.ProotLauncher
@@ -58,14 +59,16 @@ data class ProotBootstrapResult(
  */
 internal enum class LampacRuntimeArchitecture { ARM64, ARM32 }
 
-internal fun selectLampacRuntimeArchitecture(supportedAbis: Iterable<String>): LampacRuntimeArchitecture? =
-    when {
-        supportedAbis.any { it.equals("arm64-v8a", ignoreCase = true) } ->
-            LampacRuntimeArchitecture.ARM64
-        supportedAbis.any { it.equals("armeabi-v7a", ignoreCase = true) } ->
-            LampacRuntimeArchitecture.ARM32
-        else -> null
-    }
+internal fun selectLampacRuntimeArchitecture(
+    is64BitProcess: Boolean,
+    supportedAbis: Iterable<String>
+): LampacRuntimeArchitecture? = when {
+    is64BitProcess && supportedAbis.any { it.equals("arm64-v8a", ignoreCase = true) } ->
+        LampacRuntimeArchitecture.ARM64
+    !is64BitProcess && supportedAbis.any { it.equals("armeabi-v7a", ignoreCase = true) } ->
+        LampacRuntimeArchitecture.ARM32
+    else -> null
+}
 
 object LampacProotBootstrap {
     private val requiredLibraries = listOf(
@@ -76,7 +79,7 @@ object LampacProotBootstrap {
     )
 
     fun runtimeArchitecture(): LampacRuntimeArchitecture? =
-        selectLampacRuntimeArchitecture(Build.SUPPORTED_ABIS.asList())
+        selectLampacRuntimeArchitecture(Process.is64Bit(), Build.SUPPORTED_ABIS.asList())
 
     fun isSupportedOnThisDevice(): Boolean = runtimeArchitecture() != null
 
