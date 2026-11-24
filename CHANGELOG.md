@@ -1,5 +1,15 @@
 # Changelog
 
+## 3.0.19 — In-app Lampa and Lampac updates
+
+- Add an in-app update center with separate checks and actions for the Lampa web bundle and the embedded Lampac server.
+- Publish checksum-manifested standalone Lampa web bundles from main builds so the Lampa interface can update without reinstalling the APK.
+- Check the latest stable Lampac release and install only a newer semantic version with a published SHA-256 and bounded archive size.
+- Stage, validate and swap updates atomically; preserve `init.conf`, local data, databases, user modules and configured overrides.
+- Keep the previous Lampac installation until the new server passes its startup probe; automatically restore the previous version if the updated server fails to start.
+- Keep the previous Lampa web bundle for recovery; re-create the WebView after a successful asset update.
+- Add a weekly upstream Lampa source check that prepares a reviewable pull request; Android compatibility patches are checked by CI before an upstream sync can be merged.
+
 ## 3.0.18 — Balancer selection and external-player diagnostics
 
 - Keep every checked Lampac balancer in the source selector, including grey entries marked as no-result, so the user can force-open/retry each provider.
