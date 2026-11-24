@@ -2,7 +2,7 @@ name: Lampa Android CI
 
 on:
   push:
-    branches: [main, 'feat/**', 'chore/**']
+    branches: [main, main32, 'feat/**', 'chore/**']
   pull_request:
     branches: [main]
   workflow_dispatch:
@@ -59,7 +59,7 @@ jobs:
       # Never store the signing key or its passwords in git.
       - name: Restore persistent app signing key
         id: restore_signing
-        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        if: (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/main32') && github.event_name != 'pull_request'
         shell: bash
         env:
           JACKET_KEYSTORE_BASE64: ${{ secrets.JACKET_KEYSTORE_BASE64 }}
@@ -74,7 +74,7 @@ jobs:
                 -z "$JACKET_KEY_PASSWORD" ]]; then
             echo "JACKET_SIGNING_READY=false" >> "$GITHUB_ENV"
             echo "ready=false" >> "$GITHUB_OUTPUT"
-            echo "::warning::Persistent signing is not configured. No main-branch update APK will be uploaded."
+            echo "::warning::Persistent signing is not configured. No signed update APK will be uploaded."
             exit 0
           fi
           signing_dir="$RUNNER_TEMP/jacket-signing"
@@ -139,7 +139,7 @@ jobs:
           fi
 
       - name: Prepare universal APK and checksum
-        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && steps.restore_signing.outputs.ready == 'true'
+        if: (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/main32') && github.event_name != 'pull_request' && steps.restore_signing.outputs.ready == 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -156,15 +156,15 @@ jobs:
             exit 1
           fi
           mkdir -p dist
-          output="dist/Lampa-${version_name}-main-${GITHUB_SHA:0:7}-universal-${build_kind}.apk"
+          output="dist/Lampa-${version_name}-${GITHUB_REF_NAME}-${GITHUB_SHA:0:7}-universal-${build_kind}.apk"
           cp "$apk" "$output"
           sha256sum "$output" > "$output.sha256"
 
       - name: Upload universal APK artifact
-        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && steps.restore_signing.outputs.ready == 'true'
+        if: (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/main32') && github.event_name != 'pull_request' && steps.restore_signing.outputs.ready == 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: Lampa-main-apk
+          name: Lampa-${{ github.ref_name }}-apk
           path: dist/Lampa-*.apk*
           if-no-files-found: error
           retention-days: 14
@@ -172,7 +172,7 @@ jobs:
 
 
       - name: Explain why no update APK was published
-        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request' && steps.restore_signing.outputs.ready != 'true'
+        if: (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/main32') && github.event_name != 'pull_request' && steps.restore_signing.outputs.ready != 'true'
         shell: bash
         run: |
           {
