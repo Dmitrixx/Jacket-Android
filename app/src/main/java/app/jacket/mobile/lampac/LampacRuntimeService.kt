@@ -198,7 +198,7 @@ class LampacRuntimeService : Service() {
         }
     }
 
-    private suspend fun startInstalledServer(aladinPatchRestartAttempt: Int = 0) {
+    private suspend fun startInstalledServer(aladinPatchRestartAttempt: Int = 0, rollbackAttempt: Boolean = false) {
         val installer = LampacRuntimeInstaller(applicationContext)
         if (!installer.isInstalled()) {
             LampacRuntimeState.update(
@@ -318,7 +318,7 @@ class LampacRuntimeService : Service() {
                 monitorJob = null
                 serverSession = null
                 isStopping.set(false)
-                startInstalledServer(aladinPatchRestartAttempt + 1)
+                startInstalledServer(aladinPatchRestartAttempt + 1, rollbackAttempt)
                 return
             }
 
@@ -326,6 +326,9 @@ class LampacRuntimeService : Service() {
                 if (!ExternalMediaProxy.start()) {
                     LampacRuntimeState.appendLog("Не удалось запустить локальный прокси внешнего плеера.")
                 }
+                // The staged server has now passed its first startup probe.
+                // Only at this point is the previous release safe to discard.
+                installer.commitPendingUpdateBackup()
                 LampacRuntimeState.update(LampacRuntimePhase.RUNNING, "Lampac работает • http://127.0.0.1:9118")
                 updateNotification("Lampac работает • 127.0.0.1:9118")
             }
@@ -337,8 +340,25 @@ class LampacRuntimeService : Service() {
             isStopping.set(true)
             ExternalMediaProxy.stop()
             stopSession()
-            monitorJob?.cancel()
+            monitorJob?.cancelAndJoin()
+            monitorJob = null
             serverSession = null
+
+            if (!rollbackAttempt) {
+                val rollback = runCatching { installer.rollbackPendingUpdateBackup() }
+                if (rollback.getOrDefault(false)) {
+                    LampacRuntimeState.appendLog(
+                        "Новая версия Lampac не запустилась. Восстановлена предыдущая версия."
+                    )
+                    isStopping.set(false)
+                    startInstalledServer(aladinPatchRestartAttempt, rollbackAttempt = true)
+                    return
+                }
+                rollback.exceptionOrNull()?.let {
+                    LampacRuntimeState.appendLog("Не удалось выполнить откат Lampac: ${safeMessage(it)}")
+                }
+            }
+
             fail("Не удалось запустить Lampac: ${safeMessage(error)}")
         }
     }
