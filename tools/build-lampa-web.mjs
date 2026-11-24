@@ -267,13 +267,22 @@ const modificationTarget = path.join(outputRoot, "plugins", "modification.js");
 await mkdir(path.dirname(modificationTarget), { recursive: true });
 await copyFile(modificationSource, modificationTarget);
 await copyFile(path.join(sourceRoot, "LICENSE"), path.join(outputRoot, "LICENSE"));
+const sourceCommit = execFileSync("git", ["rev-parse", "HEAD"], {
+  cwd: sourceRoot,
+  encoding: "utf8"
+}).trim();
+const buildId = process.env.GITHUB_SHA || execFileSync("git", ["rev-parse", "HEAD"], {
+  cwd: repoRoot,
+  encoding: "utf8"
+}).trim();
 await writeFile(
   path.join(outputRoot, "build-info.json"),
   JSON.stringify({
     upstream: "yumata/lampa-source",
-    commit: "e583e42238587b2b85afa9f386e9b41adfc16f35",
-    appVersion: "3.4.7",
-    generatedAt: new Date().toISOString()
+    commit: sourceCommit,
+    sourceCommit,
+    buildId,
+    appVersion: "3.4.7"
   }, null, 2),
   "utf8"
 );
