@@ -430,6 +430,8 @@ class LampacRuntimeInstallerTest {
             assertTrue(command.contains("/tmp/lampa-dpkg-install.log 2>&1"))
             assertTrue(command.contains("tail -n 120 /tmp/lampa-dpkg-install.log"))
             assertTrue(command.contains("status=\$?"))
+            assertTrue(command.contains("if [ \"\$status\" -eq 0 ]; then rm -f /tmp/lampa-dpkg-install.log; else"))
+            assertTrue(command.contains("apt/dpkg failure log preserved for Android diagnostics"))
             assertTrue(command.contains("apt-get clean >/dev/null 2>&1 || true"))
             assertTrue(command.contains("rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*.deb"))
         }
