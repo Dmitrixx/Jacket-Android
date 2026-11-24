@@ -747,7 +747,7 @@ internal fun buildLampacSystemPackagesInstallCommand(
     )
 }
 
-/** A lightweight repair for older installs: it adds only ARM64 Node.js. */
+/** A lightweight repair for older installs: it adds only the Debian-architecture Node.js package. */
 internal fun buildLampacNodeInstallCommand(): String =
     buildLampacOfflineDpkgCommand(
         "apt-get update && " +
@@ -760,7 +760,7 @@ internal fun buildLampacNodeInstallCommand(): String =
 
 /**
  * Playwright's JS package is architecture-independent. The runtime uses
- * Debian's ARM64 Node.js through PLAYWRIGHT_NODEJS_PATH rather than assuming
+ * Debian's architecture-matched Node.js through PLAYWRIGHT_NODEJS_PATH rather than assuming
  * that a platform-specific executable in the release archive matches Android.
  */
 internal fun isLampacPlaywrightPackageReady(lampacDirectory: File): Boolean {
@@ -814,7 +814,7 @@ internal fun isDebianRootfsReady(root: File): Boolean {
 }
 
 /**
- * Installs a private ARM64 Debian rootfs, ASP.NET Core 10 and a checksum-pinned
+ * Installs a private ABI-matched Debian rootfs, ASP.NET Core 10 and a checksum-pinned
  * Lampac release. It intentionally does not call Lampac's systemd installer.
  */
 class LampacRuntimeInstaller(context: android.content.Context) {
@@ -968,7 +968,7 @@ class LampacRuntimeInstaller(context: android.content.Context) {
             }
         }
 
-        // Newer APKs may add an ARM64 runtime prerequisite without changing the
+        // Newer APKs may add a runtime prerequisite without changing the
         // Lampac payload. Repair that in place before requiring space for a
         // second 480 MB archive or replacing the user's existing init.conf.
         val existingVersion = installedVersion()
