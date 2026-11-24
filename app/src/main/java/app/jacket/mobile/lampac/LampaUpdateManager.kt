@@ -45,7 +45,8 @@ data class UpdateCheckResult(
     val lampa: LampaWebUpdateInfo?,
     val localLampacVersion: String?,
     val lampac: LampacReleaseUpdateInfo?,
-    val message: String? = null
+    val lampaError: String? = null,
+    val lampacError: String? = null
 )
 
 /**
@@ -64,16 +65,23 @@ class LampaUpdateManager(context: Context) {
         val localLampaBuild = readLocalLampaBuild()
         val localLampacVersion = LampacRuntimeInstaller(appContext).installedVersion()
 
-        val lampa = runCatching { findLatestLampaWebBuild(localLampaBuild) }
-            .getOrElse { throw IOException("Не удалось проверить обновление Lampa: ${it.message}", it) }
-        val lampac = runCatching { findLatestLampacRelease(localLampacVersion) }
-            .getOrElse { throw IOException("Не удалось проверить обновление Lampac: ${it.message}", it) }
+        val lampaResult = runCatching { findLatestLampaWebBuild(localLampaBuild) }
+        val lampacResult = runCatching { findLatestLampacRelease(localLampacVersion) }
+
+        if (lampaResult.isFailure && lampacResult.isFailure) {
+            throw IOException(
+                "Не удалось проверить Lampa и Lampac: " +
+                    "${lampaResult.exceptionOrNull()?.message}; ${lampacResult.exceptionOrNull()?.message}"
+            )
+        }
 
         UpdateCheckResult(
             localLampaBuild = localLampaBuild,
-            lampa = lampa,
+            lampa = lampaResult.getOrNull(),
             localLampacVersion = localLampacVersion,
-            lampac = lampac
+            lampac = lampacResult.getOrNull(),
+            lampaError = lampaResult.exceptionOrNull()?.message,
+            lampacError = lampacResult.exceptionOrNull()?.message
         )
     }
 
