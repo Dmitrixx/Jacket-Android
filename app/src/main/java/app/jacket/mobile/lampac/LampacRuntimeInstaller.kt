@@ -445,6 +445,20 @@ private object LampacZipInstaller {
             }
         }
 
+        // Preserve override directories for any installed module, not only
+        // the currently known provider modules.
+        val previousModules = File(previous, "module")
+        if (previousModules.isDirectory) {
+            previousModules.listFiles()?.filter { it.isDirectory }?.forEach { module ->
+                val override = File(module, "override")
+                if (override.isDirectory) {
+                    val destination = File(staged, "module/${module.name}/override")
+                    destination.parentFile?.let { if (!it.exists()) it.mkdirs() }
+                    override.copyRecursively(destination, overwrite = true)
+                }
+            }
+        }
+
         listOf("users.json", "passwd", "current.conf", "excludes.conf").forEach { name ->
             val source = File(previous, name)
             if (source.isFile) source.copyTo(File(staged, name), overwrite = true)
@@ -806,12 +820,14 @@ class LampacRuntimeInstaller(context: android.content.Context) {
 
     fun isInstalled(): Boolean {
         val root = host.debianRootfsDir
-        val version = installedVersion() ?: return false
-        if (isDebianRootfsReady(root) && isCompleteLampacRuntime(root, version)) return true
+        val version = installedVersion()
+        if (version != null && isDebianRootfsReady(root) && isCompleteLampacRuntime(root, version)) {
+            return true
+        }
 
         // If activation completed but the process was interrupted before the
         // new tree could be used, restore the staged backup before reporting
-        // the runtime as missing.
+        // the runtime as missing. Also handle a missing marker in a partial tree.
         if (hasPendingUpdateBackup()) {
             rollbackPendingUpdateBackup()
             val restoredVersion = installedVersion()
