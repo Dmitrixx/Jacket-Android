@@ -846,8 +846,10 @@ class LampacRuntimeInstaller(context: android.content.Context) {
         // Newer APKs may add an ARM64 runtime prerequisite without changing the
         // Lampac payload. Repair that in place before requiring space for a
         // second 480 MB archive or replacing the user's existing init.conf.
+        val existingVersion = installedVersion()
         if (isDebianRootfsReady(prepared.debianRootfsDir) &&
-            isLampacRuntimePayloadReady(prepared.debianRootfsDir, LampacRuntimeArtifacts.LAMPAC_VERSION) &&
+            existingVersion != null &&
+            isLampacRuntimePayloadReady(prepared.debianRootfsDir, existingVersion) &&
             !isLampacNodeReady(prepared.debianRootfsDir)
         ) {
             ensureLampacDebianMachineId(prepared.debianRootfsDir)
