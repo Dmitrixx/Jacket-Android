@@ -37,6 +37,12 @@ PY
 
 "$PR_ROOT/scripts/build.sh" --arch=arm --ndk-path="$NDK"
 
+# Upstream currently skips its TLS alignment fix for ELF32. Android Bionic
+# aborts before PRoot starts unless the ARM32 PT_TLS segment has zero-skew
+# 32-byte alignment. Patch and verify the exact native executable we package.
+python3 "$ROOT/tools/fix-arm32-elf-tls.py" --self-test
+python3 "$ROOT/tools/fix-arm32-elf-tls.py" "$PR_ROOT/build/out/arm/proot"
+
 RUST_TARGET="armv7-linux-androideabi"
 RUST_LINKER="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/armv7a-linux-androideabi28-clang"
 rustup target add "$RUST_TARGET"
