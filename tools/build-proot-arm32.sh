@@ -40,6 +40,33 @@ PY
 RUST_TARGET="armv7-linux-androideabi"
 RUST_LINKER="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/armv7a-linux-androideabi28-clang"
 rustup target add "$RUST_TARGET"
+
+# pr-cli embeds the integration-test executable at compile time. Build the
+# ARMv7 variant first and point the embedded include_bytes! at that artifact.
+(
+  cd "$PR_ROOT/src/proot-integration-test"
+  CC="$RUST_LINKER" \
+    CC_armv7_linux_androideabi="$RUST_LINKER" \
+    AR="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar" \
+    AR_armv7_linux_androideabi="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar" \
+    CARGO_TARGET_ARMV7_LINUX_ANDROIDEABI_LINKER="$RUST_LINKER" \
+    cargo build --release --target "$RUST_TARGET"
+)
+
+python3 - "$PR_ROOT/src/pr-cli/src/cmd_test.rs" "$RUST_TARGET" <<'PY'
+from pathlib import Path
+import sys
+
+source_file = Path(sys.argv[1])
+target = sys.argv[2]
+source = source_file.read_text()
+old = "proot-integration-test/target/aarch64-linux-android/release/proot-integration-test"
+new = f"proot-integration-test/target/{target}/release/proot-integration-test"
+if old not in source:
+    raise SystemExit("Could not locate the embedded integration-test binary path")
+source_file.write_text(source.replace(old, new, 1))
+PY
+
 (
   cd "$PR_ROOT/src/pr-cli"
   CC="$RUST_LINKER" \
