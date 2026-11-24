@@ -26,7 +26,9 @@ import java.util.concurrent.atomic.AtomicBoolean
  * Lampac 1.90.2's BaseMod middleware rejects HEAD before the TorrServer media route is
  * reached, while VLC and other players commonly probe media with HEAD first.
  * This loopback-only proxy converts that probe to GET, returns its headers
- * without a body, and forwards subsequent GET/Range requests unchanged.
+ * without a body, and relays GET/Range response bytes and HTTP framing unchanged.
+ * Raw socket forwarding preserves chunked media streams that high-level HTTP
+ * clients may transparently decode.
  *
  * It deliberately exposes only the Lampac TorrServer namespace and never
  * forwards caller-supplied Authorization or Cookie headers.
