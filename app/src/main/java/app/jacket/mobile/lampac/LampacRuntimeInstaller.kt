@@ -1051,6 +1051,51 @@ class LampacRuntimeInstaller(context: android.content.Context) {
         val apt = commandRunner.runAsRoot(buildLampacSystemPackagesInstallCommand(runtimeArchitecture)) { line ->
             send("packages", line.take(220), 0, 0)
         }
+        if (apt != 0) {
+            send(
+                "packages-diagnostic",
+                if (apt == 134) {
+                    "PRoot завершился с кодом 134 (SIGABRT). Считываем сохранённый журнал до аварии…"
+                } else {
+                    "Установка пакетов завершилась с кодом $apt. Считываем сохранённый журнал…"
+                },
+                0,
+                0
+            )
+            // /tmp inside Debian is bound to this app-private cache directory.
+            // If PRoot aborts, the shell cannot run its tail/rm cleanup, so recover
+            // the package log directly from the host filesystem after the PTY exits.
+            listOf(
+                "lampa-dpkg-install.log" to "Журнал apt/dpkg",
+                "sigsys-log.txt" to "Журнал заблокированных системных вызовов PRoot"
+            ).forEach { (name, label) ->
+                val diagnosticFile = File(host.cacheDir, name)
+                if (diagnosticFile.isFile) {
+                    runCatching {
+                        val tail = java.util.ArrayDeque<String>()
+                        diagnosticFile.bufferedReader(Charsets.UTF_8).useLines { source ->
+                            source.forEach { row ->
+                                if (tail.size >= 100) tail.removeFirst()
+                                tail.addLast(row)
+                            }
+                        }
+                        send("packages-diagnostic", "$label:", 0, 0)
+                        tail.forEach { row ->
+                            send("packages-diagnostic", row.take(220), 0, 0)
+                        }
+                    }.onFailure { error ->
+                        send(
+                            "packages-diagnostic",
+                            "Не удалось прочитать $name: ${error.javaClass.simpleName}",
+                            0,
+                            0
+                        )
+                    }
+                } else {
+                    send("packages-diagnostic", "$label: файл не создан.", 0, 0)
+                }
+            }
+        }
         check(apt == 0) { "Не удалось установить системные библиотеки Debian (код $apt)" }
 
         val dotnetRid = if (runtimeArchitecture == LampacRuntimeArchitecture.ARM32) "linux-arm" else "linux-arm64"
