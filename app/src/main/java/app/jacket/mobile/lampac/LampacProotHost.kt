@@ -54,8 +54,10 @@ data class ProotBootstrapResult(
 
 /**
  * Prepares pr-cli's documented app-private prefix layout and links its
- * executable entry points to the ARM64 binaries extracted by Android.
+ * executable entry points for the ABI used by the running Android process.
  */
+internal enum class LampacRuntimeArchitecture { ARM64, ARM32 }
+
 object LampacProotBootstrap {
     private val requiredLibraries = listOf(
         "libpr-cli.so",
@@ -64,12 +66,19 @@ object LampacProotBootstrap {
         "libptyjni.so"
     )
 
-    fun isSupportedOnThisDevice(): Boolean =
-        Build.SUPPORTED_ABIS.any { it.equals("arm64-v8a", ignoreCase = true) }
+    fun runtimeArchitecture(): LampacRuntimeArchitecture? = when {
+        Build.SUPPORTED_ABIS.any { it.equals("arm64-v8a", ignoreCase = true) } ->
+            LampacRuntimeArchitecture.ARM64
+        Build.SUPPORTED_ABIS.any { it.equals("armeabi-v7a", ignoreCase = true) } ->
+            LampacRuntimeArchitecture.ARM32
+        else -> null
+    }
+
+    fun isSupportedOnThisDevice(): Boolean = runtimeArchitecture() != null
 
     fun prepare(host: LampaProotHost): ProotBootstrapResult {
         check(isSupportedOnThisDevice()) {
-            "Встроенный Lampac пока поддерживается только на ARM64. Можно подключить удалённый Lampac по сети."
+            "Встроенный Lampac поддерживает только ARM64 и ARMv7 Android. Можно подключить удалённый Lampac по сети."
         }
 
         val nativeDir = host.nativeLibraryDir
