@@ -9,8 +9,9 @@ import java.io.IOException
 /**
  * Android bootstrap defaults for the complete upstream Lampac server.
  *
- * No Android-specific module exclusions are written. The full release package,
- * upstream module manifests and the user's configuration determine capabilities.
+ * Android does not impose a hardcoded module exclusion list. The full release
+ * package and upstream manifests define availability; user choices are saved
+ * as exact exclusions in BaseModule.SkipModules.
  */
 object LampacEmbeddedConfig {
     const val HOST = "127.0.0.1"
@@ -124,15 +125,79 @@ object LampacEmbeddedConfig {
         return before != listen.toString()
     }
 
-    /** Make every shipped module eligible for loading; upstream manifest flags still apply. */
+    /**
+     * Make every shipped module eligible for loading without erasing the
+     * user's explicit exclusions. manifest.json enable flags still apply.
+     */
     internal fun ensureFullModuleSet(config: JSONObject): Boolean {
         val base = config.optJSONObject("BaseModule") ?: JSONObject().also {
             config.put("BaseModule", it)
         }
         val before = base.toString()
         base.put("LoadModules", JSONArray(listOf(".*")))
-            .put("SkipModules", JSONArray())
+        if (base.optJSONArray("SkipModules") == null) {
+            base.put("SkipModules", JSONArray())
+        }
         return before != base.toString()
+    }
+
+    /** Returns manifest-enabled modules not excluded by their exact id or parent group. */
+    fun readEnabledModules(content: String, modules: List<LampacModuleInfo>): Set<String> {
+        val config = try {
+            JSONObject(content)
+        } catch (error: Exception) {
+            throw IOException("Не удалось прочитать init.conf Lampac", error)
+        }
+        val skipModules = config.optJSONObject("BaseModule")
+            ?.optJSONArray("SkipModules")
+            ?.let { array -> (0 until array.length()).mapNotNull { array.optString(it).takeIf(String::isNotBlank) }.toSet() }
+            .orEmpty()
+
+        return modules.asSequence()
+            .filter { it.enabledInManifest }
+            .filter { it.id !in skipModules && (it.groupId == null || it.groupId !in skipModules) }
+            .map { it.id }
+            .toSet()
+    }
+
+    /**
+     * Saves individual module choices in BaseModule.SkipModules.
+     * Existing exclusions for modules discovered from the installed manifests
+     * are replaced by exact module ids; unrelated custom exclusions remain.
+     */
+    fun prepareModuleSelection(
+        content: String,
+        enabledModuleIds: Set<String>,
+        modules: List<LampacModuleInfo>
+    ): String {
+        val encoded = content.toByteArray(Charsets.UTF_8)
+        require(encoded.isNotEmpty() && encoded.size <= MAX_INIT_CONFIG_BYTES) {
+            "Файл init.conf должен быть непустым и не превышать 2 МиБ"
+        }
+        val config = try {
+            JSONObject(content)
+        } catch (error: Exception) {
+            throw IOException("Файл init.conf не является корректным JSON", error)
+        }
+
+        ensureAndroidModules(config)
+        val base = config.getJSONObject("BaseModule")
+        val oldSkips = base.optJSONArray("SkipModules")
+        val managedNames = modules.flatMap { listOfNotNull(it.id, it.groupId) }.toSet()
+        val preservedCustomSkips = oldSkips
+            ?.let { array ->
+                (0 until array.length())
+                    .mapNotNull { array.optString(it).takeIf(String::isNotBlank) }
+                    .filterNot { it in managedNames }
+            }
+            .orEmpty()
+        val selectedSkips = modules.asSequence()
+            .filter { it.enabledInManifest && it.id !in enabledModuleIds }
+            .map { it.id }
+            .toList()
+
+        base.put("SkipModules", JSONArray((preservedCustomSkips + selectedSkips).distinct()))
+        return config.toString(2)
     }
 
     /** Enable upstream browser integrations by default but retain explicit user choices. */

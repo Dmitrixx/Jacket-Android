@@ -24,6 +24,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -79,14 +80,28 @@ class LampacRuntimeService : Service() {
 
         startAsForeground("Подготовка встроенного Lampac…")
         synchronized(commandLock) {
-            if (operationJob?.isActive == true) {
-                updateNotification(LampacRuntimeState.state.value.message)
+            val activeOperation = operationJob
+            if (activeOperation?.isActive == true) {
+                if (action == ACTION_RESTART &&
+                    LampacRuntimeState.state.value.phase == LampacRuntimePhase.RUNNING
+                ) {
+                    // The initial START operation publishes RUNNING just before it
+                    // completes. Queue a restart behind it instead of dropping the
+                    // user's module-save request during that small transition.
+                    operationJob = scope.launch {
+                        activeOperation.join()
+                        restartInstalledServer()
+                    }
+                } else {
+                    updateNotification(LampacRuntimeState.state.value.message)
+                }
                 return START_NOT_STICKY
             }
             operationJob = scope.launch {
                 when (action) {
                     ACTION_INSTALL_AND_START -> installAndStart()
                     ACTION_START -> startInstalledServer()
+                    ACTION_RESTART -> restartInstalledServer()
                     else -> {
                         LampacRuntimeState.update(LampacRuntimePhase.ERROR, "Неизвестная команда Lampac")
                         finishService()
@@ -138,6 +153,9 @@ class LampacRuntimeService : Service() {
             return
         }
         if (serverSession != null) {
+            if (!ExternalMediaProxy.start()) {
+                LampacRuntimeState.appendLog("Не удалось запустить локальный прокси внешнего плеера.")
+            }
             LampacRuntimeState.update(LampacRuntimePhase.RUNNING, "Lampac уже работает на 127.0.0.1:9118")
             updateNotification("Lampac работает • 127.0.0.1:9118")
             return
@@ -183,6 +201,9 @@ class LampacRuntimeService : Service() {
             monitorServer(session)
             waitForServerReady(session)
             if (serverSession === session && !isStopping.get()) {
+                if (!ExternalMediaProxy.start()) {
+                    LampacRuntimeState.appendLog("Не удалось запустить локальный прокси внешнего плеера.")
+                }
                 LampacRuntimeState.update(LampacRuntimePhase.RUNNING, "Lampac работает • http://127.0.0.1:9118")
                 updateNotification("Lampac работает • 127.0.0.1:9118")
             }
@@ -192,6 +213,7 @@ class LampacRuntimeService : Service() {
             // Stop the monitor before our intentional Ctrl+C cleanup so the
             // expected signal exit (130) cannot replace the actual startup error.
             isStopping.set(true)
+            ExternalMediaProxy.stop()
             stopSession()
             monitorJob?.cancel()
             serverSession = null
@@ -225,6 +247,7 @@ class LampacRuntimeService : Service() {
             if (serverSession === session && !isStopping.get()) {
                 withContext(Dispatchers.Main.immediate) {
                     serverSession = null
+                    ExternalMediaProxy.stop()
                     if (exitCode == 0) {
                         LampacRuntimeState.update(LampacRuntimePhase.INSTALLED, "Lampac остановился")
                     } else {
@@ -279,8 +302,31 @@ class LampacRuntimeService : Service() {
         }
     }
 
+    private suspend fun restartInstalledServer() {
+        if (!LampacRuntimeInstaller(applicationContext).isInstalled()) {
+            LampacRuntimeState.update(
+                LampacRuntimePhase.ERROR,
+                "Встроенный Lampac не установлен. Сначала выберите «Установить полный Lampac»."
+            )
+            finishService()
+            return
+        }
+
+        LampacRuntimeState.update(LampacRuntimePhase.STOPPING, "Применяем настройки модулей и перезапускаем Lampac…")
+        updateNotification("Перезапуск Lampac…")
+        isStopping.set(true)
+        ExternalMediaProxy.stop()
+        stopSession()
+        monitorJob?.cancelAndJoin()
+        monitorJob = null
+        serverSession = null
+        isStopping.set(false)
+        startInstalledServer()
+    }
+
     private fun stopServer() {
         if (!isStopping.compareAndSet(false, true)) return
+        ExternalMediaProxy.stop()
         operationJob?.cancel()
         scope.launch {
             LampacRuntimeState.update(LampacRuntimePhase.STOPPING, "Останавливаем Lampac…")
@@ -320,6 +366,7 @@ class LampacRuntimeService : Service() {
     }
 
     private fun finishService() {
+        ExternalMediaProxy.stop()
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
     }
@@ -386,6 +433,7 @@ class LampacRuntimeService : Service() {
 
     override fun onDestroy() {
         isStopping.set(true)
+        ExternalMediaProxy.stop()
         monitorJob?.cancel()
         serverSession?.close()
         serverSession = null
@@ -400,6 +448,7 @@ class LampacRuntimeService : Service() {
 
         const val ACTION_INSTALL_AND_START = "app.jacket.mobile.lampac.INSTALL_AND_START"
         const val ACTION_START = "app.jacket.mobile.lampac.START"
+        const val ACTION_RESTART = "app.jacket.mobile.lampac.RESTART"
         const val ACTION_STOP = "app.jacket.mobile.lampac.STOP"
 
         fun installAndStart(context: Context) =
@@ -407,6 +456,9 @@ class LampacRuntimeService : Service() {
 
         fun start(context: Context) =
             startForeground(context, ACTION_START)
+
+        fun restart(context: Context) =
+            startForeground(context, ACTION_RESTART)
 
         fun stop(context: Context) {
             val intent = Intent(context, LampacRuntimeService::class.java).setAction(ACTION_STOP)
