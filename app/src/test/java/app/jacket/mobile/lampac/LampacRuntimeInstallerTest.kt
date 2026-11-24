@@ -20,16 +20,22 @@ class LampacRuntimeInstallerTest {
     }
 
     @Test
-    fun selectsArm32RuntimeFor32BitAndroidAndPrefersArm64WhenAvailable() {
+    fun selectsRuntimeByTheActualAndroidProcessBitness() {
         assertEquals(
             LampacRuntimeArchitecture.ARM32,
-            selectLampacRuntimeArchitecture(listOf("armeabi-v7a", "armeabi"))
+            selectLampacRuntimeArchitecture(false, listOf("armeabi-v7a", "armeabi"))
+        )
+        // A 32-bit app may run on a 64-bit-capable Android device.
+        assertEquals(
+            LampacRuntimeArchitecture.ARM32,
+            selectLampacRuntimeArchitecture(false, listOf("arm64-v8a", "armeabi-v7a"))
         )
         assertEquals(
             LampacRuntimeArchitecture.ARM64,
-            selectLampacRuntimeArchitecture(listOf("arm64-v8a", "armeabi-v7a"))
+            selectLampacRuntimeArchitecture(true, listOf("arm64-v8a", "armeabi-v7a"))
         )
-        assertEquals(null, selectLampacRuntimeArchitecture(listOf("x86")))
+        assertEquals(null, selectLampacRuntimeArchitecture(false, listOf("x86")))
+        assertEquals(null, selectLampacRuntimeArchitecture(true, listOf("x86_64")))
     }
 
     @Test
