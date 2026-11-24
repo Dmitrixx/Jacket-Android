@@ -2,7 +2,8 @@ import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
-import { cp, mkdir, readFile, rm, writeFile, copyFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { cp, mkdir, readFile, readdir, rm, writeFile, copyFile } from "node:fs/promises";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const sourceRoot = path.join(repoRoot, "third_party", "lampa-source");
@@ -271,10 +272,28 @@ const sourceCommit = (await readFile(path.join(sourceRoot, ".upstream-commit"), 
 if (!/^[0-9a-f]{40}$/.test(sourceCommit)) {
   throw new Error("The vendored Lampa source commit marker is missing or invalid");
 }
-const buildId = process.env.GITHUB_SHA || execFileSync("git", ["rev-parse", "HEAD"], {
-  cwd: repoRoot,
-  encoding: "utf8"
-}).trim();
+// Identify the actual generated web payload rather than the Android repository
+// commit. Ordinary native-only changes then do not produce a fake Lampa update.
+const bundleHash = createHash("sha256");
+async function hashWebTree(directory, relative = "") {
+  const entries = (await readdir(directory, { withFileTypes: true }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+  for (const entry of entries) {
+    if (!relative && entry.name === "build-info.json") continue;
+    const absolute = path.join(directory, entry.name);
+    const name = path.posix.join(relative, entry.name);
+    bundleHash.update(name.replace(/\\/g, "/"));
+    bundleHash.update("\\0");
+    if (entry.isDirectory()) {
+      await hashWebTree(absolute, name);
+    } else if (entry.isFile()) {
+      bundleHash.update(await readFile(absolute));
+      bundleHash.update("\\0");
+    }
+  }
+}
+await hashWebTree(outputRoot);
+const buildId = bundleHash.digest("hex").slice(0, 40);
 await writeFile(
   path.join(outputRoot, "build-info.json"),
   JSON.stringify({
