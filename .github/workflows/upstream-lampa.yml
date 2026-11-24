@@ -6,6 +6,7 @@ on:
   workflow_dispatch:
 
 permissions:
+  actions: write
   contents: write
   pull-requests: write
 
@@ -84,3 +85,8 @@ jobs:
             --head "${{ steps.prepare.outputs.branch }}" \
             --title "chore(lampa): update upstream source to ${{ steps.prepare.outputs.latest_sha }}" \
             --body "Automated weekly sync from yumata/lampa-source. The exact upstream commit is recorded in third_party/lampa-source/.upstream-commit. CI will build the embedded web bundle and verify the Android compatibility patches before this can be merged."
+
+          # PRs opened with GITHUB_TOKEN do not automatically trigger pull_request
+          # workflows. Dispatch the normal Android verification workflow explicitly.
+          gh workflow run android.yml --repo "$GITHUB_REPOSITORY" --ref "${{ steps.prepare.outputs.branch }}"
+
