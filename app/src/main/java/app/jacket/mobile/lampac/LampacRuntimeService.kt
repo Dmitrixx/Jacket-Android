@@ -170,6 +170,22 @@ class LampacRuntimeService : Service() {
         try {
             val host = LampaProotHost(applicationContext)
             LampacProotBootstrap.prepare(host)
+
+            // Aladin's Accepts-Controls value can make its generated /proxy URL exceed
+            // Kestrel's request-line limit. Force compact, server-stored proxy keys
+            // before Lampac dynamically compiles modules on this startup.
+            val providerPatch = withContext(Dispatchers.IO) {
+                LampacProviderCompatibilityPatches.apply(File(host.debianRootfsDir, "opt/lampac"))
+            }
+            when {
+                providerPatch.updatedFiles > 0 ->
+                    LampacRuntimeState.appendLog("Aladin: применено исправление длинных /proxy-ссылок.")
+                providerPatch.alreadyPatchedFiles > 0 ->
+                    LampacRuntimeState.appendLog("Aladin: исправление коротких /proxy-ссылок уже установлено.")
+                providerPatch.filesFound == 0 ->
+                    LampacRuntimeState.appendLog("Aladin: исходник динамического модуля не найден; проверьте комплект Lampac.")
+            }
+
             // Existing installs keep their original init.conf across APK updates.
             // Apply the safe Android module profile before launching Core.dll.
             LampacEmbeddedConfig.ensureAndroidRuntimeConfig(File(host.debianRootfsDir, "opt/lampac"))
