@@ -102,11 +102,16 @@ jobs:
           manifest="dist/lampa-web-update.json"
           (cd app/src/main/assets/lampa && zip -qr "$GITHUB_WORKSPACE/$bundle" .)
           source_commit="$(jq -r '.sourceCommit // .commit' app/src/main/assets/lampa/build-info.json)"
+          bundle_id="$(jq -r '.buildId' app/src/main/assets/lampa/build-info.json)"
           app_version="$(jq -r '.appVersion' app/src/main/assets/lampa/build-info.json)"
           zip_bytes="$(stat -c '%s' "$bundle")"
+          if [[ ! "$bundle_id" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "Generated Lampa web bundle identity is missing or invalid" >&2
+            exit 1
+          fi
           zip_sha256="$(sha256sum "$bundle" | awk '{print $1}')"
           jq -n \
-            --arg buildId "$GITHUB_SHA" \
+            --arg buildId "$bundle_id" \
             --arg sourceCommit "$source_commit" \
             --arg versionName "$app_version" \
             --arg assetName "lampa-web-update.zip" \
