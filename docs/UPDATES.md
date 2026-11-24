@@ -9,8 +9,8 @@ The application ID and persistent signing key remain unchanged so newer APKs upd
 - If the application ID or signing certificate changes, Android will reject the APK as an in-place update. Do not delete the old installation to work around a signing mismatch.
 ## Updating Lampa and Lampac inside the app
 
-1. Open the `Lampac` control in the upper-right corner.
-2. Choose `Обновления Lampa и Lampac` and press `Проверить обновления`.
+1. Open Lampa's main `Настройки` screen with the standard gear icon, then select the `Lampac` section.
+2. Choose `Открыть управление Lampac`. The native control panel contains server start/stop, module management and the `Обновления Lampa и Lampac` screen.
 3. Update Lampa web assets or Lampac independently. Each package is verified before it is activated.
 4. Lampac stops for the update and starts again afterwards. Its `init.conf`, user databases, data directories and supported local overrides are carried forward. The old server directory is retained until the new one passes the startup check; otherwise the service restores the previous version.
 5. The APK is still required for changes to the Android shell, native bridge or player integration. Install signed APK updates over the existing app; do not uninstall or clear app data.
