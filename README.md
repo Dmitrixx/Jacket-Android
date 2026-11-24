@@ -15,7 +15,14 @@ A personal Android and Android TV shell for the complete upstream Lampa web appl
 - In-app module manager discovers the actual installed module manifests, lets users enable/disable individual modules, and applies changes through `BaseModule.SkipModules` without reinstalling Lampac.
 - Applies an idempotent compatibility patch to the dynamic Aladin module before Lampac starts, preventing oversized `/proxy/` URLs while preserving the existing server installation and provider configuration.
 - Keeps checked online balancers available for manual retry in Lampa's source selector and records safe HTTP diagnostics when VLC/MX requests a proxied media URL.
-- Keeps all checked online balancers available for manual retry in Lampa's source selector and records safe HTTP diagnostics when VLC/MX requests a proxied media URL.
+
+## In-app updates
+
+- Open the Lampac button and choose `Обновления Lampa и Lampac`.
+- Lampa web assets and Lampac server releases are checked and updated independently; neither requires a new APK for ordinary upstream changes.
+- Lampa bundles are downloaded only from this repository's release assets and verified against a SHA-256 manifest before activation.
+- Lampac is updated only from a newer stable upstream release with an official SHA-256 asset digest; the app stages the archive, preserves user configuration/data, then restarts the server.
+- The previous Lampac release is kept until the new server passes startup; failed startup triggers rollback. The Android shell/native bridge still needs a separately signed APK update.
 
 ## First start
 
