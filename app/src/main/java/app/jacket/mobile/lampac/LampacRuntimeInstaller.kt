@@ -251,6 +251,7 @@ private object LampacZipInstaller {
         archive: File,
         rootfs: File,
         version: String = LampacRuntimeArtifacts.LAMPAC_VERSION,
+        retainBackup: Boolean = false,
         onProgress: (Long, Long) -> Unit
     ): File = withContext(Dispatchers.IO) {
         val context = currentCoroutineContext()
@@ -271,7 +272,12 @@ private object LampacZipInstaller {
             file.readText(Charsets.UTF_8)
         }
         stage.deleteRecursively()
-        backup.deleteRecursively()
+        if (backup.exists()) {
+            require(!retainBackup) {
+                "Найдена неподтверждённая резервная копия Lampac. Сначала восстановите или подтвердите предыдущее обновление."
+            }
+            backup.deleteRecursively()
+        }
 
         try {
             ZipFile(archive).use { zip ->
@@ -398,7 +404,7 @@ private object LampacZipInstaller {
                 if (backup.exists()) backup.renameTo(target)
                 throw IOException("Не удалось активировать новую установку Lampac")
             }
-            backup.deleteRecursively()
+            if (!retainBackup) backup.deleteRecursively()
             target
         } catch (error: Exception) {
             stage.deleteRecursively()
@@ -798,6 +804,37 @@ class LampacRuntimeInstaller(context: android.content.Context) {
         return isDebianRootfsReady(root) && isCompleteLampacRuntime(root, version)
     }
 
+    private fun lampacInstallBackup(): File =
+        File(host.debianRootfsDir, "opt/.lampac-backup")
+
+    fun hasPendingUpdateBackup(): Boolean = lampacInstallBackup().isDirectory
+
+    fun commitPendingUpdateBackup() {
+        val backup = lampacInstallBackup()
+        if (backup.exists() && !backup.deleteRecursively()) {
+            LampacRuntimeState.appendLog("Не удалось удалить резервную копию предыдущего Lampac.")
+        }
+    }
+
+    fun rollbackPendingUpdateBackup(): Boolean {
+        val opt = File(host.debianRootfsDir, "opt")
+        val target = File(opt, "lampac")
+        val backup = lampacInstallBackup()
+        if (!backup.isDirectory) return false
+
+        val failed = File(opt, ".lampac-failed")
+        failed.deleteRecursively()
+        if (target.exists() && !target.renameTo(failed)) {
+            throw IOException("Не удалось переместить неудачную версию Lampac")
+        }
+        if (!backup.renameTo(target)) {
+            if (failed.exists()) failed.renameTo(target)
+            throw IOException("Не удалось восстановить предыдущую версию Lampac")
+        }
+        failed.deleteRecursively()
+        return true
+    }
+
     fun availableBytes(): Long = StatFs(appContext.filesDir.absolutePath).availableBytes
 
     /** Read the private Lampac configuration for an explicit user export. */
@@ -1023,6 +1060,9 @@ class LampacRuntimeInstaller(context: android.content.Context) {
             "Релиз Lampac не новее установленной версии"
         }
         check(isInstalled()) { "Текущая установка Lampac неполная; обновление отменено" }
+        check(!hasPendingUpdateBackup()) {
+            "Предыдущее обновление Lampac ещё не подтверждено запуском. Перезапустите сервер и повторите проверку."
+        }
 
         val send = { phase: String, message: String, done: Long, total: Long ->
             onProgress(
@@ -1055,7 +1095,8 @@ class LampacRuntimeInstaller(context: android.content.Context) {
             val updated = LampacZipInstaller.install(
                 archive = archive,
                 rootfs = host.debianRootfsDir,
-                version = version
+                version = version,
+                retainBackup = true
             ) { done, total ->
                 send("update-extract", "Установка Lampac: ${formatBytes(done)}", done, total)
             }
