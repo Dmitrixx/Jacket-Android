@@ -374,7 +374,7 @@ internal object LampaWebAssetUpdater {
     suspend fun install(
         context: Context,
         update: LampaWebUpdateInfo,
-        onProgress: (Int, String) -> Unit = {}
+        onProgress: (Int, String) -> Unit = { _, _ -> }
     ) = withContext(Dispatchers.IO) {
         val updateRoot = File(context.filesDir, "lampa-web")
         if (!updateRoot.exists() && !updateRoot.mkdirs()) {
