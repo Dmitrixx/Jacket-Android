@@ -3,7 +3,7 @@
 ## 3.0.16 — Fix external playback of Lampac online sources
 
 - Route Lampac `/proxy/` and `/proxy-dash/` media URLs through the loopback compatibility server, alongside TorrServer/GStreamer streams.
-- Prevent VLC and other external players from receiving the app-private `127.0.0.1:9118` URL, which points to the player\u2019s own loopback namespace.
+- Route VLC/MX Player HEAD probes through the compatibility relay because Lampac's BaseMod middleware rejects HEAD before the `/proxy/` media handler.
 - Forward the compatibility listener as the upstream Host so generated playlist and segment URLs continue to use the reachable proxy port.
 - Keep HEAD-to-GET handling, Range support and raw HTTP response framing for online VOD and DASH streams.
 
