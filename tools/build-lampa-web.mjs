@@ -267,10 +267,10 @@ const modificationTarget = path.join(outputRoot, "plugins", "modification.js");
 await mkdir(path.dirname(modificationTarget), { recursive: true });
 await copyFile(modificationSource, modificationTarget);
 await copyFile(path.join(sourceRoot, "LICENSE"), path.join(outputRoot, "LICENSE"));
-const sourceCommit = execFileSync("git", ["rev-parse", "HEAD"], {
-  cwd: sourceRoot,
-  encoding: "utf8"
-}).trim();
+const sourceCommit = (await readFile(path.join(sourceRoot, ".upstream-commit"), "utf8")).trim();
+if (!/^[0-9a-f]{40}$/.test(sourceCommit)) {
+  throw new Error("The vendored Lampa source commit marker is missing or invalid");
+}
 const buildId = process.env.GITHUB_SHA || execFileSync("git", ["rev-parse", "HEAD"], {
   cwd: repoRoot,
   encoding: "utf8"
