@@ -1,0 +1,86 @@
+name: Check upstream Lampa source
+
+on:
+  schedule:
+    - cron: "17 5 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  check-upstream:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Check and prepare upstream update
+        id: prepare
+        shell: bash
+        run: |
+          set -euo pipefail
+          current_sha="$(tr -d '\r\n' < third_party/lampa-source/.upstream-commit)"
+          latest_sha="$(curl -fsSL \
+            -H 'Accept: application/vnd.github+json' \
+            -H 'X-GitHub-Api-Version: 2022-11-28' \
+            https://api.github.com/repos/yumata/lampa-source/commits/main | jq -r '.sha')"
+
+          if [[ ! "$latest_sha" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "GitHub returned an invalid Lampa source commit" >&2
+            exit 1
+          fi
+
+          if [[ "$latest_sha" == "$current_sha" ]]; then
+            echo "Upstream Lampa source is already current: $current_sha"
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          branch="automation/lampa-source-${latest_sha:0:12}-${GITHUB_RUN_ID}"
+          echo "branch=$branch" >> "$GITHUB_OUTPUT"
+          echo "latest_sha=$latest_sha" >> "$GITHUB_OUTPUT"
+
+          archive="$RUNNER_TEMP/lampa-source.tar.gz"
+          extract="$RUNNER_TEMP/lampa-source"
+          mkdir -p "$extract"
+          curl -fL --retry 3 \
+            "https://codeload.github.com/yumata/lampa-source/tar.gz/$latest_sha" \
+            -o "$archive"
+          tar -xzf "$archive" -C "$extract" --strip-components=1
+
+          test -s "$extract/package.json"
+          test -s "$extract/LICENSE"
+          test -s "$extract/src/app.js"
+          rm -rf third_party/lampa-source
+          mkdir -p third_party/lampa-source
+          cp -a "$extract/." third_party/lampa-source/
+          printf '%s\n' "$latest_sha" > third_party/lampa-source/.upstream-commit
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$branch"
+          git add third_party/lampa-source
+          if git diff --cached --quiet; then
+            echo "No source changes in the upstream commit."
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          git commit -m "chore(lampa): sync upstream source $latest_sha"
+          git push origin "$branch"
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+
+      - name: Open update pull request
+        if: steps.prepare.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh pr create \
+            --repo "$GITHUB_REPOSITORY" \
+            --base main \
+            --head "${{ steps.prepare.outputs.branch }}" \
+            --title "chore(lampa): update upstream source to ${{ steps.prepare.outputs.latest_sha }}" \
+            --body "Automated weekly sync from yumata/lampa-source. The exact upstream commit is recorded in third_party/lampa-source/.upstream-commit. CI will build the embedded web bundle and verify the Android compatibility patches before this can be merged."
