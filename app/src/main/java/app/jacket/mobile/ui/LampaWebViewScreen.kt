@@ -51,12 +51,14 @@ private const val LAMPA_ASSET_PREFIX = "/app/"
 @Composable
 fun LampaWebViewScreen(
     modifier: Modifier = Modifier,
-    onBack: () -> Unit
+    onBack: () -> Unit,
+    onOpenLampacSettings: () -> Unit
 ) {
     val context = LocalContext.current
     val playerOpen = remember { mutableStateOf(false) }
     val lampacStatus = remember { mutableStateOf("Lampac: ожидание подключения") }
     val currentOnBack by rememberUpdatedState(onBack)
+    val currentOnOpenLampacSettings by rememberUpdatedState(onOpenLampacSettings)
     val chromeClient = remember(context) {
         context.findActivity()?.let(::LampaFullscreenChromeClient)
     }
@@ -82,6 +84,7 @@ fun LampaWebViewScreen(
                 LampaAndroidBridge(
                     context.applicationContext,
                     onExit = { currentOnBack() },
+                    onOpenLampacSettings = { currentOnOpenLampacSettings() },
                     onPlayerOpenChanged = { playerOpen.value = it },
                     onLampacStateChanged = { lampacStatus.value = it }
                 ),
@@ -240,6 +243,7 @@ private fun textResponse(status: Int, reason: String) = WebResourceResponse(
 private class LampaAndroidBridge(
     private val context: Context,
     private val onExit: () -> Unit,
+    private val onOpenLampacSettings: () -> Unit,
     private val onPlayerOpenChanged: (Boolean) -> Unit,
     private val onLampacStateChanged: (String) -> Unit
 ) {
@@ -267,6 +271,11 @@ private class LampaAndroidBridge(
     @JavascriptInterface
     fun exit() {
         mainHandler.post { onExit() }
+    }
+
+    @JavascriptInterface
+    fun openLampacSettings() {
+        mainHandler.post { onOpenLampacSettings() }
     }
 
     @JavascriptInterface

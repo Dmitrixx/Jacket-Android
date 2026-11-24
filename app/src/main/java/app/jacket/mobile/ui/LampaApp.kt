@@ -144,21 +144,11 @@ fun LampaApp(onExit: () -> Unit) {
         key(webAssetRevision) {
             LampaWebViewScreen(
                 modifier = Modifier.fillMaxSize(),
-                onBack = onExit
+                onBack = onExit,
+                onOpenLampacSettings = { settingsVisible = true }
             )
         }
 
-        Surface(
-            modifier = Modifier
-                .align(Alignment.TopEnd)
-                .padding(top = 10.dp, end = 12.dp),
-            color = MaterialTheme.colorScheme.surface.copy(alpha = 0.88f),
-            shape = RoundedCornerShape(18.dp)
-        ) {
-            TextButton(onClick = { settingsVisible = true }) {
-                Text("Lampac")
-            }
-        }
     }
 
     if (settingsVisible) {

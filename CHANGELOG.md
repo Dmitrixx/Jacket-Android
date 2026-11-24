@@ -1,5 +1,12 @@
 # Changelog
 
+## 3.0.20 — Lampac controls inside Lampa settings
+
+- Remove the separate floating Lampac button from the WebView screen.
+- Add a remote-navigable Lampac section to Lampa's own Settings menu, next to the server settings.
+- Open the existing native Lampac control panel from that section; keep install/start/stop, module management and both update flows intact.
+- Expose the menu entry only when the installed APK provides the matching native bridge, preserving compatibility with older APKs receiving standalone Lampa web updates.
+
 ## 3.0.19 — In-app Lampa and Lampac updates
 
 - Add an in-app update center with separate checks and actions for the Lampa web bundle and the embedded Lampac server.
