@@ -142,7 +142,7 @@ class LampacRuntimeService : Service() {
         }
     }
 
-    private suspend fun startInstalledServer() {
+    private suspend fun startInstalledServer(aladinPatchRestartAttempt: Int = 0) {
         val installer = LampacRuntimeInstaller(applicationContext)
         if (!installer.isInstalled()) {
             LampacRuntimeState.update(
@@ -170,6 +170,22 @@ class LampacRuntimeService : Service() {
         try {
             val host = LampaProotHost(applicationContext)
             LampacProotBootstrap.prepare(host)
+
+            // Aladin's Accepts-Controls value can make its generated /proxy URL exceed
+            // Kestrel's request-line limit. Force compact, server-stored proxy keys
+            // before Lampac dynamically compiles modules on this startup.
+            val providerPatch = withContext(Dispatchers.IO) {
+                LampacProviderCompatibilityPatches.apply(File(host.debianRootfsDir, "opt/lampac"))
+            }
+            when {
+                providerPatch.updatedFiles > 0 ->
+                    LampacRuntimeState.appendLog("Aladin: применено исправление длинных /proxy-ссылок.")
+                providerPatch.alreadyPatchedFiles > 0 ->
+                    LampacRuntimeState.appendLog("Aladin: исправление коротких /proxy-ссылок уже установлено.")
+                providerPatch.filesFound == 0 ->
+                    LampacRuntimeState.appendLog("Aladin: исходник динамического модуля не найден; проверьте комплект Lampac.")
+            }
+
             // Existing installs keep their original init.conf across APK updates.
             // Apply the safe Android module profile before launching Core.dll.
             LampacEmbeddedConfig.ensureAndroidRuntimeConfig(File(host.debianRootfsDir, "opt/lampac"))
@@ -200,6 +216,33 @@ class LampacRuntimeService : Service() {
             serverSession = session
             monitorServer(session)
             waitForServerReady(session)
+
+            // ModuleRepository.UpdateModules runs inside Core.dll startup and may
+            // download/replace the dynamic Aladin source after our pre-start patch.
+            // Re-apply after the first ready signal; if it changed the source, restart
+            // once so Lampac compiles the patched source (DynamicModule is off in the
+            // Android profile, so a file change alone cannot trigger hot recompilation).
+            val postStartupPatch = withContext(Dispatchers.IO) {
+                LampacProviderCompatibilityPatches.apply(File(host.debianRootfsDir, "opt/lampac"))
+            }
+            if (postStartupPatch.updatedFiles > 0) {
+                LampacRuntimeState.appendLog(
+                    "Aladin: исходник обновлён репозиторием модулей; перезапускаем Lampac для компиляции исправления."
+                )
+                if (aladinPatchRestartAttempt >= 1) {
+                    throw IOException("Исходник Aladin повторно заменён во время запуска; исправление не удалось закрепить.")
+                }
+
+                isStopping.set(true)
+                stopSession()
+                monitorJob?.cancelAndJoin()
+                monitorJob = null
+                serverSession = null
+                isStopping.set(false)
+                startInstalledServer(aladinPatchRestartAttempt + 1)
+                return
+            }
+
             if (serverSession === session && !isStopping.get()) {
                 if (!ExternalMediaProxy.start()) {
                     LampacRuntimeState.appendLog("Не удалось запустить локальный прокси внешнего плеера.")
