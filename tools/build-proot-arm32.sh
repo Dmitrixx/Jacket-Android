@@ -19,6 +19,28 @@ git -C "$PR_ROOT" config --local --replace-all submodule.vendor/samba.url \
   "https://github.com/samba-team/samba.git"
 git -C "$PR_ROOT" submodule update --init vendor/samba
 
+# The pinned upstream build script uses the compiler triple for the sysroot directory too.
+# NDK r27c names the ARMv7 sysroot library directory arm-linux-androideabi,
+# while the compiler executable remains armv7a-linux-androideabi28-clang.
+python3 - "$PR_ROOT/scripts/build.sh" <<'PY'
+from pathlib import Path
+import sys
+
+build_script = Path(sys.argv[1])
+source = build_script.read_text()
+old = '    cp -a "${ndk_sysroot}/usr/lib/${triple}" "${sysroot}/usr/lib/"'
+new = (
+    '    local sysroot_triple="$triple"\\n'
+    '    if [ "$arch" = "arm" ]; then\\n'
+    '        sysroot_triple="arm-linux-androideabi"\\n'
+    '    fi\\n'
+    '    cp -a "${ndk_sysroot}/usr/lib/${sysroot_triple}" "${sysroot}/usr/lib/"'
+)
+if old not in source:
+    raise SystemExit("Could not apply the ARMv7 NDK sysroot compatibility patch")
+build_script.write_text(source.replace(old, new, 1))
+PY
+
 "$PR_ROOT/scripts/build.sh" --arch=arm --ndk-path="$NDK"
 
 RUST_TARGET="armv7-linux-androideabi"
