@@ -243,8 +243,8 @@ internal class ExternalMediaProxyServer(
                 "GET $rawPath$querySuffix HTTP/1.1\r\n".toByteArray(StandardCharsets.ISO_8859_1)
             )
             // Lampac can emit absolute playlist/segment URLs using Request.Host.
-            // Use the compatibility listener as the response origin so external
-            // players do not receive links to their own inaccessible :9118 loopback.
+            // Keep those links on the compatibility port so nested media requests
+            // also receive HEAD-to-GET and byte-range handling for external players.
             val proxyPort = port ?: throw IOException("Внешний прокси уже остановлен")
             upstreamOutput.write(
                 "Host: 127.0.0.1:$proxyPort\r\n".toByteArray(StandardCharsets.ISO_8859_1)
