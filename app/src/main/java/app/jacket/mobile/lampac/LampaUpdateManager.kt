@@ -214,7 +214,7 @@ class LampaUpdateManager(context: Context) {
 
     suspend fun updateLampa(
         update: LampaWebUpdateInfo,
-        onProgress: (Int, String) -> Unit = {}
+        onProgress: (Int, String) -> Unit = { _, _ -> }
     ) = LampaWebAssetUpdater.install(appContext, update) { percent, message ->
         // Asset installation runs on Dispatchers.IO; Compose state callbacks
         // must be delivered on Android's main thread.
@@ -322,7 +322,7 @@ class LampaUpdateManager(context: Context) {
         const val CONNECT_TIMEOUT_MS = 20_000
         const val READ_TIMEOUT_MS = 90_000
         const val MAX_REDIRECTS = 5
-        const val REDIRECT_CODES = setOf(301, 302, 303, 307, 308)
+        val REDIRECT_CODES = setOf(301, 302, 303, 307, 308)
         val API_HOSTS = setOf("api.github.com")
         val RELEASE_ASSET_HOSTS = setOf("github.com", "release-assets.githubusercontent.com", "objects.githubusercontent.com")
     }
