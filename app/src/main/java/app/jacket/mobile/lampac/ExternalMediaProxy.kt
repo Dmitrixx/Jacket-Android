@@ -23,15 +23,15 @@ import java.util.concurrent.atomic.AtomicBoolean
 /**
  * Local HTTP compatibility proxy for external Android media players.
  *
- * Lampac 1.90.2's BaseMod middleware rejects HEAD before the TorrServer media route is
+ * Lampac 1.90.2's BaseMod middleware rejects HEAD before media routes are
  * reached, while VLC and other players commonly probe media with HEAD first.
  * This loopback-only proxy converts that probe to GET, returns its headers
  * without a body, and relays GET/Range response bytes and HTTP framing unchanged.
  * Raw socket forwarding preserves chunked media streams that high-level HTTP
  * clients may transparently decode.
  *
- * It deliberately exposes only the Lampac TorrServer namespace and never
- * forwards caller-supplied Authorization or Cookie headers.
+ * It exposes only Lampac's media namespaces (/ts/stream, /ts/gst, /proxy and
+ * /proxy-dash) and never forwards caller-supplied Authorization or Cookie headers.
  */
 internal class ExternalMediaProxyServer(
     private val upstreamHost: String = "127.0.0.1",
@@ -190,7 +190,7 @@ internal class ExternalMediaProxyServer(
                 val path = target?.rawPath
                 val decodedPath = target?.path
                 if (target == null || target.isAbsolute || target.rawAuthority != null ||
-                    path.isNullOrBlank() || !isExternalStreamPath(path) ||
+                    path.isNullOrBlank() || !isExternalMediaPath(path) ||
                     decodedPath.orEmpty().split('/').any { it == "." || it == ".." } ||
                     '\\' in path || (target.rawQuery?.length ?: 0) > MAX_QUERY_LENGTH
                 ) {
@@ -237,13 +237,17 @@ internal class ExternalMediaProxyServer(
             val upstreamOutput = BufferedOutputStream(upstream.getOutputStream(), IO_BUFFER_SIZE)
             val querySuffix = rawQuery?.let { "?$it" }.orEmpty()
 
-            // The upstream server's middleware blocks HEAD before its TorrServer
-            // route. Use GET to obtain media headers, but omit the body for HEAD.
+            // The upstream server's middleware blocks HEAD before media handlers.
+            // Use GET to obtain media headers, but omit the body for HEAD.
             upstreamOutput.write(
                 "GET $rawPath$querySuffix HTTP/1.1\r\n".toByteArray(StandardCharsets.ISO_8859_1)
             )
+            // Lampac can emit absolute playlist/segment URLs using Request.Host.
+            // Keep those links on the compatibility port so nested media requests
+            // also receive HEAD-to-GET and byte-range handling for external players.
+            val proxyPort = port ?: throw IOException("Внешний прокси уже остановлен")
             upstreamOutput.write(
-                "Host: $upstreamHost:$upstreamPort\r\n".toByteArray(StandardCharsets.ISO_8859_1)
+                "Host: 127.0.0.1:$proxyPort\r\n".toByteArray(StandardCharsets.ISO_8859_1)
             )
             upstreamOutput.write("Connection: close\r\n".toByteArray(StandardCharsets.ISO_8859_1))
             upstreamOutput.write("Accept-Encoding: identity\r\n".toByteArray(StandardCharsets.ISO_8859_1))
@@ -457,16 +461,16 @@ internal class ExternalMediaProxyServer(
     }
 }
 
-/** Maps only this app's local Lampac TorrServer URLs to the loopback proxy. */
+/** Maps this app's local Lampac media URLs to the loopback proxy used by external players. */
 internal fun routeExternalMediaUrl(rawUrl: String, proxyPort: Int?): String? {
     val uri = runCatching { URI(rawUrl) }.getOrNull() ?: return null
-    val isEmbeddedTorrServerUrl =
+    val isEmbeddedLampacMediaUrl =
         uri.scheme.equals("http", true) &&
             uri.host.equals("127.0.0.1", true) &&
             uri.port == 9118 &&
-            uri.rawPath?.let(::isExternalStreamPath) == true
+            uri.rawPath?.let(::isExternalMediaPath) == true
 
-    if (!isEmbeddedTorrServerUrl) return rawUrl
+    if (!isEmbeddedLampacMediaUrl) return rawUrl
     if (proxyPort == null || proxyPort !in 1..65535) return null
 
     return rawUrl.replaceFirst(
@@ -476,11 +480,13 @@ internal fun routeExternalMediaUrl(rawUrl: String, proxyPort: Int?): String? {
     )
 }
 
-private fun isExternalStreamPath(path: String): Boolean =
+private fun isExternalMediaPath(path: String): Boolean =
     path == "/ts/stream" ||
         path.startsWith("/ts/stream/") ||
         path == "/ts/gst" ||
-        path.startsWith("/ts/gst/")
+        path.startsWith("/ts/gst/") ||
+        path.startsWith("/proxy/") ||
+        path.startsWith("/proxy-dash/")
 
 /** Process-wide proxy owner; the Lampac foreground service controls its lifetime. */
 internal object ExternalMediaProxy {

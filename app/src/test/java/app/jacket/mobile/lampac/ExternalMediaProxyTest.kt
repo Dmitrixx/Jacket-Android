@@ -14,7 +14,7 @@ import java.util.concurrent.atomic.AtomicReference
 
 class ExternalMediaProxyTest {
     @Test
-    fun rewritesOnlyEmbeddedLampacTorrServerUrls() {
+    fun rewritesOnlyEmbeddedLampacMediaUrls() {
         val local = "http://127.0.0.1:9118/ts/stream/heart.mkv?play"
         assertEquals(
             "http://127.0.0.1:50123/ts/stream/heart.mkv?play",
@@ -29,8 +29,21 @@ class ExternalMediaProxyTest {
             routeExternalMediaUrl("http://192.168.1.20:9118/ts/stream/video.mkv", 50123)
         )
 
+        val onlineProxy = "http://127.0.0.1:9118/proxy/q0j7token.m3u8?audio=0"
+        assertEquals(
+            "http://127.0.0.1:50123/proxy/q0j7token.m3u8?audio=0",
+            routeExternalMediaUrl(onlineProxy, 50123)
+        )
+        val dashProxy = "http://127.0.0.1:9118/proxy-dash/q0j7token/segment-1.m4s"
+        assertEquals(
+            "http://127.0.0.1:50123/proxy-dash/q0j7token/segment-1.m4s",
+            routeExternalMediaUrl(dashProxy, 50123)
+        )
+
         val localSettings = "http://127.0.0.1:9118/ts/settings"
         assertEquals(localSettings, routeExternalMediaUrl(localSettings, 50123))
+        val localImageProxy = "http://127.0.0.1:9118/proxyimg/poster.jpg"
+        assertEquals(localImageProxy, routeExternalMediaUrl(localImageProxy, 50123))
     }
 
     @Test
@@ -68,6 +81,7 @@ class ExternalMediaProxyTest {
             upstreamThread.join(3_000)
 
             assertTrue(receivedRequest.get().first().startsWith("GET /ts/stream/heart.mkv "))
+            assertTrue(receivedRequest.get().any { it.startsWith("Host: 127.0.0.1:${proxy.port}", true) })
             assertTrue(response.startsWith("HTTP/1.1 200 OK"))
             assertTrue(response.contains("Content-Length: 777777"))
             assertTrue(response.contains("Content-Type: video/x-matroska"))
@@ -159,12 +173,13 @@ class ExternalMediaProxyTest {
             assertTrue(proxy.start())
             val response = sendRequest(
                 proxy.port!!,
-                "GET /ts/stream/heart.mkv HTTP/1.1\r\n" +
+                "GET /proxy/q0j7token.m3u8?audio=0 HTTP/1.1\r\n" +
                     "Host: 127.0.0.1\r\n\r\n"
             )
             upstreamThread.join(3_000)
 
-            assertTrue(receivedRequest.get().first().startsWith("GET /ts/stream/heart.mkv "))
+            assertTrue(receivedRequest.get().first().startsWith("GET /proxy/q0j7token.m3u8?audio=0 "))
+            assertTrue(receivedRequest.get().any { it.startsWith("Host: 127.0.0.1:${proxy.port}", true) })
             assertTrue(response.startsWith("HTTP/1.1 200 OK"))
             assertTrue(response.contains("Transfer-Encoding: chunked"))
             assertTrue(response.endsWith("4\r\ndata\r\n0\r\n\r\n"))
