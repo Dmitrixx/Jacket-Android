@@ -29,13 +29,7 @@ import sys
 build_script = Path(sys.argv[1])
 source = build_script.read_text()
 old = '    cp -a "${ndk_sysroot}/usr/lib/${triple}" "${sysroot}/usr/lib/"'
-new = (
-    '    local sysroot_triple="$triple"\\n'
-    '    if [ "$arch" = "arm" ]; then\\n'
-    '        sysroot_triple="arm-linux-androideabi"\\n'
-    '    fi\\n'
-    '    cp -a "${ndk_sysroot}/usr/lib/${sysroot_triple}" "${sysroot}/usr/lib/"'
-)
+new = '    cp -a "${ndk_sysroot}/usr/lib/arm-linux-androideabi" "${sysroot}/usr/lib/"'
 if old not in source:
     raise SystemExit("Could not apply the ARMv7 NDK sysroot compatibility patch")
 build_script.write_text(source.replace(old, new, 1))
