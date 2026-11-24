@@ -336,8 +336,26 @@ internal object LampaWebAssetUpdater {
     private const val DOWNLOAD_BUFFER_BYTES = 64 * 1024
     private val allowedHosts = setOf("github.com", "release-assets.githubusercontent.com", "objects.githubusercontent.com")
 
-    fun activeDirectory(context: Context): File? =
-        File(context.filesDir, "lampa-web/current").takeIf { it.isDirectory }
+    fun activeDirectory(context: Context): File? {
+        val root = File(context.filesDir, "lampa-web")
+        val current = File(root, "current")
+        val previous = File(root, "previous")
+
+        fun isComplete(directory: File): Boolean =
+            directory.isDirectory &&
+                listOf("index.html", "app.js", "css/app.css", "plugins/modification.js", "build-info.json")
+                    .all { File(directory, it).isFile }
+
+        if (isComplete(current)) return current
+
+        // Recover a crash between renaming current -> previous and stage -> current.
+        current.deleteRecursively()
+        if (isComplete(previous)) {
+            if (previous.renameTo(current)) return current
+            return previous
+        }
+        return null
+    }
 
     fun openAsset(context: Context, relativePath: String): java.io.InputStream? {
         val active = activeDirectory(context)
@@ -362,6 +380,9 @@ internal object LampaWebAssetUpdater {
         }
         val archive = File(updateRoot, "lampa-web-update.zip.part")
         val stage = File(updateRoot, "stage")
+        // Restore the last good bundle first if a prior process was interrupted
+        // during the two-directory activation swap.
+        activeDirectory(context)
         val current = File(updateRoot, "current")
         val previous = File(updateRoot, "previous")
         archive.delete()
