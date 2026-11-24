@@ -58,6 +58,15 @@ data class ProotBootstrapResult(
  */
 internal enum class LampacRuntimeArchitecture { ARM64, ARM32 }
 
+internal fun selectLampacRuntimeArchitecture(supportedAbis: Iterable<String>): LampacRuntimeArchitecture? =
+    when {
+        supportedAbis.any { it.equals("arm64-v8a", ignoreCase = true) } ->
+            LampacRuntimeArchitecture.ARM64
+        supportedAbis.any { it.equals("armeabi-v7a", ignoreCase = true) } ->
+            LampacRuntimeArchitecture.ARM32
+        else -> null
+    }
+
 object LampacProotBootstrap {
     private val requiredLibraries = listOf(
         "libpr-cli.so",
@@ -66,13 +75,8 @@ object LampacProotBootstrap {
         "libptyjni.so"
     )
 
-    fun runtimeArchitecture(): LampacRuntimeArchitecture? = when {
-        Build.SUPPORTED_ABIS.any { it.equals("arm64-v8a", ignoreCase = true) } ->
-            LampacRuntimeArchitecture.ARM64
-        Build.SUPPORTED_ABIS.any { it.equals("armeabi-v7a", ignoreCase = true) } ->
-            LampacRuntimeArchitecture.ARM32
-        else -> null
-    }
+    fun runtimeArchitecture(): LampacRuntimeArchitecture? =
+        selectLampacRuntimeArchitecture(Build.SUPPORTED_ABIS.asList())
 
     fun isSupportedOnThisDevice(): Boolean = runtimeArchitecture() != null
 
