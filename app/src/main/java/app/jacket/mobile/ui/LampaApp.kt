@@ -43,6 +43,7 @@ import app.jacket.mobile.lampac.LampacRuntimePhase
 import app.jacket.mobile.lampac.LampacRuntimeService
 import app.jacket.mobile.lampac.LampacRuntimeState
 import app.jacket.mobile.lampac.LampaUpdateManager
+import app.jacket.mobile.lampac.UpdateCheckResult
 import androidx.compose.runtime.key
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -441,6 +442,9 @@ fun LampaApp(onExit: () -> Unit) {
                 }
             }
 
+        )
+    }
+
     if (updatesVisible) {
         val latestLampa = updateCheck?.lampa
         val latestLampac = updateCheck?.lampac
@@ -566,6 +570,4 @@ fun LampaApp(onExit: () -> Unit) {
         )
     }
 
-        )
-    }
 }
