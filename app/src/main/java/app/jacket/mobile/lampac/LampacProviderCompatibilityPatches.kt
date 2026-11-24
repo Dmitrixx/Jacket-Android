@@ -39,7 +39,7 @@ internal object LampacProviderCompatibilityPatches {
                 .filter { file ->
                     file.isFile &&
                         file.name == "Controller.cs" &&
-                        file.parentFile?.name.equals("Aladin", ignoreCase = true)
+                        file.parentFile?.name?.equals("Aladin", ignoreCase = true) == true
                 }
                 .toList()
         }.distinctBy { runCatching { it.canonicalPath }.getOrDefault(it.absolutePath) }
