@@ -91,6 +91,10 @@ def main() -> None:
                 "#if defined(ARCH_ARM64)\n#define SYSNUM_RSEQ 293\n#elif defined(ARCH_ARM_EABI)\n#define SYSNUM_RSEQ 398\n#endif",
             ),
             (
+                "#if defined(ARCH_ARM64)\n\t\tif (get_abi(tracee, CURRENT) == ABI_DEFAULT && kernel_num == SYSNUM_RSEQ) {",
+                "#if defined(ARCH_ARM64) || defined(ARCH_ARM_EABI)\n\t\tif (get_abi(tracee, CURRENT) == ABI_DEFAULT && kernel_num == SYSNUM_RSEQ) {",
+            ),
+            (
                 "\tcase PR_set_robust_list:\n\t\tset_result_after_seccomp(tracee, -ENOSYS);",
                 "\tcase PR_fchmodat2:\n"
                 "\t\t/* fchmodat2(dirfd, path, mode, 0) is equivalent to the\n"
