@@ -238,13 +238,13 @@ internal class ExternalMediaProxyServer(
             // The upstream server's middleware blocks HEAD before its TorrServer
             // route. Use GET to obtain media headers, but omit the body for HEAD.
             upstreamOutput.write(
-                "GET $rawPath$querySuffix HTTP/1.1\\r\\n".toByteArray(StandardCharsets.ISO_8859_1)
+                "GET $rawPath$querySuffix HTTP/1.1\r\n".toByteArray(StandardCharsets.ISO_8859_1)
             )
             upstreamOutput.write(
-                "Host: $upstreamHost:$upstreamPort\\r\\n".toByteArray(StandardCharsets.ISO_8859_1)
+                "Host: $upstreamHost:$upstreamPort\r\n".toByteArray(StandardCharsets.ISO_8859_1)
             )
-            upstreamOutput.write("Connection: close\\r\\n".toByteArray(StandardCharsets.ISO_8859_1))
-            upstreamOutput.write("Accept-Encoding: identity\\r\\n".toByteArray(StandardCharsets.ISO_8859_1))
+            upstreamOutput.write("Connection: close\r\n".toByteArray(StandardCharsets.ISO_8859_1))
+            upstreamOutput.write("Accept-Encoding: identity\r\n".toByteArray(StandardCharsets.ISO_8859_1))
 
             listOf(
                 "Range",
@@ -258,14 +258,14 @@ internal class ExternalMediaProxyServer(
             ).forEach { name ->
                 requestHeaders.entries.firstOrNull { it.key.equals(name, true) }
                     ?.value
-                    ?.takeIf { '\\r' !in it && '\\n' !in it }
+                    ?.takeIf { '\r' !in it && '\n' !in it }
                     ?.let { value ->
                         upstreamOutput.write(
-                            "$name: $value\\r\\n".toByteArray(StandardCharsets.ISO_8859_1)
+                            "$name: $value\r\n".toByteArray(StandardCharsets.ISO_8859_1)
                         )
                     }
             }
-            upstreamOutput.write("\\r\\n".toByteArray(StandardCharsets.ISO_8859_1))
+            upstreamOutput.write("\r\n".toByteArray(StandardCharsets.ISO_8859_1))
             upstreamOutput.flush()
 
             val statusLine = readLine(upstreamInput, MAX_HEADER_LINE_BYTES)
@@ -298,7 +298,7 @@ internal class ExternalMediaProxyServer(
                 if (separator <= 0) throw IOException("Некорректный HTTP-заголовок от Lampac")
                 val name = line.substring(0, separator).trim()
                 val value = line.substring(separator + 1).trim()
-                if (name.isBlank() || value.any { it == '\\r' || it == '\\n' }) {
+                if (name.isBlank() || value.any { it == '\r' || it == '\n' }) {
                     throw IOException("Некорректное значение HTTP-заголовка от Lampac")
                 }
                 responseHeaders += name to value
@@ -308,7 +308,7 @@ internal class ExternalMediaProxyServer(
             // de-chunks responses; that breaks clients expecting a streaming response
             // with Transfer-Encoding: chunked and no Content-Length.
             responseStarted = true
-            output.write("$statusLine\\r\\n".toByteArray(StandardCharsets.ISO_8859_1))
+            output.write("$statusLine\r\n".toByteArray(StandardCharsets.ISO_8859_1))
             responseHeaders.forEach { (name, rawValue) ->
                 if (name.equals("Connection", true) ||
                     name.equals("Keep-Alive", true) ||
@@ -318,10 +318,10 @@ internal class ExternalMediaProxyServer(
 
                 val value = if (name.equals("Location", true)) rewriteLocation(rawValue) else rawValue
                 output.write(
-                    "$name: $value\\r\\n".toByteArray(StandardCharsets.ISO_8859_1)
+                    "$name: $value\r\n".toByteArray(StandardCharsets.ISO_8859_1)
                 )
             }
-            output.write("Connection: close\\r\\n\\r\\n".toByteArray(StandardCharsets.ISO_8859_1))
+            output.write("Connection: close\r\n\r\n".toByteArray(StandardCharsets.ISO_8859_1))
             output.flush()
 
             if (method == "GET" && status !in BODYLESS_STATUS_CODES) {
