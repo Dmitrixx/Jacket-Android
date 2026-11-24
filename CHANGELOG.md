@@ -1,5 +1,12 @@
 # Changelog
 
+## 3.0.17 — Fix long Aladin proxy links
+
+- Patch the dynamic Aladin controller before Lampac starts, enabling compact MD5 proxy keys for HLS URLs with large `Accepts-Controls` headers.
+- Keep the generated `/proxy/` URL below Kestrel's request-line limit by storing headers server-side instead of serializing them into the URL.
+- Apply the patch in-place to existing Lampac installs and make it idempotent; preserve `init.conf` and provider credentials.
+- Add tests for the source patch, runtime file discovery and repeated startup.
+
 ## 3.0.16 — Fix external playback of Lampac online sources
 
 - Route Lampac `/proxy/` and `/proxy-dash/` media URLs through the loopback compatibility server, alongside TorrServer/GStreamer streams.
