@@ -1,5 +1,14 @@
 # Changelog
 
+## 3.0.22 — Support 32-bit ARM Android TV devices
+
+- Add an ARMv7 PRoot and `pr-cli` build so embedded Lampac can run on 32-bit Android userspace.
+- Select Debian, .NET 10, Node.js and Chromium packages matching the Android process ABI; keep the existing ARM64 Google Chrome and runtime path.
+- Keep the full Lampac payload, configuration migration, media proxy and Lampa player integration shared between both architectures.
+- Add CI generation and ELF validation for the ARMv7 native runtime plus unit coverage for ABI selection.
+- Physical-device validation on 32-bit Android TV hardware is still required.
+
+
 ## 3.0.20 — Lampac controls inside Lampa settings
 
 - Remove the separate floating Lampac button from the WebView screen.

@@ -47,6 +47,14 @@ jobs:
       - name: Install Android SDK packages
         run: sdkmanager "platforms;android-36" "build-tools;36.0.0" "platform-tools" "ndk;27.2.12479018" "cmake;3.22.1"
 
+      - name: Set up Rust for ARM32 PRoot CLI
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: armv7-linux-androideabi
+
+      - name: Build ARM32 PRoot native payload
+        run: ANDROID_NDK_HOME="$ANDROID_HOME/ndk/27.2.12479018" bash tools/build-proot-arm32.sh
+
       # A permanent keystore is supplied once through repository Actions secrets.
       # Never store the signing key or its passwords in git.
       - name: Restore persistent app signing key

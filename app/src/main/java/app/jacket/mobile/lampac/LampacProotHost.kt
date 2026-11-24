@@ -3,6 +3,7 @@ package app.jacket.mobile.lampac
 import android.content.Context
 import android.net.ConnectivityManager
 import android.os.Build
+import android.os.Process
 import android.system.Os
 import id.or.oo.pr.engine.ProotHost
 import id.or.oo.pr.engine.ProotLauncher
@@ -54,8 +55,21 @@ data class ProotBootstrapResult(
 
 /**
  * Prepares pr-cli's documented app-private prefix layout and links its
- * executable entry points to the ARM64 binaries extracted by Android.
+ * executable entry points for the ABI used by the running Android process.
  */
+enum class LampacRuntimeArchitecture { ARM64, ARM32 }
+
+internal fun selectLampacRuntimeArchitecture(
+    is64BitProcess: Boolean,
+    supportedAbis: Iterable<String>
+): LampacRuntimeArchitecture? = when {
+    is64BitProcess && supportedAbis.any { it.equals("arm64-v8a", ignoreCase = true) } ->
+        LampacRuntimeArchitecture.ARM64
+    !is64BitProcess && supportedAbis.any { it.equals("armeabi-v7a", ignoreCase = true) } ->
+        LampacRuntimeArchitecture.ARM32
+    else -> null
+}
+
 object LampacProotBootstrap {
     private val requiredLibraries = listOf(
         "libpr-cli.so",
@@ -64,18 +78,20 @@ object LampacProotBootstrap {
         "libptyjni.so"
     )
 
-    fun isSupportedOnThisDevice(): Boolean =
-        Build.SUPPORTED_ABIS.any { it.equals("arm64-v8a", ignoreCase = true) }
+    fun runtimeArchitecture(): LampacRuntimeArchitecture? =
+        selectLampacRuntimeArchitecture(Process.is64Bit(), Build.SUPPORTED_ABIS.asList())
+
+    fun isSupportedOnThisDevice(): Boolean = runtimeArchitecture() != null
 
     fun prepare(host: LampaProotHost): ProotBootstrapResult {
         check(isSupportedOnThisDevice()) {
-            "Встроенный Lampac пока поддерживается только на ARM64. Можно подключить удалённый Lampac по сети."
+            "Встроенный Lampac поддерживает только ARM64 и ARMv7 Android. Можно подключить удалённый Lampac по сети."
         }
 
         val nativeDir = host.nativeLibraryDir
         requiredLibraries.forEach { name ->
             require(File(nativeDir, name).isFile) {
-                "Не найдена библиотека $name. Проверьте ARM64-сборку Lampa."
+                "Не найдена библиотека $name. Проверьте, что в APK включены нативные библиотеки для ABI этого устройства."
             }
         }
 

@@ -44,6 +44,10 @@ object LampacRuntimeArtifacts {
         "1d82a6822871c0e750d2d3d3b9b27657d24a2083eb999c2f78b39b0cd10862178cb2c6d21f941579cd521baf5738a78d3378e5754c5895a93d7546135eb40ec6"
     const val DOTNET_URL =
         "https://builds.dotnet.microsoft.com/dotnet/aspnetcore/Runtime/10.0.15/aspnetcore-runtime-10.0.15-linux-arm64.tar.gz"
+    const val DOTNET_ARM32_SHA512 =
+        "487a707e8e16080424e239fb8eeabccaa9d91a520197322d28de8d1dc15ed21edcce2de15f77ee8fa776e27f14708afdc5fa2dfabc75cef459872197de60a589"
+    const val DOTNET_ARM32_URL =
+        "https://builds.dotnet.microsoft.com/dotnet/aspnetcore/Runtime/10.0.15/aspnetcore-runtime-10.0.15-linux-arm.tar.gz"
 }
 
 private val lampacArtifactAllowedHosts = setOf(
@@ -712,8 +716,22 @@ internal fun clearLampacProotDownloadCache(prefixDir: File): Long {
     }
 }
 
-internal fun buildLampacSystemPackagesInstallCommand(): String =
-    buildLampacOfflineDpkgCommand(
+internal fun buildLampacSystemPackagesInstallCommand(
+    architecture: LampacRuntimeArchitecture = LampacRuntimeArchitecture.ARM64
+): String {
+    val browserInstall = when (architecture) {
+        LampacRuntimeArchitecture.ARM64 ->
+            "curl -fSL --retry 3 https://dl.google.com/linux/direct/google-chrome-stable_current_arm64.deb -o /tmp/google-chrome-stable.deb && " +
+                "test \"$(dpkg-deb -f /tmp/google-chrome-stable.deb Architecture)\" = arm64 && " +
+                "apt-get install -y --no-install-recommends /tmp/google-chrome-stable.deb && " +
+                "ln -sf /usr/bin/google-chrome-stable /usr/bin/chromium && " +
+                "rm -f /tmp/google-chrome-stable.deb && "
+        LampacRuntimeArchitecture.ARM32 ->
+            "apt-get install -y --no-install-recommends chromium && " +
+                "ln -sf /usr/bin/chromium /usr/bin/google-chrome-stable && "
+    }
+
+    return buildLampacOfflineDpkgCommand(
         "apt-get update && " +
             "apt-get install -y --no-install-recommends opensysusers && " +
             "dpkg --root=/ --configure -a && " +
@@ -722,17 +740,14 @@ internal fun buildLampacSystemPackagesInstallCommand(): String =
             "gstreamer1.0-libav gstreamer1.0-plugins-bad gstreamer1.0-plugins-base gstreamer1.0-plugins-base-apps " +
             "gstreamer1.0-plugins-good gstreamer1.0-plugins-ugly gstreamer1.0-tools " +
             "libgstreamer-plugins-base1.0-0 libgstreamer1.0-0 && " +
-            "curl -fSL --retry 3 https://dl.google.com/linux/direct/google-chrome-stable_current_arm64.deb -o /tmp/google-chrome-stable.deb && " +
-            "test \"$(dpkg-deb -f /tmp/google-chrome-stable.deb Architecture)\" = arm64 && " +
-            "apt-get install -y --no-install-recommends /tmp/google-chrome-stable.deb && " +
-            "ln -sf /usr/bin/google-chrome-stable /usr/bin/chromium && " +
-            "rm -f /tmp/google-chrome-stable.deb && " +
+            browserInstall +
             "test -x /usr/bin/node && node --version && " +
             "test -x /usr/bin/chromium && chromium --version && ffmpeg -version && gst-inspect-1.0 --version && " +
             "apt-get clean && rm -rf /var/lib/apt/lists/*"
     )
+}
 
-/** A lightweight repair for older installs: it adds only ARM64 Node.js. */
+/** A lightweight repair for older installs: it adds only the Debian-architecture Node.js package. */
 internal fun buildLampacNodeInstallCommand(): String =
     buildLampacOfflineDpkgCommand(
         "apt-get update && " +
@@ -745,7 +760,7 @@ internal fun buildLampacNodeInstallCommand(): String =
 
 /**
  * Playwright's JS package is architecture-independent. The runtime uses
- * Debian's ARM64 Node.js through PLAYWRIGHT_NODEJS_PATH rather than assuming
+ * Debian's architecture-matched Node.js through PLAYWRIGHT_NODEJS_PATH rather than assuming
  * that a platform-specific executable in the release archive matches Android.
  */
 internal fun isLampacPlaywrightPackageReady(lampacDirectory: File): Boolean {
@@ -799,7 +814,7 @@ internal fun isDebianRootfsReady(root: File): Boolean {
 }
 
 /**
- * Installs a private ARM64 Debian rootfs, ASP.NET Core 10 and a checksum-pinned
+ * Installs a private ABI-matched Debian rootfs, ASP.NET Core 10 and a checksum-pinned
  * Lampac release. It intentionally does not call Lampac's systemd installer.
  */
 class LampacRuntimeInstaller(context: android.content.Context) {
@@ -931,11 +946,12 @@ class LampacRuntimeInstaller(context: android.content.Context) {
             )
         }
 
-        check(LampacProotBootstrap.isSupportedOnThisDevice()) {
-            "Встроенный Lampac пока доступен только на ARM64. Удалённый сервер можно подключить по HTTPS."
-        }
+        val runtimeArchitecture = LampacProotBootstrap.runtimeArchitecture()
+            ?: throw IllegalStateException(
+                "Встроенный Lampac поддерживает ARM64 и ARMv7 Android. Для этой архитектуры доступно подключение удалённого сервера."
+            )
 
-        send("prepare", "Подготавливаем PRoot…", 0, 0)
+        send("prepare", "Подготавливаем PRoot (" + runtimeArchitecture.name + ")…", 0, 0)
         val prepared = LampacProotBootstrap.prepare(host)
 
         // Once the OCI rootfs exists, its verified layer blobs are no longer
@@ -952,7 +968,7 @@ class LampacRuntimeInstaller(context: android.content.Context) {
             }
         }
 
-        // Newer APKs may add an ARM64 runtime prerequisite without changing the
+        // Newer APKs may add a runtime prerequisite without changing the
         // Lampac payload. Repair that in place before requiring space for a
         // second 480 MB archive or replacing the user's existing init.conf.
         val existingVersion = installedVersion()
@@ -962,15 +978,15 @@ class LampacRuntimeInstaller(context: android.content.Context) {
             !isLampacNodeReady(prepared.debianRootfsDir)
         ) {
             ensureLampacDebianMachineId(prepared.debianRootfsDir)
-            send("nodejs-migration", "Добавляем ARM64 Node.js для Playwright без повторной загрузки Lampac…", 0, 0)
+            send("nodejs-migration", "Добавляем Node.js для Playwright без повторной загрузки Lampac…", 0, 0)
             val nodeInstall = commandRunner.runAsRoot(buildLampacNodeInstallCommand()) { line ->
                 send("nodejs-migration", line.take(220), 0, 0)
             }
             check(nodeInstall == 0 && isLampacNodeReady(prepared.debianRootfsDir)) {
-                "Не удалось добавить ARM64 Node.js для Playwright (код $nodeInstall)"
+                "Не удалось добавить Node.js для Playwright (код $nodeInstall)"
             }
             val existingServer = File(prepared.debianRootfsDir, "opt/lampac")
-            send("installed", "ARM64 Node.js добавлен. Существующий Lampac и настройки сохранены.", 1, 1)
+            send("installed", "Node.js добавлен. Существующий Lampac и настройки сохранены.", 1, 1)
             return@withContext existingServer
         }
 
@@ -993,12 +1009,12 @@ class LampacRuntimeInstaller(context: android.content.Context) {
                 }
             }
 
-            send("debian", "Загружаем и устанавливаем Debian ARM64…", 0, 0)
+            send("debian", "Загружаем и устанавливаем Debian " + runtimeArchitecture.name + "…", 0, 0)
             val result = commandRunner.installDebian { line ->
                 send("debian", line.take(220), 0, 0)
             }
             check(result == 0 && isDebianRootfsReady(prepared.debianRootfsDir)) {
-                "Не удалось установить полноценный Debian ARM64 в PRoot (код $result)"
+                "Не удалось установить Debian " + runtimeArchitecture.name + " в PRoot (код $result)"
             }
             val reclaimed = clearLampacProotDownloadCache(host.prefixDir)
             if (reclaimed > 0L) {
@@ -1013,18 +1029,29 @@ class LampacRuntimeInstaller(context: android.content.Context) {
 
         ensureLampacDebianMachineId(prepared.debianRootfsDir)
         send("packages", "Подготавливаем системные библиотеки Debian…", 0, 0)
-        val apt = commandRunner.runAsRoot(buildLampacSystemPackagesInstallCommand()) { line ->
+        val apt = commandRunner.runAsRoot(buildLampacSystemPackagesInstallCommand(runtimeArchitecture)) { line ->
             send("packages", line.take(220), 0, 0)
         }
         check(apt == 0) { "Не удалось установить системные библиотеки Debian (код $apt)" }
 
-        send("dotnet-download", "Загружаем ASP.NET Core Runtime ${LampacRuntimeArtifacts.DOTNET_VERSION} ARM64…", 0, 0)
+        val dotnetRid = if (runtimeArchitecture == LampacRuntimeArchitecture.ARM32) "linux-arm" else "linux-arm64"
+        val dotnetUrl = if (runtimeArchitecture == LampacRuntimeArchitecture.ARM32) {
+            LampacRuntimeArtifacts.DOTNET_ARM32_URL
+        } else {
+            LampacRuntimeArtifacts.DOTNET_URL
+        }
+        val dotnetSha512 = if (runtimeArchitecture == LampacRuntimeArchitecture.ARM32) {
+            LampacRuntimeArtifacts.DOTNET_ARM32_SHA512
+        } else {
+            LampacRuntimeArtifacts.DOTNET_SHA512
+        }
+        send("dotnet-download", "Загружаем ASP.NET Core Runtime ${LampacRuntimeArtifacts.DOTNET_VERSION} " + runtimeArchitecture.name + "…", 0, 0)
         val dotnetArchive = LampacArtifactDownloader.download(
             LampacArtifactSpec(
-                fileName = "aspnetcore-runtime-${LampacRuntimeArtifacts.DOTNET_VERSION}-linux-arm64.tar.gz",
-                url = LampacRuntimeArtifacts.DOTNET_URL,
+                fileName = "aspnetcore-runtime-${LampacRuntimeArtifacts.DOTNET_VERSION}-${dotnetRid}.tar.gz",
+                url = dotnetUrl,
                 digestAlgorithm = "SHA-512",
-                expectedDigest = LampacRuntimeArtifacts.DOTNET_SHA512,
+                expectedDigest = dotnetSha512,
                 maxBytes = 160L * 1024L * 1024L
             ),
             downloads
