@@ -487,10 +487,24 @@ fun LampaApp(onExit: () -> Unit) {
                             style = MaterialTheme.typography.bodySmall
                         )
                     }
+                    if (runtime.phase == LampacRuntimePhase.INSTALLING ||
+                        runtime.phase == LampacRuntimePhase.STOPPING ||
+                        runtime.phase == LampacRuntimePhase.STARTING
+                    ) {
+                        Text(runtime.message)
+                        if (runtime.progress != null) {
+                            LinearProgressIndicator(
+                                progress = { runtime.progress!!.coerceIn(0, 100) / 100f },
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        }
+                    }
                     updateCheck?.let { checked ->
                         Text("LAMPA", fontWeight = FontWeight.Bold)
                         Text("Установлена сборка: ${checked.localLampaBuild.take(7)}")
-                        if (latestLampa == null) {
+                        if (checked.lampaError != null) {
+                            Text("Проверка Lampa: ${checked.lampaError}", color = MaterialTheme.colorScheme.error)
+                        } else if (latestLampa == null) {
                             Text("Новых веб-обновлений нет.")
                         } else {
                             Text("Доступна сборка: ${latestLampa.displayVersion} • Lampa ${latestLampa.versionName}")
@@ -535,7 +549,9 @@ fun LampaApp(onExit: () -> Unit) {
 
                         Text("LAMPAC NEXTGEN", fontWeight = FontWeight.Bold)
                         Text("Установлена версия: ${checked.localLampacVersion ?: "не обнаружена"}")
-                        if (latestLampac == null) {
+                        if (checked.lampacError != null) {
+                            Text("Проверка Lampac: ${checked.lampacError}", color = MaterialTheme.colorScheme.error)
+                        } else if (latestLampac == null) {
                             Text("Новой стабильной версии Lampac не найдено.")
                         } else {
                             Text("Доступна версия: ${latestLampac.version}")
