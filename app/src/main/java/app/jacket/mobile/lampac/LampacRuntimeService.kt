@@ -186,6 +186,21 @@ class LampacRuntimeService : Service() {
                     LampacRuntimeState.appendLog("Aladin: исходник динамического модуля не найден; проверьте комплект Lampac.")
             }
 
+            // Keep all balancers in the selector. Lampac checks every provider,
+            // but the stock plugin discards show=false entries before startSource,
+            // preventing the user from manually retrying grey/negative providers.
+            val onlineUiPatch = withContext(Dispatchers.IO) {
+                LampacOnlinePluginCompatibilityPatches.apply(File(host.debianRootfsDir, "opt/lampac"))
+            }
+            when {
+                onlineUiPatch.updatedFiles > 0 ->
+                    LampacRuntimeState.appendLog("Балансеры: включён ручной выбор всех источников, включая отмеченные без результата.")
+                onlineUiPatch.alreadyPatchedFiles > 0 ->
+                    LampacRuntimeState.appendLog("Балансеры: ручной выбор всех источников уже включён.")
+                onlineUiPatch.filesFound == 0 ->
+                    LampacRuntimeState.appendLog("Балансеры: Online/plugin.js не найден; ручной выбор всех источников не применён.")
+            }
+
             // Existing installs keep their original init.conf across APK updates.
             // Apply the safe Android module profile before launching Core.dll.
             LampacEmbeddedConfig.ensureAndroidRuntimeConfig(File(host.debianRootfsDir, "opt/lampac"))
