@@ -20,6 +20,30 @@ class LampacRuntimeInstallerTest {
     }
 
     @Test
+    fun selectsArm32RuntimeFor32BitAndroidAndPrefersArm64WhenAvailable() {
+        assertEquals(
+            LampacRuntimeArchitecture.ARM32,
+            selectLampacRuntimeArchitecture(listOf("armeabi-v7a", "armeabi"))
+        )
+        assertEquals(
+            LampacRuntimeArchitecture.ARM64,
+            selectLampacRuntimeArchitecture(listOf("arm64-v8a", "armeabi-v7a"))
+        )
+        assertEquals(null, selectLampacRuntimeArchitecture(listOf("x86")))
+    }
+
+    @Test
+    fun arm32InstallUsesDebianChromiumAndTheVerifiedArm32DotnetRuntime() {
+        val command = buildLampacSystemPackagesInstallCommand(LampacRuntimeArchitecture.ARM32)
+
+        assertTrue(command.contains("apt-get install -y --no-install-recommends chromium"))
+        assertTrue(command.contains("ln -sf /usr/bin/chromium /usr/bin/google-chrome-stable"))
+        assertFalse(command.contains("google-chrome-stable_current_arm64.deb"))
+        assertTrue(LampacRuntimeArtifacts.DOTNET_ARM32_URL.endsWith("aspnetcore-runtime-10.0.15-linux-arm.tar.gz"))
+        assertTrue(LampacRuntimeArtifacts.DOTNET_ARM32_SHA512.matches(Regex("[0-9a-f]{128}")))
+    }
+
+    @Test
     fun clearsOnlyRegularFilesFromCompletedDebianImageLayerCache() {
         val prefix = Files.createTempDirectory("lampa-proot-cache").toFile()
         try {
