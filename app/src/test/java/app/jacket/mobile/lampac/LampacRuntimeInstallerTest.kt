@@ -20,6 +20,18 @@ class LampacRuntimeInstallerTest {
     }
 
     @Test
+    fun arm32DebianUsesTrixieBecauseForkyNoLongerPublishesChromiumArmhf() {
+        assertEquals(
+            listOf("install", "docker.io/library/debian:trixie-slim", "--override-alias", "lampac-debian"),
+            lampacDebianInstallArguments(LampacRuntimeArchitecture.ARM32)
+        )
+        assertEquals(
+            listOf("install", "docker.io/library/debian:forky-slim", "--override-alias", "lampac-debian"),
+            lampacDebianInstallArguments(LampacRuntimeArchitecture.ARM64)
+        )
+    }
+
+    @Test
     fun selectsRuntimeByTheActualAndroidProcessBitness() {
         assertEquals(
             LampacRuntimeArchitecture.ARM32,
@@ -45,6 +57,8 @@ class LampacRuntimeInstallerTest {
         assertTrue(command.contains("apt-get install -y --no-install-recommends chromium"))
         assertTrue(command.contains("ln -sf /usr/bin/chromium /usr/bin/google-chrome-stable"))
         assertFalse(command.contains("google-chrome-stable_current_arm64.deb"))
+        assertTrue(command.contains("fontconfig libicu76 zlib1g"))
+        assertFalse(command.contains("libicu78"))
         assertTrue(LampacRuntimeArtifacts.DOTNET_ARM32_URL.endsWith("aspnetcore-runtime-10.0.15-linux-arm.tar.gz"))
         assertTrue(LampacRuntimeArtifacts.DOTNET_ARM32_SHA512.matches(Regex("[0-9a-f]{128}")))
     }
@@ -214,6 +228,31 @@ class LampacRuntimeInstallerTest {
             File(root, "bin/sh").writeText("placeholder")
 
             assertFalse(isDebianRootfsReady(root))
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun arm32RejectsOldForkyRootfsAndRequiresTrixieBeforePackageInstall() {
+        val root = java.nio.file.Files.createTempDirectory("lampa-debian-arm32-codename").toFile()
+        try {
+            File(root, "etc").mkdirs()
+            File(root, "bin").mkdirs()
+            File(root, "usr/bin").mkdirs()
+            val shell = File(root, "bin/sh").apply { writeText("placeholder") }
+            val apt = File(root, "usr/bin/apt-get").apply { writeText("placeholder") }
+            assertTrue(shell.setExecutable(true))
+            assertTrue(apt.setExecutable(true))
+
+            val osRelease = File(root, "etc/os-release")
+            osRelease.writeText("ID=debian\\nVERSION_CODENAME=forky\\n")
+            assertFalse(isDebianRootfsReady(root, LampacRuntimeArchitecture.ARM32))
+            assertTrue(isDebianRootfsReady(root, LampacRuntimeArchitecture.ARM64))
+
+            osRelease.writeText("ID=debian\\nVERSION_CODENAME=trixie\\n")
+            assertTrue(isDebianRootfsReady(root, LampacRuntimeArchitecture.ARM32))
+            assertFalse(isDebianRootfsReady(root, LampacRuntimeArchitecture.ARM64))
         } finally {
             root.deleteRecursively()
         }
