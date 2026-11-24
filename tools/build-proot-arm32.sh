@@ -74,7 +74,9 @@ PY
     AR="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar" \
     AR_armv7_linux_androideabi="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-ar" \
     CARGO_TARGET_ARMV7_LINUX_ANDROIDEABI_LINKER="$RUST_LINKER" \
-    cargo build --release --target "$RUST_TARGET"
+    # Build only the runtime CLI. The upstream enosys_test helper is an
+    # aarch64-only diagnostic binary and is not packaged into the Android app.
+    cargo build --release --target "$RUST_TARGET" --bin pr-cli
 )
 
 NATIVE_OUT="$PR_ROOT/android/proot-engine/src/main/jniLibs/armeabi-v7a"
