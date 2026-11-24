@@ -213,7 +213,11 @@ class LampaUpdateManager(context: Context) {
     suspend fun updateLampa(
         update: LampaWebUpdateInfo,
         onProgress: (Int, String) -> Unit = {}
-    ) = LampaWebAssetUpdater.install(appContext, update, onProgress)
+    ) = LampaWebAssetUpdater.install(appContext, update) { percent, message ->
+        // Asset installation runs on Dispatchers.IO; Compose state callbacks
+        // must be delivered on Android's main thread.
+        appContext.mainExecutor.execute { onProgress(percent, message) }
+    }
 
     private fun readText(
         url: String,
