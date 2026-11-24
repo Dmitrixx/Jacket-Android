@@ -518,11 +518,13 @@ internal object LampaWebAssetUpdater {
         require(raw.isNotBlank() && !raw.startsWith('/') && '\\' !in raw && '\u0000' !in raw) {
             "Недопустимый путь в архиве Lampa"
         }
-        val parts = raw.trimEnd('/').split('/')
+        val normalized = raw.removePrefix("./").trimEnd('/')
+        if (normalized.isBlank() || normalized == ".") return null
+        val parts = normalized.split('/')
         require(parts.none { it.isBlank() || it == "." || it == ".." }) {
             "Архив Lampa содержит traversal-путь"
         }
-        return if (parts.isEmpty()) null else parts.joinToString(File.separator)
+        return parts.joinToString(File.separator)
     }
 
     private fun sha256(file: File): String {
