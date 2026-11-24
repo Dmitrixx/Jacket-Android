@@ -57,7 +57,7 @@ data class ProotBootstrapResult(
  * Prepares pr-cli's documented app-private prefix layout and links its
  * executable entry points for the ABI used by the running Android process.
  */
-internal enum class LampacRuntimeArchitecture { ARM64, ARM32 }
+enum class LampacRuntimeArchitecture { ARM64, ARM32 }
 
 internal fun selectLampacRuntimeArchitecture(
     is64BitProcess: Boolean,
