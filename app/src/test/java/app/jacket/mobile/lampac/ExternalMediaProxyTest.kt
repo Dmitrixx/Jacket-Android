@@ -108,9 +108,11 @@ class ExternalMediaProxyTest {
             assertTrue(proxy.start())
             val response = sendRequest(
                 proxy.port!!,
-                "GET /ts/stream/heart.mkv HTTP/1.1\r\n" +
+                "GET /ts/stream/heart.mkv?link=hash123&index=2&play&uid=test-user HTTP/1.1\r\n" +
                     "Host: 127.0.0.1\r\n" +
-                    "Range: bytes=0-3\r\n\r\n"
+                    "Range: bytes=0-3\r\n" +
+                    "Cookie: session=must-not-forward\r\n" +
+                    "Authorization: Bearer must-not-forward\r\n\r\n"
             )
             upstreamThread.join(3_000)
 
