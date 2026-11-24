@@ -6,6 +6,17 @@ import org.junit.Test
 
 class LampacLogSanitizerTest {
     @Test
+    fun stripsAnsiEscapeSequencesAndBracketOnlyFragments() {
+        val source = "\u001B[1;34m[\u001B[32m*\u001B[0m Debian [1;34m[0m"
+        val sanitized = LampacLogSanitizer.sanitize(source)
+
+        assertTrue(sanitized.contains("* Debian"))
+        assertTrue(!sanitized.contains("[1;34m"))
+        assertTrue(!sanitized.contains("[32m"))
+        assertTrue(!sanitized.contains("[0m"))
+    }
+
+    @Test
     fun redactsSensitiveQueryParametersAndAccountIdentifiers() {
         val source = "GET /lite/events?token=secret-token&uid=user-123&account_email=me@example.com"
 
