@@ -276,7 +276,7 @@ class LampaUpdateManager(context: Context) {
 
     private fun isSafeHttpsUrl(uri: URI, hosts: Set<String>): Boolean =
         uri.scheme.equals("https", true) &&
-            uri.host?.lowercase() in hosts &&
+            uri.host?.lowercase()?.let { it in hosts } == true &&
             (uri.port == -1 || uri.port == 443) &&
             uri.rawUserInfo == null &&
             uri.rawFragment.isNullOrBlank()
@@ -389,7 +389,7 @@ internal object LampaWebAssetUpdater {
         }
     }
 
-    private fun downloadArchive(
+    private suspend fun downloadArchive(
         update: LampaWebUpdateInfo,
         target: File,
         onProgress: (Long) -> Unit
@@ -540,7 +540,7 @@ internal object LampaWebAssetUpdater {
 
     private fun isAllowed(uri: URI): Boolean =
         uri.scheme.equals("https", true) &&
-            uri.host?.lowercase() in allowedHosts &&
+            uri.host?.lowercase()?.let { it in allowedHosts } == true &&
             (uri.port == -1 || uri.port == 443) &&
             uri.rawUserInfo == null &&
             uri.rawFragment.isNullOrBlank()
