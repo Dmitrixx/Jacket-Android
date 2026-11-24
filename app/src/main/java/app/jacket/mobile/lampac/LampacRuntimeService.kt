@@ -189,16 +189,24 @@ class LampacRuntimeService : Service() {
             // Keep all balancers in the selector. Lampac checks every provider,
             // but the stock plugin discards show=false entries before startSource,
             // preventing the user from manually retrying grey/negative providers.
-            val onlineUiPatch = withContext(Dispatchers.IO) {
-                LampacOnlinePluginCompatibilityPatches.apply(File(host.debianRootfsDir, "opt/lampac"))
+            val onlineUiPatch = runCatching {
+                withContext(Dispatchers.IO) {
+                    LampacOnlinePluginCompatibilityPatches.apply(File(host.debianRootfsDir, "opt/lampac"))
+                }
             }
-            when {
-                onlineUiPatch.updatedFiles > 0 ->
-                    LampacRuntimeState.appendLog("Балансеры: включён ручной выбор всех источников, включая отмеченные без результата.")
-                onlineUiPatch.alreadyPatchedFiles > 0 ->
-                    LampacRuntimeState.appendLog("Балансеры: ручной выбор всех источников уже включён.")
-                onlineUiPatch.filesFound == 0 ->
-                    LampacRuntimeState.appendLog("Балансеры: Online/plugin.js не найден; ручной выбор всех источников не применён.")
+            onlineUiPatch.onSuccess { report ->
+                when {
+                    report.updatedFiles > 0 ->
+                        LampacRuntimeState.appendLog("Балансеры: включён ручной выбор всех источников, включая отмеченные без результата.")
+                    report.alreadyPatchedFiles > 0 ->
+                        LampacRuntimeState.appendLog("Балансеры: ручной выбор всех источников уже включён.")
+                    report.filesFound == 0 ->
+                        LampacRuntimeState.appendLog("Балансеры: Online/plugin.js не найден; ручной выбор всех источников не применён.")
+                }
+            }.onFailure { error ->
+                LampacRuntimeState.appendLog(
+                    "Балансеры: не удалось применить исправление ручного выбора (${error.javaClass.simpleName})."
+                )
             }
 
             // Existing installs keep their original init.conf across APK updates.
