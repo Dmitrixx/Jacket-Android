@@ -250,6 +250,7 @@ private object LampacZipInstaller {
     suspend fun install(
         archive: File,
         rootfs: File,
+        version: String = LampacRuntimeArtifacts.LAMPAC_VERSION,
         onProgress: (Long, Long) -> Unit
     ): File = withContext(Dispatchers.IO) {
         val context = currentCoroutineContext()
@@ -380,9 +381,15 @@ private object LampacZipInstaller {
                 } else {
                     LampacEmbeddedConfig.importInitConfig(stage, previousInitConfig)
                 }
-                File(stage, MARKER_FILE).writeText(LampacRuntimeArtifacts.LAMPAC_VERSION)
+                File(stage, MARKER_FILE).writeText(version)
                 onProgress(totalBytes, totalBytes)
             }
+
+            // Keep private runtime data and user-managed overrides across a
+            // server release refresh. Official code/modules are replaced by the
+            // new archive; only data, local databases, credentials and overrides
+            // are merged from the previous tree.
+            preserveUserRuntimeData(target, stage)
 
             if (target.exists() && !target.renameTo(backup)) {
                 throw IOException("Не удалось подготовить предыдущую установку Lampac к обновлению")
@@ -397,6 +404,40 @@ private object LampacZipInstaller {
             stage.deleteRecursively()
             if (!target.exists() && backup.exists()) backup.renameTo(target)
             throw error
+        }
+    }
+
+    private fun preserveUserRuntimeData(previous: File, staged: File) {
+        if (!previous.isDirectory) return
+
+        val preservedPaths = listOf(
+            "data",
+            "database",
+            "cache",
+            "logs",
+            "mods",
+            "torrserver",
+            "TorrServer",
+            "wwwroot",
+            "plugins/override",
+            "module/NextHUB/override",
+            "module/Catalog/override"
+        )
+        preservedPaths.forEach { relative ->
+            val source = File(previous, relative)
+            if (!source.exists()) return@forEach
+            val destination = File(staged, relative)
+            destination.parentFile?.let { if (!it.exists()) it.mkdirs() }
+            if (source.isDirectory) {
+                source.copyRecursively(destination, overwrite = true)
+            } else {
+                source.copyTo(destination, overwrite = true)
+            }
+        }
+
+        listOf("users.json", "passwd", "current.conf", "excludes.conf").forEach { name ->
+            val source = File(previous, name)
+            if (source.isFile) source.copyTo(File(staged, name), overwrite = true)
         }
     }
 
@@ -710,10 +751,16 @@ class LampacRuntimeInstaller(context: android.content.Context) {
     private val commandRunner = LampacProotCommandRunner(commands)
     private val downloads = File(appContext.filesDir, "lampac/downloads")
 
+    fun installedVersion(): String? {
+        val marker = File(host.debianRootfsDir, "opt/lampac/.lampa-lampac-version")
+        val version = runCatching { marker.readText(Charsets.UTF_8).trim() }.getOrNull()
+        return version?.takeIf { it.matches(Regex("[0-9]+\\.[0-9]+\\.[0-9]+")) }
+    }
+
     fun isInstalled(): Boolean {
         val root = host.debianRootfsDir
-        return isDebianRootfsReady(root) &&
-            isCompleteLampacRuntime(root, LampacRuntimeArtifacts.LAMPAC_VERSION)
+        val version = installedVersion() ?: return false
+        return isDebianRootfsReady(root) && isCompleteLampacRuntime(root, version)
     }
 
     fun availableBytes(): Long = StatFs(appContext.filesDir.absolutePath).availableBytes
@@ -902,7 +949,11 @@ class LampacRuntimeInstaller(context: android.content.Context) {
         }
 
         send("lampac-extract", "Проверяем архив и устанавливаем Lampac…", 0, 0)
-        val serverDir = LampacZipInstaller.install(lampacArchive, prepared.debianRootfsDir) { done, total ->
+        val serverDir = LampacZipInstaller.install(
+            archive = lampacArchive,
+            rootfs = prepared.debianRootfsDir,
+            version = LampacRuntimeArtifacts.LAMPAC_VERSION
+        ) { done, total ->
             send("lampac-extract", "Распаковка Lampac: ${formatBytes(done)}", done, total)
         }
         lampacArchive.delete()
@@ -912,6 +963,83 @@ class LampacRuntimeInstaller(context: android.content.Context) {
         }
         send("installed", "Lampac установлен. Сервер пока остановлен.", 1, 1)
         serverDir
+    }
+
+    suspend fun updateFromRelease(
+        version: String,
+        url: String,
+        sha256: String,
+        expectedBytes: Long,
+        onProgress: (LampacInstallProgress) -> Unit = {}
+    ): File = withContext(Dispatchers.IO) {
+        require(version.matches(Regex("[0-9]+\\.[0-9]+\\.[0-9]+"))) {
+            "Версия Lampac в релизе некорректна"
+        }
+        require(sha256.matches(Regex("[0-9a-fA-F]{64}"))) {
+            "В релизе Lampac отсутствует корректная SHA-256"
+        }
+        require(expectedBytes in 1..1024L * 1024L * 1024L) {
+            "Размер архива Lampac превышает лимит обновления"
+        }
+        val current = installedVersion() ?: throw IOException("Не найдена установленная версия Lampac")
+        require(compareSemanticVersions(version, current) > 0) {
+            "Релиз Lampac не новее установленной версии"
+        }
+        check(isInstalled()) { "Текущая установка Lampac неполная; обновление отменено" }
+
+        val send = { phase: String, message: String, done: Long, total: Long ->
+            onProgress(
+                LampacInstallProgress(
+                    phase = phase,
+                    message = message,
+                    downloadedBytes = done,
+                    totalBytes = total,
+                    percent = if (total > 0) ((done * 100L) / total).toInt().coerceIn(0, 100) else null
+                )
+            )
+        }
+        send("update-download", "Загружаем Lampac $version…", 0, expectedBytes)
+        val archive = LampacArtifactDownloader.download(
+            LampacArtifactSpec(
+                fileName = "lampac-nextgen-$version.zip",
+                url = url,
+                digestAlgorithm = "SHA-256",
+                expectedDigest = sha256.lowercase(),
+                expectedBytes = expectedBytes,
+                maxBytes = expectedBytes
+            ),
+            downloads
+        ) { done, total ->
+            send("update-download", "Загрузка Lampac: ${formatBytes(done)}", done, total)
+        }
+
+        try {
+            send("update-extract", "Проверяем и устанавливаем Lampac $version…", 0, expectedBytes)
+            val updated = LampacZipInstaller.install(
+                archive = archive,
+                rootfs = host.debianRootfsDir,
+                version = version
+            ) { done, total ->
+                send("update-extract", "Установка Lampac: ${formatBytes(done)}", done, total)
+            }
+            check(isInstalled() && installedVersion() == version) {
+                "После обновления проверка целостности Lampac не пройдена"
+            }
+            send("updated", "Lampac обновлён до $version. Настройки и данные сохранены.", expectedBytes, expectedBytes)
+            updated
+        } finally {
+            archive.delete()
+        }
+    }
+
+    private fun compareSemanticVersions(first: String, second: String): Int {
+        val a = first.split('.').map { it.toInt() }
+        val b = second.split('.').map { it.toInt() }
+        for (index in 0..2) {
+            val compare = a[index].compareTo(b[index])
+            if (compare != 0) return compare
+        }
+        return 0
     }
 
     private fun shellQuote(value: String): String = "'" + value.replace("'", "'\\''") + "'"
