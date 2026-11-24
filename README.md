@@ -18,7 +18,7 @@ A personal Android and Android TV shell for the complete upstream Lampa web appl
 
 ## In-app updates
 
-- Open the Lampac button and choose `Обновления Lampa и Lampac`.
+- Open Lampa's standard `Настройки` screen and select the `Lampac` section; no separate floating Lampac button is shown.
 - Lampa web assets and Lampac server releases are checked and updated independently; neither requires a new APK for ordinary upstream changes.
 - Lampa bundles are downloaded only from this repository's release assets and verified against a SHA-256 manifest before activation.
 - Lampac is updated only from a newer stable upstream release with an official SHA-256 asset digest; the app stages the archive, preserves user configuration/data, then restarts the server.
@@ -27,7 +27,7 @@ A personal Android and Android TV shell for the complete upstream Lampa web appl
 ## First start
 
 1. Install the signed APK over the existing app. Do not uninstall it or clear app data.
-2. Open Lampa and select Lampac in the upper-right corner.
+2. Open Lampa's standard `Настройки` screen, select `Lampac`, then choose `Открыть управление Lampac`.
 3. Select Install full Lampac. The first installation downloads the full upstream server archive (about 480 MB), .NET Runtime and native dependencies. Several gigabytes of internal storage are required.
 4. Keep the foreground service notification active while the server installs and starts.
 
