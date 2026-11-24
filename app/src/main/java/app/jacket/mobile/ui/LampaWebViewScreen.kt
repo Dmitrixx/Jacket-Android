@@ -288,9 +288,23 @@ private class LampaAndroidBridge(
      */
     @JavascriptInterface
     fun openExternalPlayer(rawUrl: String?, rawData: String?): Boolean {
-        val uri = rawUrl?.let(::safeVideoUri)?.let { parsed ->
-            routeExternalMediaUrl(parsed.toString(), ExternalMediaProxy.port)?.let { Uri.parse(it) }
-        } ?: return false
+        val parsedUri = rawUrl?.let(::safeVideoUri) ?: return false
+        val routedUrl = routeExternalMediaUrl(parsedUri.toString(), ExternalMediaProxy.port)
+            ?: if (ExternalMediaProxy.start()) {
+                routeExternalMediaUrl(parsedUri.toString(), ExternalMediaProxy.port)
+            } else {
+                null
+            }
+        val uri = routedUrl?.let { Uri.parse(it) } ?: run {
+            mainHandler.post {
+                Toast.makeText(
+                    context,
+                    "Не удалось запустить прокси внешнего плеера. Перезапустите Lampac.",
+                    Toast.LENGTH_LONG
+                ).show()
+            }
+            return false
+        }
         val payload = runCatching {
             JSONObject(rawData.orEmpty().ifBlank { "{}" })
         }.getOrDefault(JSONObject())
@@ -299,6 +313,9 @@ private class LampaAndroidBridge(
         val playerIntent = Intent(Intent.ACTION_VIEW).apply {
             setDataAndType(uri, "video/*")
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            // Some Android players inspect EXTRA_STREAM in addition to Intent.data.
+            putExtra(Intent.EXTRA_STREAM, uri)
             putExtra(Intent.EXTRA_TITLE, title)
             putExtra("title", title)
 

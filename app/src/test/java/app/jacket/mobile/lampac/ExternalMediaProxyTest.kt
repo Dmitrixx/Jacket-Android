@@ -108,17 +108,66 @@ class ExternalMediaProxyTest {
             assertTrue(proxy.start())
             val response = sendRequest(
                 proxy.port!!,
-                "GET /ts/stream/heart.mkv HTTP/1.1\r\n" +
+                "GET /ts/stream/heart.mkv?link=hash123&index=2&play&uid=test-user HTTP/1.1\r\n" +
                     "Host: 127.0.0.1\r\n" +
-                    "Range: bytes=0-3\r\n\r\n"
+                    "Range: bytes=0-3\r\n" +
+                    "Cookie: session=must-not-forward\r\n" +
+                    "Authorization: Bearer must-not-forward\r\n\r\n"
+            )
+            upstreamThread.join(3_000)
+
+            assertTrue(receivedRequest.get().first().contains("/ts/stream/heart.mkv?link=hash123&index=2&play&uid=test-user "))
+            assertTrue(receivedRequest.get().any { it.equals("Range: bytes=0-3", true) })
+            assertFalse(receivedRequest.get().any { it.startsWith("Cookie:", true) })
+            assertFalse(receivedRequest.get().any { it.startsWith("Authorization:", true) })
+            assertTrue(response.startsWith("HTTP/1.1 206 Partial Content"))
+            assertTrue(response.contains("Content-Range: bytes 0-3/100"))
+            assertTrue(response.endsWith("data"))
+        } finally {
+            proxy.stop()
+            upstream.close()
+            upstreamThread.join(1_000)
+        }
+    }
+
+
+    @Test
+    fun getKeepsChunkedTransferFramingForStreamingPlayers() {
+        val receivedRequest = AtomicReference<List<String>>(emptyList())
+        val upstream = ServerSocket(0, 1, InetAddress.getByName("127.0.0.1"))
+        val upstreamThread = Thread {
+            upstream.accept().use { socket ->
+                receivedRequest.set(readRequestLines(socket))
+                socket.getOutputStream().apply {
+                    write(
+                        (
+                            "HTTP/1.1 200 OK\r\n" +
+                                "Content-Type: video/x-matroska\r\n" +
+                                "Transfer-Encoding: chunked\r\n" +
+                                "Connection: close\r\n\r\n" +
+                                "4\r\ndata\r\n" +
+                                "0\r\n\r\n"
+                            ).toByteArray(StandardCharsets.ISO_8859_1)
+                    )
+                    flush()
+                }
+            }
+        }.apply { isDaemon = true; start() }
+
+        val proxy = ExternalMediaProxyServer(upstreamPort = upstream.localPort)
+        try {
+            assertTrue(proxy.start())
+            val response = sendRequest(
+                proxy.port!!,
+                "GET /ts/stream/heart.mkv HTTP/1.1\r\n" +
+                    "Host: 127.0.0.1\r\n\r\n"
             )
             upstreamThread.join(3_000)
 
             assertTrue(receivedRequest.get().first().startsWith("GET /ts/stream/heart.mkv "))
-            assertTrue(receivedRequest.get().any { it.equals("Range: bytes=0-3", true) })
-            assertTrue(response.startsWith("HTTP/1.1 206 Partial Content"))
-            assertTrue(response.contains("Content-Range: bytes 0-3/100"))
-            assertTrue(response.endsWith("data"))
+            assertTrue(response.startsWith("HTTP/1.1 200 OK"))
+            assertTrue(response.contains("Transfer-Encoding: chunked"))
+            assertTrue(response.endsWith("4\r\ndata\r\n0\r\n\r\n"))
         } finally {
             proxy.stop()
             upstream.close()

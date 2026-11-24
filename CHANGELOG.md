@@ -1,5 +1,13 @@
 # Changelog
 
+## 3.0.15 — Repair external torrent stream relay
+
+- Relay Lampac's raw HTTP response framing instead of using HttpURLConnection, which removes chunked transfer framing.
+- Preserve Content-Length, Transfer-Encoding, Content-Range, redirects and streamed body bytes for VLC/MX Player.
+- Forward the original Range and media negotiation headers, while keeping Authorization and Cookie headers out of the local proxy.
+- Start the loopback player proxy on demand before handing media to another app.
+- Set both Intent.data and EXTRA_STREAM for better compatibility with Android video players.
+
 ## 3.0.14 — Fix external playback of Lampac torrents
 
 - Add a loopback-only media proxy for external Android players.
