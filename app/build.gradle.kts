@@ -48,8 +48,8 @@ android {
         applicationId = "app.jacket.mobile"
         minSdk = 28
         targetSdk = 35
-        versionCode = 43
-        versionName = "3.0.18"
+        versionCode = 44
+        versionName = "3.0.19"
         buildConfigField("boolean", "PERSISTENT_SIGNING_CONFIGURED", hasReleaseSigning.toString())
         vectorDrawables { useSupportLibrary = true }
     }
