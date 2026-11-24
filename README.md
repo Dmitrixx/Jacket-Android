@@ -8,7 +8,7 @@ A personal Android and Android TV shell for the complete upstream Lampa web appl
 - Complete Lampac NextGen source pinned in third_party/lampac-source.
 - Complete Lampa UI and its playback flow, built into private APK assets; the Android app sends online and torrent video streams (resolved through TorrServer/GStreamer) to the system external-player chooser by default, with HTML5 fallback when no compatible player is installed.
 - Official full Lampac release archive, checksum-verified and extracted without filtering module files.
-- App-private ARM64 Debian Forky-slim PRoot runtime with .NET 10, Google Chrome/Chromium, FFmpeg, GStreamer and the dependencies used by the upstream Lampac image.
+- App-private ARM64/ARMv7 Debian Forky-slim PRoot runtime with a matching .NET 10 build, Chromium/Google Chrome, FFmpeg, GStreamer and the dependencies used by the upstream Lampac image.
 - Installer removes the OCI download-layer cache after Debian is installed and omits unused development-header packages; all Lampac modules and runtime dependencies are retained.
 - User-started local server on 127.0.0.1:9118.
 - Loopback-only external-media compatibility proxy for Lampac online VOD (`/proxy/`, `/proxy-dash/`) and TorrServer/GStreamer (`/ts/stream`, `/ts/gst`): external players can probe media with HEAD, seek with HTTP Range requests, and receive the original Content-Length/chunked streaming framing.
@@ -28,7 +28,7 @@ A personal Android and Android TV shell for the complete upstream Lampa web appl
 
 1. Install the signed APK over the existing app. Do not uninstall it or clear app data.
 2. Open Lampa's standard `Настройки` screen, select `Lampac`, then choose `Открыть управление Lampac`.
-3. Select Install full Lampac. The first installation downloads the full upstream server archive (about 480 MB), .NET Runtime and native dependencies. Several gigabytes of internal storage are required.
+3. Select Install full Lampac. The first installation downloads the full upstream server archive (about 480 MB), the matching .NET Runtime and native dependencies. Several gigabytes of internal storage are required. ARM32 Android uses Debian Chromium instead of Google Chrome.
 4. Keep the foreground service notification active while the server installs and starts.
 
 The server data, providers and init.conf are stored in the app-private directory and survive APK upgrades.
