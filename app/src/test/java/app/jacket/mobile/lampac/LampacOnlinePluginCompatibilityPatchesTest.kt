@@ -16,11 +16,7 @@ class LampacOnlinePluginCompatibilityPatchesTest {
 
     @Test
     fun keepsGhostBalancersInTheSourceSelectorForManualRetry() {
-        val source = """
-            function done(json) {
-                $originalBlock
-            }
-        """.trimIndent()
+        val source = "function done(json) {\n" + originalBlock + "\n}"
 
         val patched = LampacOnlinePluginCompatibilityPatches.patchOnlinePluginSource(source)
 
