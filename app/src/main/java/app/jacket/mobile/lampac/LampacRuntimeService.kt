@@ -186,13 +186,21 @@ class LampacRuntimeService : Service() {
         } catch (error: Exception) {
             val message = "Обновление Lampac не завершилось: ${safeMessage(error)}"
             LampacRuntimeState.appendLog(message)
-            // A staged update never replaces the active server until the archive
-            // has passed validation. On failure, bring the old server back online.
-            if (LampacRuntimeInstaller(applicationContext).isInstalled()) {
-                LampacRuntimeState.update(LampacRuntimePhase.INSTALLED, "Обновление отменено. Запускаем прежний Lampac…")
+            val installer = LampacRuntimeInstaller(applicationContext)
+            val rollback = runCatching { installer.rollbackPendingUpdateBackup() }
+            if (rollback.getOrDefault(false)) {
+                LampacRuntimeState.appendLog("Восстановлена предыдущая версия Lampac после ошибки обновления.")
+                LampacRuntimeState.update(LampacRuntimePhase.INSTALLED, "Запускаем восстановленную версию Lampac…")
+                runCatching { startInstalledServer(rollbackAttempt = true) }
+                if (LampacRuntimeState.state.value.phase != LampacRuntimePhase.RUNNING) fail(message)
+            } else if (installer.isInstalled()) {
+                LampacRuntimeState.update(LampacRuntimePhase.INSTALLED, "Обновление не активировано. Запускаем прежний Lampac…")
                 runCatching { startInstalledServer() }
                 if (LampacRuntimeState.state.value.phase != LampacRuntimePhase.RUNNING) fail(message)
             } else {
+                rollback.exceptionOrNull()?.let {
+                    LampacRuntimeState.appendLog("Ошибка отката Lampac: ${safeMessage(it)}")
+                }
                 fail(message)
             }
         }
