@@ -385,6 +385,9 @@ internal object LampaWebAssetUpdater {
         activeDirectory(context)
         val current = File(updateRoot, "current")
         val previous = File(updateRoot, "previous")
+        require(!previous.isDirectory || current.isDirectory) {
+            "Не удалось восстановить предыдущую версию Lampa; загрузка нового архива отменена."
+        }
         archive.delete()
         stage.deleteRecursively()
 
