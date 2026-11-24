@@ -13,6 +13,7 @@ A personal Android and Android TV shell for the complete upstream Lampa web appl
 - User-started local server on 127.0.0.1:9118.
 - Loopback-only external-media compatibility proxy for Lampac online VOD (`/proxy/`, `/proxy-dash/`) and TorrServer/GStreamer (`/ts/stream`, `/ts/gst`): external players can probe media with HEAD, seek with HTTP Range requests, and receive the original Content-Length/chunked streaming framing.
 - In-app module manager discovers the actual installed module manifests, lets users enable/disable individual modules, and applies changes through `BaseModule.SkipModules` without reinstalling Lampac.
+- Applies an idempotent compatibility patch to the dynamic Aladin module before Lampac starts, preventing oversized `/proxy/` URLs while preserving the existing server installation and provider configuration.
 
 ## First start
 
