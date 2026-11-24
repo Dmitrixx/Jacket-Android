@@ -719,6 +719,11 @@ internal fun clearLampacProotDownloadCache(prefixDir: File): Long {
 internal fun buildLampacSystemPackagesInstallCommand(
     architecture: LampacRuntimeArchitecture = LampacRuntimeArchitecture.ARM64
 ): String {
+    // Debian Forky publishes libicu78; ARM32 uses Trixie, whose runtime ABI is libicu76.
+    val icuPackage = when (architecture) {
+        LampacRuntimeArchitecture.ARM64 -> "libicu78"
+        LampacRuntimeArchitecture.ARM32 -> "libicu76"
+    }
     val browserInstall = when (architecture) {
         LampacRuntimeArchitecture.ARM64 ->
             "curl -fSL --retry 3 https://dl.google.com/linux/direct/google-chrome-stable_current_arm64.deb -o /tmp/google-chrome-stable.deb && " +
@@ -735,7 +740,7 @@ internal fun buildLampacSystemPackagesInstallCommand(
         "apt-get update && " +
             "apt-get install -y --no-install-recommends opensysusers && " +
             "dpkg --root=/ --configure -a && " +
-            "apt-get install -y --no-install-recommends ca-certificates curl fontconfig libicu78 zlib1g tar nodejs " +
+            "apt-get install -y --no-install-recommends ca-certificates curl fontconfig $icuPackage zlib1g tar nodejs " +
             "ffmpeg imagemagick xvfb libnspr4 " +
             "gstreamer1.0-libav gstreamer1.0-plugins-bad gstreamer1.0-plugins-base gstreamer1.0-plugins-base-apps " +
             "gstreamer1.0-plugins-good gstreamer1.0-plugins-ugly gstreamer1.0-tools " +
@@ -794,20 +799,31 @@ internal fun readLegacyLampacInitConfig(prefixDir: File): String? {
 }
 
 /** True only when the PRoot Debian root contains the required base system tools. */
-internal fun isDebianRootfsReady(root: File): Boolean {
+internal fun isDebianRootfsReady(
+    root: File,
+    architecture: LampacRuntimeArchitecture? = null
+): Boolean {
     if (!root.isDirectory) return false
     val osRelease = File(root, "etc/os-release")
     if (!osRelease.isFile) return false
 
-    val distroId = runCatching {
-        osRelease.readLines()
-            .firstOrNull { it.startsWith("ID=") }
-            ?.substringAfter("ID=")
-            ?.trim()
-            ?.removeSurrounding("\"")
-            ?.removeSurrounding("'")
-    }.getOrNull()
-    if (!distroId.equals("debian", ignoreCase = true)) return false
+    val osFields = runCatching { osRelease.readLines() }.getOrNull() ?: return false
+    fun field(name: String): String? = osFields
+        .firstOrNull { it.startsWith("$name=") }
+        ?.substringAfter('=')
+        ?.trim()
+        ?.removeSurrounding("\"")
+        ?.removeSurrounding("'")
+
+    if (!field("ID").equals("debian", ignoreCase = true)) return false
+    val expectedCodename = when (architecture) {
+        LampacRuntimeArchitecture.ARM64 -> "forky"
+        LampacRuntimeArchitecture.ARM32 -> "trixie"
+        null -> null
+    }
+    if (expectedCodename != null &&
+        !field("VERSION_CODENAME").equals(expectedCodename, ignoreCase = true)
+    ) return false
 
     return File(root, "bin/sh").canExecute() &&
         File(root, "usr/bin/apt-get").canExecute()
@@ -839,7 +855,10 @@ class LampacRuntimeInstaller(context: android.content.Context) {
     fun isInstalled(): Boolean {
         val root = host.debianRootfsDir
         val version = installedVersion()
-        if (version != null && isDebianRootfsReady(root) && isCompleteLampacRuntime(root, version)) {
+        val architecture = LampacProotBootstrap.runtimeArchitecture()
+        if (version != null && architecture != null &&
+            isDebianRootfsReady(root, architecture) && isCompleteLampacRuntime(root, version)
+        ) {
             return true
         }
 
@@ -849,8 +868,8 @@ class LampacRuntimeInstaller(context: android.content.Context) {
         if (hasPendingUpdateBackup()) {
             rollbackPendingUpdateBackup()
             val restoredVersion = installedVersion()
-            return restoredVersion != null &&
-                isDebianRootfsReady(root) &&
+            return restoredVersion != null && architecture != null &&
+                isDebianRootfsReady(root, architecture) &&
                 isCompleteLampacRuntime(root, restoredVersion)
         }
         return false
@@ -956,7 +975,7 @@ class LampacRuntimeInstaller(context: android.content.Context) {
 
         // Once the OCI rootfs exists, its verified layer blobs are no longer
         // needed. Remove this re-download cache before any repair or install.
-        if (isDebianRootfsReady(prepared.debianRootfsDir)) {
+        if (isDebianRootfsReady(prepared.debianRootfsDir, runtimeArchitecture)) {
             val reclaimed = clearLampacProotDownloadCache(host.prefixDir)
             if (reclaimed > 0L) {
                 send(
@@ -972,7 +991,7 @@ class LampacRuntimeInstaller(context: android.content.Context) {
         // Lampac payload. Repair that in place before requiring space for a
         // second 480 MB archive or replacing the user's existing init.conf.
         val existingVersion = installedVersion()
-        if (isDebianRootfsReady(prepared.debianRootfsDir) &&
+        if (isDebianRootfsReady(prepared.debianRootfsDir, runtimeArchitecture) &&
             existingVersion != null &&
             isLampacRuntimePayloadReady(prepared.debianRootfsDir, existingVersion) &&
             !isLampacNodeReady(prepared.debianRootfsDir)
@@ -997,7 +1016,7 @@ class LampacRuntimeInstaller(context: android.content.Context) {
         // are removed in finally blocks so a failed low-space attempt is retryable.
 
         val legacyInitConfig = readLegacyLampacInitConfig(host.prefixDir)
-        if (!isDebianRootfsReady(prepared.debianRootfsDir)) {
+        if (!isDebianRootfsReady(prepared.debianRootfsDir, runtimeArchitecture)) {
             val containerDir = prepared.debianRootfsDir.parentFile
             if (containerDir?.exists() == true) {
                 send("debian-repair", "Обнаружена незавершённая установка Debian. Удаляем повреждённый контейнер…", 0, 0)
@@ -1010,10 +1029,10 @@ class LampacRuntimeInstaller(context: android.content.Context) {
             }
 
             send("debian", "Загружаем и устанавливаем Debian " + runtimeArchitecture.name + "…", 0, 0)
-            val result = commandRunner.installDebian { line ->
+            val result = commandRunner.installDebian(runtimeArchitecture) { line ->
                 send("debian", line.take(220), 0, 0)
             }
-            check(result == 0 && isDebianRootfsReady(prepared.debianRootfsDir)) {
+            check(result == 0 && isDebianRootfsReady(prepared.debianRootfsDir, runtimeArchitecture)) {
                 "Не удалось установить Debian " + runtimeArchitecture.name + " в PRoot (код $result)"
             }
             val reclaimed = clearLampacProotDownloadCache(host.prefixDir)
