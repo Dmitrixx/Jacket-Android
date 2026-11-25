@@ -92,7 +92,7 @@ def main() -> None:
             ),
             (
                 "#if defined(ARCH_ARM64)\n\t\tif (get_abi(tracee) == ABI_DEFAULT && kernel_num == SYSNUM_RSEQ) {",
-                "#if defined(ARCH_ARM64) || defined(ARCH_ARM_EABI)\n\t\tif (get_abi(tracee, CURRENT) == ABI_DEFAULT && kernel_num == SYSNUM_RSEQ) {",
+                "#if defined(ARCH_ARM64) || defined(ARCH_ARM_EABI)\n\t\tif (get_abi(tracee) == ABI_DEFAULT && kernel_num == SYSNUM_RSEQ) {",
             ),
             (
                 "\tcase PR_set_robust_list:\n\t\tset_result_after_seccomp(tracee, -ENOSYS);",
