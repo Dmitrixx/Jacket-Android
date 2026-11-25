@@ -1048,6 +1048,15 @@ class LampacRuntimeInstaller(context: android.content.Context) {
         }
 
         ensureLampacDebianMachineId(prepared.debianRootfsDir)
+        // Remove diagnostics left by earlier installs. Otherwise old SIGSYS
+        // records (e.g. rseq/fchmodat2 from an older PRoot binary) are shown
+        // together with a new failure and make the active cause ambiguous.
+        listOf("sigsys-log.txt", "lampa-dpkg-install.log").forEach { name ->
+            val staleLog = File(host.cacheDir, name)
+            if (staleLog.exists() || java.nio.file.Files.isSymbolicLink(staleLog.toPath())) {
+                staleLog.delete()
+            }
+        }
         send("packages", "Подготавливаем системные библиотеки Debian…", 0, 0)
         val apt = commandRunner.runAsRoot(buildLampacSystemPackagesInstallCommand(runtimeArchitecture)) { line ->
             send("packages", line.take(220), 0, 0)
