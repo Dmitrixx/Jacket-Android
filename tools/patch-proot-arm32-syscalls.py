@@ -91,7 +91,7 @@ def main() -> None:
                 "#if defined(ARCH_ARM64)\n#define SYSNUM_RSEQ 293\n#elif defined(ARCH_ARM_EABI)\n#define SYSNUM_RSEQ 398\n#endif",
             ),
             (
-                "#if defined(ARCH_ARM64)\n\t\tif (get_abi(tracee, CURRENT) == ABI_DEFAULT && kernel_num == SYSNUM_RSEQ) {",
+                "#if defined(ARCH_ARM64)\n\t\tif (get_abi(tracee) == ABI_DEFAULT && kernel_num == SYSNUM_RSEQ) {",
                 "#if defined(ARCH_ARM64) || defined(ARCH_ARM_EABI)\n\t\tif (get_abi(tracee, CURRENT) == ABI_DEFAULT && kernel_num == SYSNUM_RSEQ) {",
             ),
             (
