@@ -66,18 +66,15 @@ def inspect_and_fix(data: bytearray) -> tuple[int, int, int]:
     if old_align == 0 or old_align & (old_align - 1):
         raise ValueError(f"PT_TLS has invalid non-power-of-two alignment {old_align}")
 
-    # Bionic's newer diagnostic also checks skew (p_vaddr % p_align).
-    # Require a zero-skew 32-byte boundary before changing p_align; never
-    # mutate an ELF whose TLS layout would remain incompatible.
-    if p_vaddr % ARM_BIONIC_TLS_ALIGNMENT != 0:
-        raise ValueError(
-            "PT_TLS virtual address is not 32-byte aligned "
-            f"(p_vaddr=0x{p_vaddr:x}, skew={p_vaddr % ARM_BIONIC_TLS_ALIGNMENT})"
-        )
+    # ELF PT_TLS alignment requires p_offset and p_vaddr to have the
+    # same residue modulo p_align. They do NOT each have to be divisible by
+    # p_align. "Skew 0" means their residues match.
     if p_offset % ARM_BIONIC_TLS_ALIGNMENT != p_vaddr % ARM_BIONIC_TLS_ALIGNMENT:
         raise ValueError(
             "PT_TLS file and virtual addresses are incongruent at 32-byte alignment "
-            f"(p_offset=0x{p_offset:x}, p_vaddr=0x{p_vaddr:x})"
+            f"(p_offset=0x{p_offset:x}, p_vaddr=0x{p_vaddr:x}, "
+            f"offset_mod32={p_offset % ARM_BIONIC_TLS_ALIGNMENT}, "
+            f"vaddr_mod32={p_vaddr % ARM_BIONIC_TLS_ALIGNMENT})"
         )
 
     if old_align < ARM_BIONIC_TLS_ALIGNMENT:
@@ -85,10 +82,10 @@ def inspect_and_fix(data: bytearray) -> tuple[int, int, int]:
         new_align = ARM_BIONIC_TLS_ALIGNMENT
     else:
         new_align = old_align
-        if p_vaddr % new_align != 0 or p_offset % new_align != p_vaddr % new_align:
+        if p_offset % new_align != p_vaddr % new_align:
             raise ValueError(
-                "PT_TLS alignment is >=32 but has non-zero skew "
-                f"(alignment={new_align}, p_vaddr=0x{p_vaddr:x})"
+                "PT_TLS alignment is >=32 but file and virtual addresses have non-zero skew "
+                f"(alignment={new_align}, p_offset=0x{p_offset:x}, p_vaddr=0x{p_vaddr:x})"
             )
 
     return old_align, new_align, p_vaddr
@@ -112,7 +109,7 @@ def patch_file(path: Path) -> None:
     # Re-read the saved file so the build never packages an unverified patch.
     verified = bytearray(path.read_bytes())
     _, verified_align, verified_vaddr = inspect_and_fix(verified)
-    if verified_align < ARM_BIONIC_TLS_ALIGNMENT or verified_vaddr % verified_align != 0:
+    if verified_align < ARM_BIONIC_TLS_ALIGNMENT:
         raise RuntimeError("PT_TLS alignment verification failed")
     print(
         f"ARM32 Bionic PT_TLS: alignment {old_align} -> {verified_align}, "
@@ -131,20 +128,22 @@ def run_self_test() -> None:
     struct.pack_into("<H", data, 44, 1)
     phdr = ELF32_EHDR_SIZE
     struct.pack_into("<I", data, phdr, PT_TLS)
-    struct.pack_into("<II", data, phdr + 4, 0x71040, 0x89040)
+    # Both addresses are congruent mod 32 at residue 16. This is valid
+    # PT_TLS skew=0 even though neither address itself is 32-byte aligned.
+    struct.pack_into("<II", data, phdr + 4, 0x71050, 0x89010)
     struct.pack_into("<I", data, phdr + 28, 8)
     old_align, new_align, vaddr = inspect_and_fix(data)
-    assert (old_align, new_align, vaddr) == (8, 32, 0x89040)
+    assert (old_align, new_align, vaddr) == (8, 32, 0x89010)
     assert struct.unpack_from("<I", data, phdr + 28)[0] == 32
 
     bad = bytearray(data)
-    struct.pack_into("<I", bad, phdr + 8, 0x89048)
+    struct.pack_into("<I", bad, phdr + 8, 0x89028)
     try:
         inspect_and_fix(bad)
     except ValueError as error:
-        assert "not 32-byte aligned" in str(error)
+        assert "incongruent at 32-byte alignment" in str(error)
     else:
-        raise AssertionError("misaligned PT_TLS virtual address was not rejected")
+        raise AssertionError("non-zero TLS skew was not rejected")
     print("ARM32 PT_TLS fixer self-test: PASS")
 
 
