@@ -24,6 +24,47 @@ class LampacEmbeddedConfigTest {
     }
 
     @Test
+    fun freshConfigRegistersTheDefaultLampacClientPlugins() {
+        val plugins = JSONObject(LampacEmbeddedConfig.buildJson())
+            .getJSONObject("LampaWeb")
+            .getJSONObject("initPlugins")
+
+        listOf(
+            "pirate_store",
+            "jacred",
+            "tmdbProxy",
+            "cubProxy",
+            "online",
+            "sisi",
+            "torrserver",
+            "timecode"
+        ).forEach { key -> assertTrue("$key should be enabled by default", plugins.getBoolean(key)) }
+    }
+
+    @Test
+    fun missingClientPluginDefaultsAreAddedButExplicitFalseValuesArePreserved() {
+        val config = JSONObject()
+            .put(
+                "LampaWeb",
+                JSONObject().put(
+                    "initPlugins",
+                    JSONObject()
+                        .put("online", false)
+                        .put("jacred", true)
+                )
+            )
+
+        assertTrue(LampacEmbeddedConfig.ensureDefaultClientPlugins(config))
+        val plugins = config.getJSONObject("LampaWeb").getJSONObject("initPlugins")
+        assertFalse(plugins.getBoolean("online"))
+        assertTrue(plugins.getBoolean("jacred"))
+        assertTrue(plugins.getBoolean("tmdbProxy"))
+        assertTrue(plugins.getBoolean("cubProxy"))
+        assertTrue(plugins.getBoolean("pirate_store"))
+        assertFalse(LampacEmbeddedConfig.ensureDefaultClientPlugins(config))
+    }
+
+    @Test
     fun importedConfigPreservesModuleExclusionsAndProviderSettings() {
         val original = JSONObject()
             .put("listen", JSONObject().put("ip", "0.0.0.0").put("port", 9999))
