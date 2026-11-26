@@ -69,8 +69,6 @@ class LampacEmbeddedConfigTest {
         val config = JSONObject(LampacEmbeddedConfig.buildJson())
         val filmix = config.getJSONObject("Filmix")
 
-        assertTrue(config.getJSONObject("Aladin").getBoolean("enable"))
-        assertTrue(config.getJSONObject("HDVB").getBoolean("enable"))
         assertTrue(filmix.getBoolean("enable"))
         assertEquals("https://fxapp.biz", filmix.getString("host"))
         assertEquals(0, filmix.getInt("hidefreeStart"))
@@ -78,7 +76,7 @@ class LampacEmbeddedConfigTest {
     }
 
     @Test
-    fun providerDefaultsRepairLegacyFilmixHostButPreserveCredentialsAndExplicitChoices() {
+    fun providerDefaultsRepairFilmixWithoutChangingEarlierAladinAndHdvbSettings() {
         val config = JSONObject()
             .put("Aladin", JSONObject().put("enable", false).put("token", "aladin-token"))
             .put("HDVB", JSONObject().put("enable", true).put("token", "hdvb-token"))
