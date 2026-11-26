@@ -39,9 +39,28 @@ if old not in source:
 build_script.write_text(source.replace(old, new, 1))
 PY
 
+# The upstream dummy TLS symbol was uninitialised (.tbss), and the ARM
+# linker kept the real .tdata at 8-byte alignment. Make the dummy live in
+# .tdata so the linker raises PT_TLS alignment and places p_vaddr on boundary.
+python3 - "$PR_ROOT/src/proot/src/tls-align.c" <<'PY'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+source = path.read_text()
+old = "__attribute__((aligned(64))) __thread char _tls_align_dummy[64] __attribute__((used));"
+new = "__attribute__((aligned(64))) __thread char _tls_align_dummy[64] __attribute__((used)) = { 1 };"
+if new not in source:
+    if source.count(old) != 1:
+        raise SystemExit("Could not locate upstream ARM TLS alignment dummy")
+    path.write_text(source.replace(old, new, 1))
+PY
+
 "$PR_ROOT/scripts/build.sh" --arch=arm --ndk-path="$NDK"
 
-# Upstream currently skips its TLS alignment fix for ELF32. Android Bionic
+# Upstream skips its post-link TLS header fix for ELF32. The initialized,
+# 64-byte-aligned .tdata sentinel above must make the linker emit a Bionic-
+# compatible PT_TLS with p_align >=32 and p_vaddr % p_align == 0.
 # aborts before PRoot starts unless the ARM32 PT_TLS segment has zero-skew
 # 32-byte alignment. Patch and verify the exact native executable we package.
 python3 "$ROOT/tools/fix-arm32-elf-tls.py" --self-test
