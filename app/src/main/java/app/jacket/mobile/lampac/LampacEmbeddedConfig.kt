@@ -74,6 +74,10 @@ object LampacEmbeddedConfig {
                 .put("NextHUB", true)
                 .put("history", JSONObject().put("enable", false))
         )
+        .put(
+            "LampaWeb",
+            JSONObject().put("initPlugins", buildDefaultClientPlugins())
+        )
         .toString(2)
 
     /**
@@ -98,7 +102,10 @@ object LampacEmbeddedConfig {
         val listenerChanged = ensureLocalListener(config)
         val browserChanged = ensureBrowserDefaults(config)
         val jacredChanged = ensureJacRedConfigured(config)
-        if (!modulesChanged && !listenerChanged && !browserChanged && !jacredChanged) return target
+        val clientPluginsChanged = ensureDefaultClientPlugins(config)
+        if (!modulesChanged && !listenerChanged && !browserChanged &&
+            !jacredChanged && !clientPluginsChanged
+        ) return target
 
         writeConfigAtomically(target, config.toString(2))
         return target
@@ -109,7 +116,40 @@ object LampacEmbeddedConfig {
         val modulesChanged = ensureFullModuleSet(config)
         val browserChanged = ensureBrowserDefaults(config)
         val jacredChanged = ensureJacRedConfigured(config)
-        return listenerChanged || modulesChanged || browserChanged || jacredChanged
+        val clientPluginsChanged = ensureDefaultClientPlugins(config)
+        return listenerChanged || modulesChanged || browserChanged ||
+            jacredChanged || clientPluginsChanged
+    }
+
+    /**
+     * Lampac's client plugins are not loaded by requesting /online.js directly.
+     * /lampainit.js reads this list and registers every enabled plugin in Lampa.
+     * These defaults mirror Lampac NextGen's own config/base.conf; explicit
+     * per-user false values remain untouched.
+     */
+    private fun buildDefaultClientPlugins(): JSONObject = JSONObject()
+        .put("pirate_store", true)
+        .put("jacred", true)
+        .put("tmdbProxy", true)
+        .put("cubProxy", true)
+        .put("online", true)
+        .put("sisi", true)
+        .put("torrserver", true)
+        .put("timecode", true)
+
+    internal fun ensureDefaultClientPlugins(config: JSONObject): Boolean {
+        val web = config.optJSONObject("LampaWeb") ?: JSONObject().also {
+            config.put("LampaWeb", it)
+        }
+        val plugins = web.optJSONObject("initPlugins") ?: JSONObject().also {
+            web.put("initPlugins", it)
+        }
+        val before = plugins.toString()
+        val defaults = buildDefaultClientPlugins()
+        defaults.keys().forEach { key ->
+            if (!plugins.has(key)) plugins.put(key, defaults.getBoolean(key))
+        }
+        return before != plugins.toString()
     }
 
     internal fun ensureLocalListener(config: JSONObject): Boolean {
