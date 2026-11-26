@@ -26,7 +26,10 @@
 
         var script = document.createElement('script');
         script.async = true;
-        script.src = base + '/online.js?client=lampa-android';
+        // /online.js is only the VOD source plugin. /lampainit.js is the
+        // official Lampac bootstrap that registers all configured client
+        // plugins (JacRed, TMDB/CUB proxy, Online, SISI, TorrServer, etc.).
+        script.src = base + '/lampainit.js?client=lampa-android';
         script.onload = function () {
             window.__LAMPA_LAMPAC_PLUGIN_LOADED__ = true;
             reportLampacState('connected');
