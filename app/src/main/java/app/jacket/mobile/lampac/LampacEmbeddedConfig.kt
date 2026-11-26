@@ -103,8 +103,9 @@ object LampacEmbeddedConfig {
         val browserChanged = ensureBrowserDefaults(config)
         val jacredChanged = ensureJacRedConfigured(config)
         val clientPluginsChanged = ensureDefaultClientPlugins(config)
+        val providersChanged = ensureProviderDefaults(config)
         if (!modulesChanged && !listenerChanged && !browserChanged &&
-            !jacredChanged && !clientPluginsChanged
+            !jacredChanged && !clientPluginsChanged && !providersChanged
         ) return target
 
         writeConfigAtomically(target, config.toString(2))
@@ -117,8 +118,9 @@ object LampacEmbeddedConfig {
         val browserChanged = ensureBrowserDefaults(config)
         val jacredChanged = ensureJacRedConfigured(config)
         val clientPluginsChanged = ensureDefaultClientPlugins(config)
+        val providersChanged = ensureProviderDefaults(config)
         return listenerChanged || modulesChanged || browserChanged ||
-            jacredChanged || clientPluginsChanged
+            jacredChanged || clientPluginsChanged || providersChanged
     }
 
     /**
@@ -150,6 +152,59 @@ object LampacEmbeddedConfig {
             if (!plugins.has(key)) plugins.put(key, defaults.getBoolean(key))
         }
         return before != plugins.toString()
+    }
+
+    /**
+     * Provider defaults that need an Android-safe/current endpoint. Do not replace
+     * user-supplied mirrors or credentials. Filmix's upstream default API host
+     * is legacy; its current official Android support channel recommends fxapp.biz.
+     * The upstream Filmix module hides its no-token source from 19:00 to 23:00 Kyiv
+     * time unless hidefreeStart is zero, which made it disappear during evening use.
+     */
+    internal fun ensureProviderDefaults(config: JSONObject): Boolean {
+        var changed = false
+
+        listOf("Aladin", "HDVB").forEach { name ->
+            val provider = config.optJSONObject(name) ?: JSONObject().also {
+                config.put(name, it)
+                changed = true
+            }
+            if (!provider.has("enable")) {
+                provider.put("enable", true)
+                changed = true
+            }
+        }
+
+        val filmix = config.optJSONObject("Filmix") ?: JSONObject().also {
+            config.put("Filmix", it)
+            changed = true
+        }
+        if (!filmix.has("enable")) {
+            filmix.put("enable", true)
+            changed = true
+        }
+
+        val currentHost = filmix.optString("host").trim()
+        if (currentHost.isBlank() ||
+            currentHost.equals("http://filmixapp.cyou", ignoreCase = true) ||
+            currentHost.equals("https://filmixapp.cyou", ignoreCase = true)
+        ) {
+            if (currentHost != "https://fxapp.biz") {
+                filmix.put("host", "https://fxapp.biz")
+                changed = true
+            }
+        }
+
+        // Zero disables the upstream daily free-source hiding window.
+        if (!filmix.has("hidefreeStart")) {
+            filmix.put("hidefreeStart", 0)
+            changed = true
+        }
+        if (!filmix.has("hidefreeEnd")) {
+            filmix.put("hidefreeEnd", 0)
+            changed = true
+        }
+        return changed
     }
 
     internal fun ensureLocalListener(config: JSONObject): Boolean {
