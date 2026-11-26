@@ -165,17 +165,6 @@ object LampacEmbeddedConfig {
     internal fun ensureProviderDefaults(config: JSONObject): Boolean {
         var changed = false
 
-        listOf("Aladin", "HDVB").forEach { name ->
-            val provider = config.optJSONObject(name) ?: JSONObject().also {
-                config.put(name, it)
-                changed = true
-            }
-            if (!provider.has("enable")) {
-                provider.put("enable", true)
-                changed = true
-            }
-        }
-
         val filmix = config.optJSONObject("Filmix") ?: JSONObject().also {
             config.put("Filmix", it)
             changed = true
