@@ -622,8 +622,14 @@ internal fun buildLampacOfflineDpkgCommand(command: String): String {
         "set +e; { " +
         command +
         "; } > /tmp/lampa-dpkg-install.log 2>&1; status=\$?; " +
+        "if [ \"\$status\" -eq 0 ]; then " +
         "echo '--- apt/dpkg output (last 120 lines) ---'; tail -n 120 /tmp/lampa-dpkg-install.log; " +
-        "if [ \"\$status\" -eq 0 ]; then rm -f /tmp/lampa-dpkg-install.log; else " +
+        "rm -f /tmp/lampa-dpkg-install.log; else " +
+        "echo '--- failed Debian package stage ---'; " +
+        "grep '^__LAMPAC_STAGE=' /tmp/lampa-dpkg-install.log | tail -n 1 || true; " +
+        "echo '--- apt/dpkg errors and context ---'; " +
+        "grep -Ein -B 3 -A 5 '(^E:|^Err:|dpkg: error|error processing archive|sub-process .* returned|failed to|dependency problems)' /tmp/lampa-dpkg-install.log | tail -n 70 || true; " +
+        "echo '--- apt/dpkg output (last 120 lines) ---'; tail -n 120 /tmp/lampa-dpkg-install.log; " +
         "echo '--- apt/dpkg failure log preserved for Android diagnostics ---'; " +
         "apt-get clean >/dev/null 2>&1 || true; " +
         "rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*.deb; " +
@@ -738,18 +744,19 @@ internal fun buildLampacSystemPackagesInstallCommand(
     }
 
     return buildLampacOfflineDpkgCommand(
-        "apt-get update && " +
-            "apt-get install -y --no-install-recommends opensysusers && " +
-            "dpkg --root=/ --configure -a && " +
-            "apt-get install -y --no-install-recommends ca-certificates curl fontconfig $icuPackage zlib1g tar nodejs " +
+        "echo '__LAMPAC_STAGE=apt-update' && apt-get update && " +
+            "echo '__LAMPAC_STAGE=opensysusers' && apt-get install -y --no-install-recommends opensysusers && " +
+            "echo '__LAMPAC_STAGE=dpkg-recovery' && dpkg --root=/ --configure -a && " +
+            "echo '__LAMPAC_STAGE=runtime-packages' && apt-get install -y --no-install-recommends ca-certificates curl fontconfig $icuPackage zlib1g tar nodejs " +
             "ffmpeg imagemagick xvfb libnspr4 " +
             "gstreamer1.0-libav gstreamer1.0-plugins-bad gstreamer1.0-plugins-base gstreamer1.0-plugins-base-apps " +
             "gstreamer1.0-plugins-good gstreamer1.0-plugins-ugly gstreamer1.0-tools " +
             "libgstreamer-plugins-base1.0-0 libgstreamer1.0-0 && " +
-            browserInstall +
+            "echo '__LAMPAC_STAGE=browser-package' && " + browserInstall +
             "test -x /usr/bin/node && node --version && " +
+            "echo '__LAMPAC_STAGE=runtime-validation' && " +
             "test -x /usr/bin/chromium && chromium --version && ffmpeg -version && gst-inspect-1.0 --version && " +
-            "apt-get clean && rm -rf /var/lib/apt/lists/*"
+            "echo '__LAMPAC_STAGE=apt-cleanup' && apt-get clean && rm -rf /var/lib/apt/lists/*"
     )
 }
 
