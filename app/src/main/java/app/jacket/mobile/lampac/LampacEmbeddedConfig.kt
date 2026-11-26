@@ -78,6 +78,7 @@ object LampacEmbeddedConfig {
             "LampaWeb",
             JSONObject().put("initPlugins", buildDefaultClientPlugins())
         )
+        .apply { ensureProviderDefaults(this) }
         .toString(2)
 
     /**
