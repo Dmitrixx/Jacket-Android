@@ -65,6 +65,70 @@ class LampacEmbeddedConfigTest {
     }
 
     @Test
+    fun freshConfigEnablesProvidersAndUsesCurrentFilmixApiHost() {
+        val config = JSONObject(LampacEmbeddedConfig.buildJson())
+        val filmix = config.getJSONObject("Filmix")
+
+        assertTrue(config.getJSONObject("Aladin").getBoolean("enable"))
+        assertTrue(config.getJSONObject("HDVB").getBoolean("enable"))
+        assertTrue(filmix.getBoolean("enable"))
+        assertEquals("https://fxapp.biz", filmix.getString("host"))
+        assertEquals(0, filmix.getInt("hidefreeStart"))
+        assertEquals(0, filmix.getInt("hidefreeEnd"))
+    }
+
+    @Test
+    fun providerDefaultsRepairLegacyFilmixHostButPreserveCredentialsAndExplicitChoices() {
+        val config = JSONObject()
+            .put("Aladin", JSONObject().put("enable", false).put("token", "aladin-token"))
+            .put("HDVB", JSONObject().put("enable", true).put("token", "hdvb-token"))
+            .put(
+                "Filmix",
+                JSONObject()
+                    .put("enable", true)
+                    .put("host", "http://filmixapp.cyou")
+                    .put("token", "filmix-token")
+                    .put("pro", true)
+            )
+
+        assertTrue(LampacEmbeddedConfig.ensureProviderDefaults(config))
+
+        val aladin = config.getJSONObject("Aladin")
+        val hdvb = config.getJSONObject("HDVB")
+        val filmix = config.getJSONObject("Filmix")
+        assertFalse(aladin.getBoolean("enable"))
+        assertEquals("aladin-token", aladin.getString("token"))
+        assertTrue(hdvb.getBoolean("enable"))
+        assertEquals("hdvb-token", hdvb.getString("token"))
+        assertEquals("https://fxapp.biz", filmix.getString("host"))
+        assertEquals("filmix-token", filmix.getString("token"))
+        assertTrue(filmix.getBoolean("pro"))
+        assertEquals(0, filmix.getInt("hidefreeStart"))
+        assertEquals(0, filmix.getInt("hidefreeEnd"))
+        assertFalse(LampacEmbeddedConfig.ensureProviderDefaults(config))
+    }
+
+    @Test
+    fun providerDefaultsPreserveCustomFilmixMirrorAndExplicitFreeWindow() {
+        val config = JSONObject()
+            .put(
+                "Filmix",
+                JSONObject()
+                    .put("host", "https://my-filmix-mirror.example")
+                    .put("hidefreeStart", 19)
+                    .put("hidefreeEnd", 23)
+                    .put("token", "custom-token")
+            )
+
+        LampacEmbeddedConfig.ensureProviderDefaults(config)
+        val filmix = config.getJSONObject("Filmix")
+        assertEquals("https://my-filmix-mirror.example", filmix.getString("host"))
+        assertEquals(19, filmix.getInt("hidefreeStart"))
+        assertEquals(23, filmix.getInt("hidefreeEnd"))
+        assertEquals("custom-token", filmix.getString("token"))
+    }
+
+    @Test
     fun importedConfigPreservesModuleExclusionsAndProviderSettings() {
         val original = JSONObject()
             .put("listen", JSONObject().put("ip", "0.0.0.0").put("port", 9999))
