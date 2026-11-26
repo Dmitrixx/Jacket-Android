@@ -29,6 +29,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import org.json.JSONArray
 import java.io.File
 import java.io.IOException
 import java.net.HttpURLConnection
@@ -303,6 +304,7 @@ class LampacRuntimeService : Service() {
             serverSession = session
             monitorServer(session)
             waitForServerReady(session)
+            verifyProviderRegistration()
 
             // ModuleRepository.UpdateModules runs inside Core.dll startup and may
             // download/replace the dynamic Aladin source after our pre-start patch.
@@ -429,6 +431,69 @@ class LampacRuntimeService : Service() {
                 )
             }
             delay(LampacStartupPolicy.PROBE_INTERVAL_MS)
+        }
+    }
+
+    /**
+     * Check the real upstream provider registry after Core.dll has started.
+     * This separates a missing module/client bootstrap from provider-side API or
+     * CDN failures. Diagnostics are written to the visible Lampac runtime log.
+     */
+    private suspend fun verifyProviderRegistration() = withContext(Dispatchers.IO) {
+        val expected = setOf("aladin", "hdvb", "filmix")
+        val withSearch = readLoopbackDiagnostic("/lite/withsearch")
+        if (withSearch == null) {
+            LampacRuntimeState.appendLog("Проверка Aladin/HDVB/Filmix: не удалось прочитать /lite/withsearch.")
+        } else {
+            runCatching {
+                val json = JSONArray(withSearch)
+                (0 until json.length())
+                    .mapNotNull { json.optString(it).takeIf(String::isNotBlank) }
+                    .map { it.lowercase() }
+                    .toSet()
+            }.onSuccess { registered ->
+                val missingProviders = expected - registered
+                if (missingProviders.isEmpty()) {
+                    LampacRuntimeState.appendLog("Lampac зарегистрировал источники Aladin, HDVB и Filmix.")
+                } else {
+                    LampacRuntimeState.appendLog(
+                        "Lampac не зарегистрировал: ${missingProviders.joinToString(", ")}. Проверьте загрузку модулей."
+                    )
+                }
+            }.onFailure {
+                LampacRuntimeState.appendLog("Не удалось разобрать список провайдеров Lampac.")
+            }
+        }
+
+        val bootstrap = readLoopbackDiagnostic("/lampainit.js")
+        when {
+            bootstrap == null ->
+                LampacRuntimeState.appendLog("Lampa bootstrap /lampainit.js недоступен.")
+            bootstrap.contains("/online.js") ->
+                LampacRuntimeState.appendLog("Клиентский bootstrap содержит плагин /online.js.")
+            else ->
+                LampacRuntimeState.appendLog("В /lampainit.js нет /online.js: модуль Online не добавлен в клиент.")
+        }
+    }
+
+    private fun readLoopbackDiagnostic(path: String): String? {
+        val connection = runCatching {
+            (URL("http://127.0.0.1:9118$path").openConnection() as HttpURLConnection).apply {
+                connectTimeout = 2_000
+                readTimeout = 3_000
+                requestMethod = "GET"
+                instanceFollowRedirects = false
+                setRequestProperty("User-Agent", "Lampa-Android/${BuildConfig.VERSION_NAME}")
+            }
+        }.getOrNull() ?: return null
+
+        return try {
+            if (connection.responseCode !in 200..299) return null
+            connection.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
+        } catch (_: Exception) {
+            null
+        } finally {
+            connection.disconnect()
         }
     }
 
