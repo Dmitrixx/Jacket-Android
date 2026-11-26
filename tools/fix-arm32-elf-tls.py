@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Fix a static ARM32 executable's PT_TLS alignment for Android Bionic.
 
-Android's 32-bit ARM Bionic requires the main executable PT_TLS segment to be
-at least 32-byte aligned. NDK r27c currently emits PRoot with p_align=8 even
-though the TLS segment virtual address is already 32-byte aligned.
+Android's 32-bit ARM Bionic requires a PT_TLS alignment of at least 32
+bytes AND zero Bionic skew (p_vaddr % p_align == 0). Raising p_align alone
+does not fix a TLS segment whose virtual address remains offset by 16 bytes.
 """
 
 from __future__ import annotations
