@@ -440,10 +440,10 @@ class LampacRuntimeService : Service() {
      * CDN failures. Diagnostics are written to the visible Lampac runtime log.
      */
     private suspend fun verifyProviderRegistration() = withContext(Dispatchers.IO) {
-        val expected = setOf("aladin", "hdvb", "filmix")
+        val expected = setOf("filmix")
         val withSearch = readLoopbackDiagnostic("/lite/withsearch")
         if (withSearch == null) {
-            LampacRuntimeState.appendLog("Проверка Aladin/HDVB/Filmix: не удалось прочитать /lite/withsearch.")
+            LampacRuntimeState.appendLog("Проверка Filmix: не удалось прочитать /lite/withsearch.")
         } else {
             runCatching {
                 val json = JSONArray(withSearch)
@@ -454,7 +454,7 @@ class LampacRuntimeService : Service() {
             }.onSuccess { registered ->
                 val missingProviders = expected - registered
                 if (missingProviders.isEmpty()) {
-                    LampacRuntimeState.appendLog("Lampac зарегистрировал источники Aladin, HDVB и Filmix.")
+                    LampacRuntimeState.appendLog("Lampac зарегистрировал источник Filmix.")
                 } else {
                     LampacRuntimeState.appendLog(
                         "Lampac не зарегистрировал: ${missingProviders.joinToString(", ")}. Проверьте загрузку модулей."
