@@ -42,7 +42,7 @@ internal object StreamAdManifestFilter {
         return when {
             normalized.startsWith("#EXTM3U") -> filterHls(content, baseUrl)
             normalized.startsWith("<") && normalized.contains("<MPD", ignoreCase = true) ->
-                filterDash(content, baseUrl)
+                filterDash(content)
             else -> StreamAdFilterResult(content)
         }
     }
@@ -207,7 +207,7 @@ internal object StreamAdManifestFilter {
         )
     }
 
-    fun filterDash(content: String, baseUrl: String? = null): StreamAdFilterResult {
+    fun filterDash(content: String): StreamAdFilterResult {
         val document = runCatching {
             val factory = DocumentBuilderFactory.newInstance().apply {
                 isNamespaceAware = true
@@ -259,14 +259,10 @@ internal object StreamAdManifestFilter {
                 period.parentNode.removeChild(period)
                 removedPeriods++
                 markersFound = true
-            } else {
-                if (baseUrl != null) resolveDashReferences(period, baseUrl)
             }
         }
 
-        if (removedPeriods == 0 && baseUrl.isNullOrBlank()) return StreamAdFilterResult(content)
-
-        if (baseUrl != null) resolveDashReferences(root, baseUrl)
+        if (removedPeriods == 0) return StreamAdFilterResult(content)
         val serialized = runCatching {
             val transformerFactory = TransformerFactory.newInstance().apply {
                 setAttribute(XMLConstants.ACCESS_EXTERNAL_DTD, "")
@@ -347,82 +343,6 @@ internal object StreamAdManifestFilter {
                 value
             }
         }.getOrDefault(value)
-    }
-
-    private fun resolveDashReferences(period: Element, baseUrl: String) {
-        val elements = period.getElementsByTagName("*")
-        for (index in 0 until elements.length) {
-            val element = elements.item(index) as? Element ?: continue
-            when (localName(element)) {
-                "BaseURL", "Location" -> {
-                    val value = element.textContent?.trim().orEmpty()
-                    if (value.isNotEmpty()) element.textContent = resolveUri(value, baseUrl)
-                }
-                "SegmentTemplate" -> {
-                    listOf("media", "initialization").forEach { attribute ->
-                        if (element.hasAttribute(attribute)) {
-                            element.setAttribute(attribute, resolveUri(element.getAttribute(attribute), baseUrl))
-                        }
-                    }
-                }
-                "SegmentURL" -> {
-                    listOf("media", "index", "sourceURL").forEach { attribute ->
-                        if (element.hasAttribute(attribute)) {
-                            element.setAttribute(attribute, resolveUri(element.getAttribute(attribute), baseUrl))
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    /**
-     * DASH ad opportunities are signalled in EventStream. The SCTE-35 cue-out
-     * begins a new Period at the splice point; only explicit ad cue-out
-     * commands are treated as removable Periods.
-     */
-    private fun hasScte35CueOut(period: Element): Boolean {
-        val descendants = period.getElementsByTagName("*")
-        for (index in 0 until descendants.length) {
-            val stream = descendants.item(index) as? Element ?: continue
-            if (localName(stream) != "eventstream") continue
-            val scheme = attributeIgnoreCase(stream, "schemeIdUri")
-            if (!scheme.contains("scte35", ignoreCase = true) &&
-                !scheme.contains("scte:scte35", ignoreCase = true)
-            ) continue
-
-            val events = stream.getElementsByTagName("*")
-            for (eventIndex in 0 until events.length) {
-                val event = events.item(eventIndex) as? Element ?: continue
-                when (localName(event)) {
-                    "spliceinsert" -> {
-                        val outOfNetwork = attributeIgnoreCase(event, "outOfNetworkIndicator")
-                        if (outOfNetwork.equals("true", true) || outOfNetwork == "1") return true
-                    }
-                    "segmentationdescriptor" -> {
-                        val rawType = attributeIgnoreCase(event, "segmentationTypeId")
-                        val type = if (rawType.startsWith("0x", true)) {
-                            rawType.substring(2).toIntOrNull(16)
-                        } else {
-                            rawType.toIntOrNull()
-                        }
-                        if (type in setOf(34, 48, 52)) return true
-                    }
-                }
-            }
-        }
-        return false
-    }
-
-    private fun attributeIgnoreCase(element: Element, name: String): String {
-        val attributes = element.attributes
-        for (index in 0 until attributes.length) {
-            val attribute = attributes.item(index)
-            if (attribute.nodeName.equals(name, true) ||
-                attribute.localName?.equals(name, true) == true
-            ) return attribute.nodeValue.orEmpty()
-        }
-        return ""
     }
 
     private fun localName(element: Element): String =
