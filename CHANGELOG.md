@@ -1,5 +1,13 @@
 # Changelog
 
+## 3.0.36 — Repair Debian PRoot init dependency resolution
+
+- Stop installing `sysvinit-core` as an APT workaround: Debian Trixie's `sysvinit-core` conflicts with `systemd-sysv` and can leave the solver with an impossible dependency set.
+- Register a tiny app-owned `Provides: init` package inside the private PRoot rootfs; Android owns PID 1, so the Debian container does not need an init daemon.
+- Purge leftover `systemd-sysv` and `sysvinit-core` package states before package recovery, while keeping systemd packages excluded from APT.
+- Add unit assertions covering the local init provider and ensuring runtime package installation no longer requests `sysvinit-core`.
+
+
 ## 3.0.35 — Restore Lampac installer build
 
 - Restore the shared .NET runtime installation command used by both ARM64 and ARMv7 installers.
