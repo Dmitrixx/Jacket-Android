@@ -20,9 +20,9 @@ class LampacRuntimeInstallerTest {
     }
 
     @Test
-    fun arm32DebianUsesTrixieBecauseForkyNoLongerPublishesChromiumArmhf() {
+    fun arm32DebianUsesAnExplicitArmv7TrixieImage() {
         assertEquals(
-            listOf("install", "docker.io/library/debian:trixie-slim", "--override-alias", "lampac-debian"),
+            listOf("install", "docker.io/arm32v7/debian:13-slim", "--override-alias", "lampac-debian"),
             lampacDebianInstallArguments(LampacRuntimeArchitecture.ARM32)
         )
         assertEquals(
@@ -30,7 +30,6 @@ class LampacRuntimeInstallerTest {
             lampacDebianInstallArguments(LampacRuntimeArchitecture.ARM64)
         )
     }
-
     @Test
     fun selectsRuntimeByTheActualAndroidProcessBitness() {
         assertEquals(
@@ -234,8 +233,8 @@ class LampacRuntimeInstallerTest {
     }
 
     @Test
-    fun arm32RejectsOldForkyRootfsAndRequiresTrixieBeforePackageInstall() {
-        val root = java.nio.file.Files.createTempDirectory("lampa-debian-arm32-codename").toFile()
+    fun arm32RejectsArmelRootfsAndRequiresArmhfTrixieBeforePackageInstall() {
+        val root = java.nio.file.Files.createTempDirectory("lampa-debian-arm32-abi").toFile()
         try {
             File(root, "etc").mkdirs()
             File(root, "bin").mkdirs()
@@ -246,18 +245,33 @@ class LampacRuntimeInstallerTest {
             assertTrue(apt.setExecutable(true))
 
             val osRelease = File(root, "etc/os-release")
+            val dpkgStatus = File(root, "var/lib/dpkg/status")
+            assertTrue(dpkgStatus.parentFile!!.mkdirs())
+
+            fun writeDpkgArchitecture(value: String) {
+                dpkgStatus.writeText(
+                    "Package: dpkg\nStatus: install ok installed\nArchitecture: $value\n\n" +
+                        "Package: apt\nStatus: install ok installed\nArchitecture: $value\n"
+                )
+            }
+
             osRelease.writeText("ID=debian\nVERSION_CODENAME=forky\n")
+            writeDpkgArchitecture("arm64")
             assertFalse(isDebianRootfsReady(root, LampacRuntimeArchitecture.ARM32))
             assertTrue(isDebianRootfsReady(root, LampacRuntimeArchitecture.ARM64))
 
             osRelease.writeText("ID=debian\nVERSION_CODENAME=trixie\n")
+            writeDpkgArchitecture("armhf")
             assertTrue(isDebianRootfsReady(root, LampacRuntimeArchitecture.ARM32))
             assertFalse(isDebianRootfsReady(root, LampacRuntimeArchitecture.ARM64))
+
+            writeDpkgArchitecture("armel")
+            assertFalse(isDebianRootfsReady(root, LampacRuntimeArchitecture.ARM32))
+            assertEquals("armel", debianRootfsDpkgArchitecture(root))
         } finally {
             root.deleteRecursively()
         }
     }
-
     @Test
     fun acceptsDebianRootfsOnlyWhenTheBaseSystemAndAptArePresent() {
         val root = java.nio.file.Files.createTempDirectory("lampa-debian-ready").toFile()
