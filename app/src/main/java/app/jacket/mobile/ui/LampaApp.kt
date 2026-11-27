@@ -71,6 +71,7 @@ fun LampaApp(onExit: () -> Unit) {
     var byeDpiSettingsVisible by remember { mutableStateOf(false) }
     var blockAdDomains by remember { mutableStateOf(true) }
     var blockTrackers by remember { mutableStateOf(false) }
+    var removeStreamAds by remember { mutableStateOf(true) }
     var modulesVisible by remember { mutableStateOf(false) }
     var moduleLoading by remember { mutableStateOf(false) }
     var moduleSaving by remember { mutableStateOf(false) }
@@ -141,6 +142,7 @@ fun LampaApp(onExit: () -> Unit) {
             )
             blockAdDomains = preferences.getBoolean(AdBlockPolicy.KEY_BLOCK_AD_DOMAINS, true)
             blockTrackers = preferences.getBoolean(AdBlockPolicy.KEY_BLOCK_TRACKERS, false)
+            removeStreamAds = preferences.getBoolean(AdBlockPolicy.KEY_REMOVE_STREAM_ADS, true)
         }
     }
 
@@ -304,6 +306,31 @@ fun LampaApp(onExit: () -> Unit) {
                         .verticalScroll(rememberScrollState()),
                     verticalArrangement = Arrangement.spacedBy(14.dp)
                 ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Удалять рекламу внутри видеопотока", fontWeight = FontWeight.Medium)
+                            Text(
+                                "Удалять отдельные HLS-сегменты и DASH-периоды, когда источник помечает рекламную вставку cue/SCTE-35 или явно называет период рекламным.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Switch(
+                            checked = removeStreamAds,
+                            onCheckedChange = { enabled ->
+                                removeStreamAds = enabled
+                                context.getSharedPreferences(
+                                    AdBlockPolicy.PREFERENCES_NAME,
+                                    android.content.Context.MODE_PRIVATE
+                                ).edit().putBoolean(AdBlockPolicy.KEY_REMOVE_STREAM_ADS, enabled).apply()
+                            }
+                        )
+                    }
+                    Text(
+                        "Немаркированную рекламу, склеенную с фильмом в тех же сегментах, этот фильтр определить не может. Для неё потребуется распознавание аудио/видео; автоматическое удаление без пропусков пока не гарантируется.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Column(modifier = Modifier.weight(1f)) {
                             Text("Рекламные домены", fontWeight = FontWeight.Medium)
