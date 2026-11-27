@@ -625,7 +625,7 @@ internal fun buildLampacOfflineDpkgCommand(command: String): String {
         "printf '%s\\n' 'Package: systemd systemd-sysv' 'Pin: version *' 'Pin-Priority: -1' > /etc/apt/preferences.d/99-lampac-no-systemd; " +
         "if dpkg-query -W -f='\${db:Status-Status}' systemd-sysv 2>/dev/null | grep -Eq '^(installed|unpacked|half-configured|half-installed|config-files)$'; then " +
         "dpkg --purge --force-all systemd-sysv; fi; " +
-        command +
+        "set +e; { " + command +
         "; } > /tmp/lampa-dpkg-install.log 2>&1; status=\$?; " +
         "if [ \"\$status\" -eq 0 ]; then " +
         "echo '--- apt/dpkg output (last 120 lines) ---'; tail -n 120 /tmp/lampa-dpkg-install.log; " +
