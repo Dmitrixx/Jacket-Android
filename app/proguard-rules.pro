@@ -11,3 +11,10 @@
 -keepclassmembers class * {
     @android.webkit.JavascriptInterface <methods>;
 }
+
+# ByeDPI native entry points and JNI-called socket protector must retain names.
+-keep class app.jacket.mobile.byedpi.core.ByeDpiNative { *; }
+-keep class app.jacket.mobile.byedpi.core.ByedpiVpnSocketProtector { *; }
+-keepclassmembers class app.jacket.mobile.byedpi.core.ByedpiVpnSocketProtector {
+    public static void protectSocket(int);
+}
