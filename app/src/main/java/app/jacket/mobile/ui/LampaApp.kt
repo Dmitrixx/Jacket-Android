@@ -39,9 +39,8 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import android.content.Intent
-import android.widget.Toast
+import android.net.Uri
 import app.jacket.mobile.adblock.AdBlockPolicy
-import io.github.romanvht.byedpi.activities.MainActivity as ByeDpiMainActivity
 import app.jacket.mobile.lampac.LampacRuntimeInstaller
 import app.jacket.mobile.lampac.LampacModuleInfo
 import app.jacket.mobile.lampac.LampacRuntimePhase
@@ -53,6 +52,9 @@ import androidx.compose.runtime.key
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+
+private const val BYEDPI_APPLICATION_ID = "io.github.romanvht.byedpi"
+private const val BYEDPI_RELEASES_URL = "https://github.com/romanvht/ByeByeDPI/releases/latest"
 
 @Composable
 fun LampaApp(onExit: () -> Unit) {
@@ -66,6 +68,7 @@ fun LampaApp(onExit: () -> Unit) {
     }
     var settingsVisible by remember { mutableStateOf(false) }
     var adBlockSettingsVisible by remember { mutableStateOf(false) }
+    var byeDpiSettingsVisible by remember { mutableStateOf(false) }
     var blockAdDomains by remember { mutableStateOf(true) }
     var blockTrackers by remember { mutableStateOf(false) }
     var modulesVisible by remember { mutableStateOf(false) }
@@ -170,17 +173,7 @@ fun LampaApp(onExit: () -> Unit) {
                 onBack = onExit,
                 onOpenLampacSettings = { settingsVisible = true },
                 onOpenAdBlockSettings = { adBlockSettingsVisible = true },
-                onOpenByeDpi = {
-                    runCatching {
-                        context.startActivity(Intent(context, ByeDpiMainActivity::class.java))
-                    }.onFailure {
-                        Toast.makeText(
-                            context,
-                            "Не удалось открыть ByeByeDPI: ${it.message ?: "ошибка запуска"}",
-                            Toast.LENGTH_LONG
-                        ).show()
-                    }
-                }
+                onOpenByeDpi = { byeDpiSettingsVisible = true }
             )
         }
 
@@ -361,6 +354,54 @@ fun LampaApp(onExit: () -> Unit) {
             confirmButton = {
                 TextButton(onClick = { adBlockSettingsVisible = false }) {
                     Text("Готово")
+                }
+            }
+        )
+    }
+
+    if (byeDpiSettingsVisible) {
+        val byeDpiLaunchIntent = context.packageManager.getLaunchIntentForPackage(BYEDPI_APPLICATION_ID)
+        AlertDialog(
+            onDismissRequest = { byeDpiSettingsVisible = false },
+            title = { Text("ByeByeDPI", fontWeight = FontWeight.Bold) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        "ByeByeDPI работает как отдельное приложение. Его собственные настройки, стратегии, DNS, списки приложений и режим VPN открываются в оригинальном интерфейсе."
+                    )
+                    Text(
+                        if (byeDpiLaunchIntent == null) {
+                            "ByeByeDPI пока не установлено на устройстве."
+                        } else {
+                            "ByeByeDPI установлено. Откройте приложение, чтобы изменить параметры или запустить службу."
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            },
+            confirmButton = {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (byeDpiLaunchIntent != null) {
+                        Button(
+                            onClick = {
+                                byeDpiLaunchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                                context.startActivity(byeDpiLaunchIntent)
+                                byeDpiSettingsVisible = false
+                            }
+                        ) { Text("Открыть настройки") }
+                    }
+                    TextButton(
+                        onClick = {
+                            context.startActivity(
+                                Intent(Intent.ACTION_VIEW, Uri.parse(BYEDPI_RELEASES_URL))
+                            )
+                            byeDpiSettingsVisible = false
+                        }
+                    ) { Text("Скачать") }
+                    TextButton(onClick = { byeDpiSettingsVisible = false }) {
+                        Text("Закрыть")
+                    }
                 }
             }
         )
