@@ -1,28 +1,32 @@
-# Lampa ad filtering and ByeByeDPI companion menu
+# Lampa stream-ad filtering and integrated DPI bypass
 
-## Lampa settings
+## One application
 
-The Lampa settings menu exposes two native sections:
+ByeDPI is integrated into the Lampa APK. The Lampa settings item **ByeByeDPI** opens an in-app control panel; there is no external-app hand-off and no second APK requirement.
 
-- **Блокировка рекламы** — enables a conservative host-based filter for known third-party advertising domains; optional analytics/tracker filtering is separate and off by default.
-- **ByeByeDPI** — opens the original ByeByeDPI Android application when it is installed. Otherwise, it opens the official GitHub release page.
+The integrated engine uses the MIT-licensed [hufrea/byedpi](https://github.com/hufrea/byedpi) native proxy and [heiher/hev-socks5-tunnel](https://github.com/heiher/hev-socks5-tunnel) for Android VPN traffic redirection. The Lampa-side settings and Android services are maintained in this repository. The separate GPL-3.0-only ByeByeDPI Android frontend is not copied into the GPL-2.0 Lampa application.
 
-The ad filter operates on network requests made by the embedded Android WebView. It does not rewrite HLS or DASH manifests, inspect video frames, or modify a media stream. It therefore cannot reliably remove mid-roll ads inserted by the cinema into the same video stream or delivered from the same host as the film. Requests made by external players such as VLC and MX Player do not pass through this WebView filter.
+The in-app control panel currently provides the local VPN mode, a local SOCKS5 mode, a ByeDPI argument/strategy field, DNS and IPv6 controls. VPN mode requires Android's system permission and only one Android VPN can be active at a time.
 
-Some websites use ad domains for functions beyond advertising. When such a host is blocked, a site or provider may stop working. Disable the ad-domain filter or add a future allow-list when diagnosing a broken provider.
+ByeDPI is a local DPI circumvention engine, not a remote VPN. It does not send traffic to a remote VPN server, encrypt traffic, or conceal the public IP address.
 
-## ByeByeDPI is kept as a separate app
+## Removing advertisements from media streams
 
-The linked upstream ByeByeDPI project is licensed under GNU GPL-3.0-only. The bundled Lampa web client carries GPL-2.0. To avoid combining those separately licensed codebases into one APK, this repository does not vendor or link ByeByeDPI's source into the Lampa application.
+The Lampa WebView and the local media proxy used by external players now inspect HLS and DASH manifests before returning them to the player.
 
-Instead, the new Lampa settings item launches package `io.github.romanvht.byedpi` if it is installed. If it is missing, the item opens the official releases page:
+For HLS, the filter removes segments in explicitly signalled ad breaks marked by `#EXT-X-CUE-OUT` / `#EXT-X-CUE-IN` and SCTE-35 `EXT-X-DATERANGE` markers. It also removes Apple HLS interstitial insertion markers.
 
-https://github.com/romanvht/ByeByeDPI/releases/latest
+For DASH, the filter removes Periods with explicit advertising metadata (for example an advertisement Role or an ad-named Period) and Periods containing recognised SCTE-35 cue-out events in an EventStream.
 
-ByeByeDPI retains its own settings screens, strategy editor, service modes, VPN permission flow, application filters and import/export features.
+The media segments that remain are requested from their original media origin. The filter does not transcode or re-encode the film.
 
-The upstream README explains that ByeByeDPI runs ByeDPI locally on the device. Its Android VPN mode is a local traffic-redirection mechanism; it is not a remote VPN, does not encrypt traffic and does not hide the user's public IP address. Android allows only one active VPN service at a time, so starting ByeByeDPI's VPN mode may conflict with another VPN already in use.
+### Important limitation
 
-## Validation boundaries
+This removes ad breaks that the stream exposes as separable segments/Periods or signals with metadata. It cannot reliably recognise an advertisement that has been stitched into the same video/audio segments as the film without any cue, SCTE-35, interstitial, or advertising-period metadata. Such a stream is technically indistinguishable from ordinary programme content from its manifest alone. Removing it would require content-level audio/video recognition or a known ad fingerprint catalogue, and automatic detection can cut out real film scenes.
 
-The ad-domain filter is a best-effort browser-request filter, not a universal video-ad remover. A provider can still show video ads when the ad is stitched into the media stream, shares the movie's host, or is fetched by an external player. Provider-specific breakage must be tested on the actual TV/device before enabling stricter rules by default.
+The current filter therefore uses explicit stream signalling rather than guessing. Some providers may still show unmarked server-side ads. Provider-specific testing is needed to confirm the actual behaviour on the user's source.
+
+## Browser ad-domain filter
+
+The separate WebView domain filter blocks a conservative list of known third-party ad-network hosts, with analytics/tracker blocking as an independent option. It is not a substitute for manifest-level stream filtering and does not remove ads embedded in the same media segments.
+
