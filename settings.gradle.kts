@@ -9,3 +9,6 @@ rootProject.name = "Lampa"
 include(":app")
 include(":proot-engine")
 project(":proot-engine").projectDir = file("proot-engine")
+
+include(":byedpi-integration")
+project(":byedpi-integration").projectDir = file("byedpi-integration")
