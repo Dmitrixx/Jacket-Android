@@ -232,11 +232,30 @@ internal object StreamAdManifestFilter {
         var markersFound = false
         periods.forEach { period ->
             val id = period.getAttribute("id")
-            val adLabel = period.getAttribute("contentType") +
-                " " + period.getAttribute("assetIdentifier") +
-                " " + period.getAttribute("role") +
-                " " + id
-            if (adPeriodId.containsMatchIn(adLabel)) {
+            val adLabel = buildString {
+                append(period.getAttribute("contentType"))
+                append(' ')
+                append(period.getAttribute("assetIdentifier"))
+                append(' ')
+                append(period.getAttribute("role"))
+                append(' ')
+                append(id)
+                val descendants = period.getElementsByTagName("*")
+                for (index in 0 until descendants.length) {
+                    val element = descendants.item(index) as? Element ?: continue
+                    if (localName(element) in setOf(
+                            "role", "supplementalproperty", "essentialproperty",
+                            "assetidentifier", "contentprotection"
+                        )
+                    ) {
+                        listOf("value", "schemeIdUri", "id", "contentType").forEach { name ->
+                            append(' ')
+                            append(attributeIgnoreCase(element, name))
+                        }
+                    }
+                }
+            }
+            if (adPeriodId.containsMatchIn(adLabel) || hasScte35CueOut(period)) {
                 period.parentNode.removeChild(period)
                 removedPeriods++
                 markersFound = true
@@ -355,6 +374,53 @@ internal object StreamAdManifestFilter {
                 }
             }
         }
+    }
+
+    /**
+     * DASH ad opportunities are signalled in EventStream. The SCTE-35 cue-out
+     * begins a new Period at the splice point; only explicit ad cue-out
+     * commands are treated as removable Periods.
+     */
+    private fun hasScte35CueOut(period: Element): Boolean {
+        val descendants = period.getElementsByTagName("*")
+        for (index in 0 until descendants.length) {
+            val stream = descendants.item(index) as? Element ?: continue
+            if (localName(stream) != "eventstream") continue
+            val scheme = attributeIgnoreCase(stream, "schemeIdUri")
+            if (!scheme.contains("scte35", ignoreCase = true) &&
+                !scheme.contains("scte:scte35", ignoreCase = true)
+            ) continue
+
+            val events = stream.getElementsByTagName("*")
+            for (eventIndex in 0 until events.length) {
+                val event = events.item(eventIndex) as? Element ?: continue
+                when (localName(event)) {
+                    "spliceinsert" -> {
+                        val outOfNetwork = attributeIgnoreCase(event, "outOfNetworkIndicator")
+                        if (outOfNetwork.equals("true", true) || outOfNetwork == "1") return true
+                    }
+                    "segmentationdescriptor" -> {
+                        val type = attributeIgnoreCase(event, "segmentationTypeId")
+                            .removePrefix("0x")
+                            .toIntOrNull(16)
+                            ?: attributeIgnoreCase(event, "segmentationTypeId").toIntOrNull()
+                        if (type in setOf(34, 48, 52)) return true
+                    }
+                }
+            }
+        }
+        return false
+    }
+
+    private fun attributeIgnoreCase(element: Element, name: String): String {
+        val attributes = element.attributes
+        for (index in 0 until attributes.length) {
+            val attribute = attributes.item(index)
+            if (attribute.nodeName.equals(name, true) ||
+                attribute.localName?.equals(name, true) == true
+            ) return attribute.nodeValue.orEmpty()
+        }
+        return ""
     }
 
     private fun localName(element: Element): String =
