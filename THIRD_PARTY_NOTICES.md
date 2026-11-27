@@ -32,10 +32,12 @@ AndroidX, Gradle, Node.js, Rollup, Babel, Sass, Autoprefixer and other build dep
 
 This is a private personal-use build. Any redistribution or network deployment must be reviewed against GPL and AGPL obligations, including source and licence-notice requirements.
 
-## ByeByeDPI companion application
+## Integrated DPI bypass engine
 
-- Project: https://github.com/romanvht/ByeByeDPI
-- Official releases: https://github.com/romanvht/ByeByeDPI/releases
-- Licence: GNU GPL-3.0-only.
+- [hufrea/byedpi](https://github.com/hufrea/byedpi), pinned commit `ba532298de7b28cfe854aea83d061369d13ca290`, licence: MIT.
+- [heiher/hev-socks5-tunnel](https://github.com/heiher/hev-socks5-tunnel), pinned commit `4d6c334dbfb68a79d1970c2744e62d09f71df12f`, licence: MIT.
+- Complete sources: `third_party/byedpi/` and `third_party/hev-socks5-tunnel/`.
 
-ByeByeDPI is not linked into the Lampa APK. Lampa's upstream web client is licensed under GPL-2.0, while ByeByeDPI is GPL-3.0-only; the projects are kept as separate applications. The Lampa settings menu checks for the installed package `io.github.romanvht.byedpi` and launches its original interface, or opens the official release page when it is not installed.
+The Lampa APK compiles the permissively licensed native ByeDPI engine and HEV tunnel directly into its own package. The Kotlin settings screen, service lifecycle, VPN integration, and native JNI bridge are implemented in this repository. Users do not need to install a second application.
+
+The original [ByeByeDPI Android frontend](https://github.com/romanvht/ByeByeDPI) is GPL-3.0-only and is not copied or linked into the GPL-2.0 Lampa client. Only the independently licensed MIT native engines are used; their upstream copyright and licence notices are retained in the submodules.
