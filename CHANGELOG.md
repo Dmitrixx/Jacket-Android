@@ -1,5 +1,12 @@
 # Changelog
 
+## 3.0.37 — Fix Debian PRoot init-provider package permissions
+
+- Set the generated package control directory to mode 0755 and its control file to 0644 before invoking `dpkg-deb`.
+- This handles Android/PRoot umask 077, which otherwise creates the DEBIAN control directory as 0700 and makes dpkg-deb reject the local init-provider package.
+- Add unit assertions for the generated metadata permissions.
+
+
 ## 3.0.36 — Repair Debian PRoot init dependency resolution
 
 - Stop installing `sysvinit-core` as an APT workaround: Debian Trixie's `sysvinit-core` conflicts with `systemd-sysv` and can leave the solver with an impossible dependency set.
