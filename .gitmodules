@@ -5,3 +5,10 @@
 	path = third_party/lampac-source
 	url = https://github.com/lampac-nextgen/lampac.git
 
+[submodule "third_party/byedpi"]
+	path = third_party/byedpi
+	url = https://github.com/hufrea/byedpi.git
+
+[submodule "third_party/hev-socks5-tunnel"]
+	path = third_party/hev-socks5-tunnel
+	url = https://github.com/heiher/hev-socks5-tunnel.git
