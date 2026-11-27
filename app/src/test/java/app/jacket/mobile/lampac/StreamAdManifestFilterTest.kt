@@ -1,0 +1,183 @@
+package app.jacket.mobile.lampac
+
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+class StreamAdManifestFilterTest {
+    @Test
+    fun removesSegmentsBetweenCueOutAndCueIn() {
+        val playlist = """
+            #EXTM3U
+            #EXT-X-VERSION:3
+            #EXT-X-PLAYLIST-TYPE:VOD
+            #EXT-X-MEDIA-SEQUENCE:100
+            #EXTINF:8.0,
+            intro.ts
+            #EXT-X-CUE-OUT:12.0
+            #EXTINF:6.0,
+            ad-one.ts
+            #EXTINF:6.0,
+            ad-two.ts
+            #EXT-X-CUE-IN
+            #EXTINF:8.0,
+            movie.ts
+            #EXT-X-ENDLIST
+        """.trimIndent()
+
+        val result = StreamAdManifestFilter.filterHls(playlist)
+
+        assertEquals(2, result.removedSegments)
+        assertFalse(result.content.contains("ad-one.ts"))
+        assertFalse(result.content.contains("ad-two.ts"))
+        assertTrue(result.content.contains("intro.ts"))
+        assertTrue(result.content.contains("movie.ts"))
+        assertTrue(result.content.contains("#EXT-X-DISCONTINUITY"))
+        assertTrue(result.changed)
+    }
+
+    @Test
+    fun supportsScte35DateRangeCueMarkers() {
+        val playlist = """
+            #EXTM3U
+            #EXT-X-PLAYLIST-TYPE:VOD
+            #EXTINF:5.0,
+            before.ts
+            #EXT-X-DATERANGE:ID="break-1",START-DATE="2026-01-01T00:00:05Z",PLANNED-DURATION=10.0,SCTE35-OUT=0xFC
+            #EXTINF:5.0,
+            ad-one.ts
+            #EXTINF:5.0,
+            ad-two.ts
+            #EXT-X-DATERANGE:ID="break-1",END-DATE="2026-01-01T00:00:15Z",SCTE35-IN=0xFC
+            #EXTINF:5.0,
+            after.ts
+            #EXT-X-ENDLIST
+        """.trimIndent()
+
+        val result = StreamAdManifestFilter.filterHls(playlist)
+
+        assertEquals(2, result.removedSegments)
+        assertFalse(result.content.contains("ad-one.ts"))
+        assertFalse(result.content.contains("ad-two.ts"))
+        assertTrue(result.content.contains("after.ts"))
+    }
+
+    @Test
+    fun cueOutContinuationIsHandledBeforeGenericCueOut() {
+        val playlist = """
+            #EXTM3U
+            #EXT-X-PLAYLIST-TYPE:VOD
+            #EXTINF:4.0,
+            before.ts
+            #EXT-X-CUE-OUT-CONT:ElapsedTime=4.0,Duration=8.0
+            #EXTINF:4.0,
+            ad-one.ts
+            #EXTINF:4.0,
+            ad-two.ts
+            #EXT-X-CUE-IN
+            #EXTINF:4.0,
+            after.ts
+            #EXT-X-ENDLIST
+        """.trimIndent()
+
+        val result = StreamAdManifestFilter.filterHls(playlist)
+
+        assertEquals(2, result.removedSegments)
+        assertFalse(result.content.contains("ad-one.ts"))
+        assertFalse(result.content.contains("ad-two.ts"))
+    }
+
+    @Test
+    fun removesAppleInterstitialInsertionMarker() {
+        val playlist = """
+            #EXTM3U
+            #EXT-X-PLAYLIST-TYPE:VOD
+            #EXT-X-DATERANGE:ID="interstitial-1",CLASS="com.apple.hls.interstitial",START-DATE="2026-01-01T00:00:00Z",X-ASSET-URI="ad.json"
+            #EXTINF:10.0,
+            movie.ts
+            #EXT-X-ENDLIST
+        """.trimIndent()
+
+        val result = StreamAdManifestFilter.filterHls(playlist)
+
+        assertEquals(1, result.removedInterstitialMarkers)
+        assertFalse(result.content.contains("ad.json"))
+        assertTrue(result.content.contains("movie.ts"))
+    }
+
+    @Test
+    fun leavesUnmarkedHlsUntouched() {
+        val playlist = """
+            #EXTM3U
+            #EXT-X-PLAYLIST-TYPE:VOD
+            #EXTINF:10.0,
+            part-one.ts
+            #EXTINF:10.0,
+            part-two.ts
+            #EXT-X-ENDLIST
+        """.trimIndent()
+
+        val result = StreamAdManifestFilter.filterHls(playlist)
+
+        assertEquals(playlist, result.content)
+        assertFalse(result.changed)
+    }
+
+    @Test
+    fun leavesLivePlaylistUntouchedToAvoidBreakingSequenceNumbers() {
+        val playlist = """
+            #EXTM3U
+            #EXT-X-TARGETDURATION:6
+            #EXT-X-MEDIA-SEQUENCE:20
+            #EXT-X-CUE-OUT:6
+            #EXTINF:6.0,
+            live-ad.ts
+            #EXT-X-CUE-IN
+            #EXTINF:6.0,
+            live-content.ts
+        """.trimIndent()
+
+        val result = StreamAdManifestFilter.filterHls(playlist)
+
+        assertEquals(playlist, result.content)
+        assertEquals(0, result.removedSegments)
+    }
+
+    @Test
+    fun removesExplicitAdPeriodsFromDashManifest() {
+        val mpd = """
+            <?xml version="1.0" encoding="UTF-8"?>
+            <MPD xmlns="urn:mpeg:dash:schema:mpd:2011" type="static">
+              <Period id="content-start"><AdaptationSet/></Period>
+              <Period id="ad-001"><AdaptationSet/></Period>
+              <Period id="content-end"><AdaptationSet/></Period>
+            </MPD>
+        """.trimIndent()
+
+        val result = StreamAdManifestFilter.filterDash(mpd)
+
+        assertEquals(1, result.removedPeriods)
+        assertFalse(result.content.contains("ad-001"))
+        assertTrue(result.content.contains("content-start"))
+        assertTrue(result.content.contains("content-end"))
+    }
+
+    @Test
+    fun resolvesRelativeHlsSegmentsAgainstFinalManifestUrl() {
+        val playlist = """
+            #EXTM3U
+            #EXT-X-PLAYLIST-TYPE:VOD
+            #EXTINF:10.0,
+            segments/001.ts
+            #EXT-X-ENDLIST
+        """.trimIndent()
+
+        val result = StreamAdManifestFilter.filterHls(
+            playlist,
+            "https://cdn.example.test/movie/master.m3u8"
+        )
+
+        assertTrue(result.content.contains("https://cdn.example.test/movie/segments/001.ts"))
+    }
+}
