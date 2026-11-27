@@ -443,12 +443,15 @@ class LampacRuntimeInstallerTest {
             assertTrue(command.contains("rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*.deb"))
         }
         assertTrue(packageCommand.contains("echo '__LAMPAC_STAGE=apt-update' && apt-get update"))
-        assertTrue(packageCommand.contains("echo '__LAMPAC_STAGE=opensysusers' && apt-get install -y --no-install-recommends opensysusers"))
+        assertTrue(packageCommand.contains("echo '__LAMPAC_STAGE=bootstrap-packages' && apt-get install -y --no-install-recommends opensysusers sysvinit-core"))
         assertTrue(packageCommand.contains("echo '__LAMPAC_STAGE=dpkg-recovery' && dpkg --root=/ --configure -a"))
         assertTrue(packageCommand.contains("echo '__LAMPAC_STAGE=runtime-packages' && apt-get install"))
         assertTrue(packageCommand.contains("echo '__LAMPAC_STAGE=browser-package'"))
         assertTrue(packageCommand.contains("echo '__LAMPAC_STAGE=runtime-validation'"))
         assertTrue(packageCommand.contains("echo '__LAMPAC_STAGE=apt-cleanup'"))
+        assertTrue(packageCommand.contains("apt-get install -y --no-install-recommends opensysusers sysvinit-core"))
+        assertTrue(packageCommand.contains("sysvinit-core"))
+        assertFalse(packageCommand.contains("apt-get install -y --no-install-recommends systemd-sysv"))
         assertTrue(packageCommand.contains("apt-get install -y --no-install-recommends opensysusers"))
         assertTrue(packageCommand.contains("apt-get install -y --no-install-recommends ca-certificates"))
         listOf("libssl-dev", "libjpeg-dev", "libpng-dev", "libwebp-dev").forEach { packageName ->
