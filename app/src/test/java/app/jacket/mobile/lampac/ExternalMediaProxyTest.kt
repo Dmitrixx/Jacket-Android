@@ -146,23 +146,38 @@ class ExternalMediaProxyTest {
 
 
     @Test
-    fun getKeepsChunkedTransferFramingForStreamingPlayers() {
+    fun rewritesChunkedHlsManifestAndRemovesMarkedAdSegmentsForExternalPlayers() {
         val receivedRequest = AtomicReference<List<String>>(emptyList())
         val upstream = ServerSocket(0, 1, InetAddress.getByName("127.0.0.1"))
+        val playlist = """
+            #EXTM3U
+            #EXT-X-PLAYLIST-TYPE:VOD
+            #EXTINF:6.0,
+            movie-before.ts
+            #EXT-X-CUE-OUT:6
+            #EXTINF:6.0,
+            inserted-ad.ts
+            #EXT-X-CUE-IN
+            #EXTINF:6.0,
+            movie-after.ts
+            #EXT-X-ENDLIST
+        """.trimIndent()
+        val playlistBytes = playlist.toByteArray(StandardCharsets.UTF_8)
         val upstreamThread = Thread {
             upstream.accept().use { socket ->
                 receivedRequest.set(readRequestLines(socket))
                 socket.getOutputStream().apply {
                     write(
                         (
-                            "HTTP/1.1 200 OK\r\n" +
-                                "Content-Type: video/x-matroska\r\n" +
-                                "Transfer-Encoding: chunked\r\n" +
-                                "Connection: close\r\n\r\n" +
-                                "4\r\ndata\r\n" +
-                                "0\r\n\r\n"
+                            "HTTP/1.1 200 OK\\r\\n" +
+                                "Content-Type: application/vnd.apple.mpegurl\\r\\n" +
+                                "Transfer-Encoding: chunked\\r\\n" +
+                                "Connection: close\\r\\n\\r\\n" +
+                                "${playlistBytes.size.toString(16)}\\r\\n"
                             ).toByteArray(StandardCharsets.ISO_8859_1)
                     )
+                    write(playlistBytes)
+                    write("\\r\\n0\\r\\n\\r\\n".toByteArray(StandardCharsets.ISO_8859_1))
                     flush()
                 }
             }
@@ -173,16 +188,20 @@ class ExternalMediaProxyTest {
             assertTrue(proxy.start())
             val response = sendRequest(
                 proxy.port!!,
-                "GET /proxy/q0j7token.m3u8?audio=0 HTTP/1.1\r\n" +
-                    "Host: 127.0.0.1\r\n\r\n"
+                "GET /proxy/q0j7token.m3u8?audio=0 HTTP/1.1\\r\\n" +
+                    "Host: 127.0.0.1\\r\\n\\r\\n"
             )
             upstreamThread.join(3_000)
 
             assertTrue(receivedRequest.get().first().startsWith("GET /proxy/q0j7token.m3u8?audio=0 "))
             assertTrue(receivedRequest.get().any { it.startsWith("Host: 127.0.0.1:${proxy.port}", true) })
             assertTrue(response.startsWith("HTTP/1.1 200 OK"))
-            assertTrue(response.contains("Transfer-Encoding: chunked"))
-            assertTrue(response.endsWith("4\r\ndata\r\n0\r\n\r\n"))
+            assertFalse(response.contains("Transfer-Encoding: chunked"))
+            assertTrue(response.contains("Content-Length:"))
+            assertFalse(response.contains("inserted-ad.ts"))
+            assertTrue(response.contains("movie-before.ts"))
+            assertTrue(response.contains("movie-after.ts"))
+            assertTrue(response.contains("http://127.0.0.1:${proxy.port}/proxy/"))
         } finally {
             proxy.stop()
             upstream.close()
