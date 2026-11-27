@@ -4,3 +4,7 @@
 [submodule "third_party/lampac-source"]
 	path = third_party/lampac-source
 	url = https://github.com/lampac-nextgen/lampac.git
+
+[submodule "third_party/byebyedpi"]
+	path = third_party/byebyedpi
+	url = https://github.com/romanvht/ByeByeDPI.git
