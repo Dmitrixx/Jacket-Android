@@ -97,6 +97,7 @@ internal class ByeDpiServiceSession(
     fun stop() {
         if (stopping) return
         stopping = true
+        emit(ByeDpiController.STATE_STOPPING, "Останавливаем ByeDPI…")
         thread(name = "ByeDPI-Stop", isDaemon = true) {
             runCatching { engine?.stopTunnel() }
             runCatching { engine?.stopProxy() }
@@ -180,6 +181,13 @@ internal class ByeDpiServiceSession(
     }
 
     private fun emit(state: String, message: String) {
+        service.getSharedPreferences(
+            ByeDpiController.PREFERENCES_NAME,
+            Context.MODE_PRIVATE
+        ).edit()
+            .putString(ByeDpiController.KEY_STATE, state)
+            .putString(ByeDpiController.KEY_MESSAGE, message)
+            .apply()
         service.sendBroadcast(
             Intent(ByeDpiController.ACTION_STATE)
                 .setPackage(service.packageName)
