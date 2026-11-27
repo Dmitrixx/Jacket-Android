@@ -771,7 +771,7 @@ internal fun buildLampacSystemPackagesInstallCommand(
 internal fun buildLampacNodeInstallCommand(): String =
     buildLampacOfflineDpkgCommand(
         "apt-get update && " +
-            "apt-get install -y --no-install-recommends opensysusers && " +
+            "apt-get install -y --no-install-recommends opensysusers sysvinit-core && " +
             "dpkg --root=/ --configure -a && " +
             "apt-get install -y --no-install-recommends nodejs && " +
             "test -x /usr/bin/node && node --version && " +
