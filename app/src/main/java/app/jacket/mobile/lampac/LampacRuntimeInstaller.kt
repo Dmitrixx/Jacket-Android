@@ -750,7 +750,9 @@ internal fun buildLampacSystemPackagesInstallCommand(
 
     return buildLampacOfflineDpkgCommand(
         "echo '__LAMPAC_STAGE=apt-update' && apt-get update && " +
-            "echo '__LAMPAC_STAGE=opensysusers' && apt-get install -y --no-install-recommends opensysusers && " +
+            // The init metapackage defaults to systemd-sysv. PRoot is not PID 1,
+            // so explicitly provide the init alternative without systemd.
+            "echo '__LAMPAC_STAGE=bootstrap-packages' && apt-get install -y --no-install-recommends opensysusers sysvinit-core && " +
             "echo '__LAMPAC_STAGE=dpkg-recovery' && dpkg --root=/ --configure -a && " +
             "echo '__LAMPAC_STAGE=runtime-packages' && apt-get install -y --no-install-recommends ca-certificates curl fontconfig $icuPackage zlib1g tar nodejs " +
             "ffmpeg imagemagick xvfb libnspr4 " +
