@@ -102,6 +102,7 @@ android {
 
 dependencies {
     implementation(project(":proot-engine"))
+    implementation(project(":byedpi-integration"))
 
     val composeBom = platform("androidx.compose:compose-bom:2026.06.00")
     implementation(composeBom)
