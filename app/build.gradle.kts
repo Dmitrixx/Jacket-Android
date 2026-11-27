@@ -15,6 +15,30 @@ val hasReleaseSigning = listOf(
     releaseSigningKeyPassword
 ).all { !it.isNullOrBlank() }
 
+val hevNativeLibraries = layout.buildDirectory.dir("generated/byedpi/jniLibs")
+
+val buildHevSocks5Tunnel by tasks.registering(Exec::class) {
+    val hevRoot = rootProject.file("third_party/hev-socks5-tunnel")
+    val ndkDirectory = android.ndkDirectory
+    val ndkBuild = if (System.getProperty("os.name").startsWith("Windows", ignoreCase = true)) {
+        File(ndkDirectory, "ndk-build.cmd")
+    } else {
+        File(ndkDirectory, "ndk-build")
+    }
+
+    workingDir(rootProject.projectDir)
+    commandLine(
+        ndkBuild.absolutePath,
+        "NDK_PROJECT_PATH=${layout.buildDirectory.dir("hev-ndk-project").get().asFile.absolutePath}",
+        "NDK_LIBS_OUT=${hevNativeLibraries.get().asFile.absolutePath}",
+        "APP_BUILD_SCRIPT=${hevRoot.resolve("Android.mk").absolutePath}",
+        "NDK_APPLICATION_MK=${hevRoot.resolve("Application.mk").absolutePath}"
+    )
+
+    inputs.dir(hevRoot)
+    outputs.dir(hevNativeLibraries)
+}
+
 val buildLampaWebAssets by tasks.registering(Exec::class) {
     val lampaRoot = rootProject.file("third_party/lampa-source")
     workingDir(rootProject.projectDir)
@@ -37,6 +61,7 @@ val buildLampaWebAssets by tasks.registering(Exec::class) {
 
 tasks.named("preBuild").configure {
     dependsOn(buildLampaWebAssets)
+    dependsOn(buildHevSocks5Tunnel)
 }
 
 android {
@@ -52,11 +77,32 @@ android {
         versionName = "3.0.40"
         buildConfigField("boolean", "PERSISTENT_SIGNING_CONFIGURED", hasReleaseSigning.toString())
         vectorDrawables { useSupportLibrary = true }
+        ndk {
+            abiFilters += setOf("arm64-v8a", "armeabi-v7a", "x86", "x86_64")
+        }
+        externalNativeBuild {
+            cmake {
+                arguments += listOf("-DANDROID_PLATFORM=android-28")
+            }
+        }
     }
 
     buildFeatures {
         compose = true
         buildConfig = true
+    }
+
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/cpp/CMakeLists.txt")
+            version = "3.22.1"
+        }
+    }
+
+    sourceSets {
+        getByName("main") {
+            jniLibs.srcDir(hevNativeLibraries)
+        }
     }
 
     compileOptions {
