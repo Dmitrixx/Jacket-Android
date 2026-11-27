@@ -93,6 +93,81 @@
         window.__LAMPA_ANDROID_LAMPAC_SETTINGS_REGISTERED__ = true;
     }
 
+    var nativeSettingsAttempts = 0;
+
+    function registerAdditionalSettings() {
+        if (window.__LAMPA_ANDROID_ADBLOCK_SETTINGS_REGISTERED__ &&
+            window.__LAMPA_ANDROID_BYEDPI_SETTINGS_REGISTERED__) return;
+
+        // Keep old standalone Lampa web bundles compatible with APKs that do not
+        // provide the new native bridges yet.
+        if (!window.AndroidJS ||
+            typeof AndroidJS.openAdBlockSettings !== 'function' ||
+            typeof AndroidJS.openByeDpi !== 'function') {
+            if (nativeSettingsAttempts++ < 120) {
+                window.setTimeout(registerAdditionalSettings, 250);
+            }
+            return;
+        }
+
+        var lampa = window.Lampa;
+        if (!lampa || !lampa.SettingsApi ||
+            typeof lampa.SettingsApi.addComponent !== 'function') {
+            if (nativeSettingsAttempts++ < 120) {
+                window.setTimeout(registerAdditionalSettings, 250);
+            }
+            return;
+        }
+
+        if (!window.__LAMPA_ANDROID_ADBLOCK_SETTINGS_REGISTERED__) {
+            lampa.SettingsApi.addComponent({
+                component: 'jacket_adblock',
+                name: 'Блокировка рекламы',
+                after: 'jacket_lampac',
+                icon: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path fill="white" d="M12 2 4 5v6c0 5.1 3.4 9.8 8 11 4.6-1.2 8-5.9 8-11V5l-8-3Zm0 3.1 5 1.9v4c0 3.9-2.4 7.3-5 8.5-2.6-1.2-5-4.6-5-8.5V7l5-1.9Zm-1 3.4v5h2v-5h-2Zm0 6.5v2h2v-2h-2Z"/></svg>'
+            });
+            lampa.SettingsApi.addParam({
+                component: 'jacket_adblock',
+                param: {
+                    name: 'jacket_adblock_open',
+                    type: 'button'
+                },
+                field: {
+                    name: 'Настройки блокировки рекламы',
+                    description: 'Фильтрация известных рекламных доменов и трекеров в Lampa WebView.'
+                },
+                onChange: function () {
+                    AndroidJS.openAdBlockSettings();
+                }
+            });
+            window.__LAMPA_ANDROID_ADBLOCK_SETTINGS_REGISTERED__ = true;
+        }
+
+        if (!window.__LAMPA_ANDROID_BYEDPI_SETTINGS_REGISTERED__) {
+            lampa.SettingsApi.addComponent({
+                component: 'jacket_byedpi',
+                name: 'ByeByeDPI',
+                after: 'jacket_adblock',
+                icon: '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path fill="white" d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20Zm1 17.9V18h-2v1.9A8 8 0 0 1 4.1 13H6v-2H4.1A8 8 0 0 1 11 4.1V6h2V4.1a8 8 0 0 1 6.9 6.9H18v2h1.9a8 8 0 0 1-6.9 6.9ZM8 12h8v2H8z"/></svg>'
+            });
+            lampa.SettingsApi.addParam({
+                component: 'jacket_byedpi',
+                param: {
+                    name: 'jacket_byedpi_open',
+                    type: 'button'
+                },
+                field: {
+                    name: 'Открыть ByeByeDPI',
+                    description: 'Запуск, остановка и настройки обхода DPI. Для режима VPN Android запросит системное разрешение.'
+                },
+                onChange: function () {
+                    AndroidJS.openByeDpi();
+                }
+            });
+            window.__LAMPA_ANDROID_BYEDPI_SETTINGS_REGISTERED__ = true;
+        }
+    }
+
     function observePlayer() {
         var player = window.Lampa && window.Lampa.Player;
         if (!player || !player.listener || !window.AndroidJS) {
@@ -117,6 +192,7 @@
     }
     observePlayer();
     registerLampacSettings();
+    registerAdditionalSettings();
 
     window.addEventListener('beforeunload', function () {
         if (retryTimer) window.clearTimeout(retryTimer);
