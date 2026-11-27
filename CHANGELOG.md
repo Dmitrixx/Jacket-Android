@@ -1,5 +1,13 @@
 # Changelog
 
+## 3.0.40 — Add Lampa ad filter and ByeByeDPI companion menu
+
+- Add a Lampa settings section for blocking known third-party advertising domains in embedded WebView requests.
+- Add a separate optional tracker filter, disabled by default.
+- Add dedicated Lampa settings entries for ad filtering and ByeByeDPI.
+- Open the original ByeByeDPI app when installed, or its official GitHub releases page otherwise; keep its GPL-3.0-only source as a separate application rather than linking it into the GPL-2.0 Lampa APK.
+- Document the limits of WebView domain filtering: ads stitched into HLS/DASH streams and requests handled by external video players are not removed.
+
 ## 3.0.39 — Fix ARMv7 Debian architecture selection
 
 - Pin 32-bit Android to the ARMv7-only Debian 13 image instead of the generic multi-architecture Trixie tag.
