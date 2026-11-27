@@ -109,7 +109,7 @@ android {
 
     sourceSets {
         getByName("main") {
-            jniLibs.srcDir(hevNativeLibraries)
+            jniLibs.srcDir(hevNativeLibraries.get().asFile)
         }
     }
 
