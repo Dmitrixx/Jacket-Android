@@ -367,7 +367,12 @@ fun LampaApp(onExit: () -> Unit) {
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(
-                        "ByeByeDPI работает как отдельное приложение. Его собственные настройки, стратегии, DNS, списки приложений и режим VPN открываются в оригинальном интерфейсе."
+                        "ByeByeDPI — инструмент обхода DPI, а не блокировщик рекламы. Он работает как отдельное приложение и открывает собственные настройки, стратегии, DNS и списки приложений."
+                    )
+                    Text(
+                        "Его VPN-режим перенаправляет трафик локально на устройстве. Это не удалённый VPN: он не шифрует трафик и не скрывает публичный IP-адрес.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     Text(
                         if (byeDpiLaunchIntent == null) {
@@ -390,15 +395,16 @@ fun LampaApp(onExit: () -> Unit) {
                                 byeDpiSettingsVisible = false
                             }
                         ) { Text("Открыть настройки") }
+                    } else {
+                        TextButton(
+                            onClick = {
+                                context.startActivity(
+                                    Intent(Intent.ACTION_VIEW, Uri.parse(BYEDPI_RELEASES_URL))
+                                )
+                                byeDpiSettingsVisible = false
+                            }
+                        ) { Text("Скачать ByeByeDPI") }
                     }
-                    TextButton(
-                        onClick = {
-                            context.startActivity(
-                                Intent(Intent.ACTION_VIEW, Uri.parse(BYEDPI_RELEASES_URL))
-                            )
-                            byeDpiSettingsVisible = false
-                        }
-                    ) { Text("Скачать") }
                     TextButton(onClick = { byeDpiSettingsVisible = false }) {
                         Text("Закрыть")
                     }
