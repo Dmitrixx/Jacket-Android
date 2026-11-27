@@ -621,10 +621,15 @@ internal fun buildLampacOfflineDpkgCommand(command: String): String {
         "lampa_divert_stub /usr/sbin/policy-rc.d 101; " +
         // This is an Android-hosted Debian userspace, not a bootable Debian system.
         // Prevent an inherited systemd-sysv selection from pulling the full init manager.
-        "mkdir -p /etc/apt/preferences.d; " +
+        "mkdir -p /etc/apt/preferences.d /tmp/lampa-proot-init-provider/DEBIAN; " +
         "printf '%s\\n' 'Package: systemd systemd-sysv' 'Pin: version *' 'Pin-Priority: -1' > /etc/apt/preferences.d/99-lampac-no-systemd; " +
-        "if dpkg-query -W -f='\${db:Status-Status}' systemd-sysv 2>/dev/null | grep -Eq '^(installed|unpacked|half-configured|half-installed|config-files)$'; then " +
-        "dpkg --purge --force-all systemd-sysv; fi; " +
+        // This rootfs is never booted: Android owns PID 1. Register a minimal local
+        // provider for Debian's virtual init package so APT cannot select systemd-sysv.
+        "printf '%s\\n' 'Package: lampa-proot-init-provider' 'Version: 1.0' 'Architecture: all' 'Provides: init' 'Conflicts: systemd-sysv, sysvinit-core' 'Description: Virtual init provider for Android-managed PRoot' > /tmp/lampa-proot-init-provider/DEBIAN/control; " +
+        "dpkg-deb --build /tmp/lampa-proot-init-provider /tmp/lampa-proot-init-provider.deb >/dev/null; " +
+        "dpkg --purge --force-all systemd-sysv sysvinit-core >/dev/null 2>&1 || true; " +
+        "dpkg -i /tmp/lampa-proot-init-provider.deb; " +
+        "rm -rf /tmp/lampa-proot-init-provider /tmp/lampa-proot-init-provider.deb; " +
         "set +e; { " + command +
         "; } > /tmp/lampa-dpkg-install.log 2>&1; status=\$?; " +
         "if [ \"\$status\" -eq 0 ]; then " +
@@ -752,7 +757,7 @@ internal fun buildLampacSystemPackagesInstallCommand(
         "echo '__LAMPAC_STAGE=apt-update' && apt-get update && " +
             // The init metapackage defaults to systemd-sysv. PRoot is not PID 1,
             // so explicitly provide the init alternative without systemd.
-            "echo '__LAMPAC_STAGE=bootstrap-packages' && apt-get install -y --no-install-recommends opensysusers sysvinit-core && " +
+            "echo '__LAMPAC_STAGE=bootstrap-packages' && apt-get install -y --no-install-recommends opensysusers && " +
             "echo '__LAMPAC_STAGE=dpkg-recovery' && dpkg --root=/ --configure -a && " +
             "echo '__LAMPAC_STAGE=runtime-packages' && apt-get install -y --no-install-recommends ca-certificates curl fontconfig $icuPackage zlib1g tar nodejs " +
             "ffmpeg imagemagick xvfb libnspr4 " +
@@ -771,7 +776,7 @@ internal fun buildLampacSystemPackagesInstallCommand(
 internal fun buildLampacNodeInstallCommand(): String =
     buildLampacOfflineDpkgCommand(
         "apt-get update && " +
-            "apt-get install -y --no-install-recommends opensysusers sysvinit-core && " +
+            "apt-get install -y --no-install-recommends opensysusers && " +
             "dpkg --root=/ --configure -a && " +
             "apt-get install -y --no-install-recommends nodejs && " +
             "test -x /usr/bin/node && node --version && " +
