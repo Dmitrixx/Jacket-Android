@@ -400,10 +400,12 @@ internal object StreamAdManifestFilter {
                         if (outOfNetwork.equals("true", true) || outOfNetwork == "1") return true
                     }
                     "segmentationdescriptor" -> {
-                        val type = attributeIgnoreCase(event, "segmentationTypeId")
-                            .removePrefix("0x")
-                            .toIntOrNull(16)
-                            ?: attributeIgnoreCase(event, "segmentationTypeId").toIntOrNull()
+                        val rawType = attributeIgnoreCase(event, "segmentationTypeId")
+                        val type = if (rawType.startsWith("0x", true)) {
+                            rawType.substring(2).toIntOrNull(16)
+                        } else {
+                            rawType.toIntOrNull()
+                        }
                         if (type in setOf(34, 48, 52)) return true
                     }
                 }
