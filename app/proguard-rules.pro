@@ -6,3 +6,8 @@
 
 # PRoot JNI entry points are resolved by native symbol names at runtime.
 -keep class id.or.oo.pr.engine.PtyNative { *; }
+
+# Keep JavaScript bridge methods invoked reflectively by Android WebView.
+-keepclassmembers class * {
+    @android.webkit.JavascriptInterface <methods>;
+}
