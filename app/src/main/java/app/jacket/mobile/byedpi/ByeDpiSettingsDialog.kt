@@ -37,34 +37,38 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import app.jacket.mobile.byedpi.core.ByeDpiArgumentParser
 import app.jacket.mobile.byedpi.services.ByeDpiVpnService
-import java.util.Locale
 
-private const val PREFS_NAME = "lampa_bye_dpi"
-private const val KEY_MODE = "mode"
-private const val KEY_STRATEGY = "strategy"
-private const val KEY_DNS = "dns"
-private const val KEY_IPV6 = "ipv6"
 private const val DEFAULT_STRATEGY = "--disorder 1"
 
 @Composable
 internal fun ByeDpiSettingsDialog(onDismiss: () -> Unit) {
     val context = LocalContext.current
     val preferences = remember(context) {
-        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        context.getSharedPreferences(ByeDpiController.PREFERENCES_NAME, Context.MODE_PRIVATE)
     }
 
     var mode by remember {
-        mutableStateOf(preferences.getString(KEY_MODE, "vpn") ?: "vpn")
+        mutableStateOf(preferences.getString("mode", "vpn") ?: "vpn")
     }
     var strategy by remember {
-        mutableStateOf(preferences.getString(KEY_STRATEGY, DEFAULT_STRATEGY) ?: DEFAULT_STRATEGY)
+        mutableStateOf(preferences.getString("strategy", DEFAULT_STRATEGY) ?: DEFAULT_STRATEGY)
     }
     var dns by remember {
-        mutableStateOf(preferences.getString(KEY_DNS, "1.1.1.1") ?: "1.1.1.1")
+        mutableStateOf(preferences.getString("dns", "1.1.1.1") ?: "1.1.1.1")
     }
-    var ipv6 by remember { mutableStateOf(preferences.getBoolean(KEY_IPV6, false)) }
-    var serviceState by remember { mutableStateOf(ByeDpiController.STATE_STOPPED) }
-    var serviceMessage by remember { mutableStateOf("Служба остановлена") }
+    var ipv6 by remember { mutableStateOf(preferences.getBoolean("ipv6", false)) }
+    var serviceState by remember {
+        mutableStateOf(
+            preferences.getString(ByeDpiController.KEY_STATE, ByeDpiController.STATE_STOPPED)
+                ?: ByeDpiController.STATE_STOPPED
+        )
+    }
+    var serviceMessage by remember {
+        mutableStateOf(
+            preferences.getString(ByeDpiController.KEY_MESSAGE, "Служба остановлена")
+                ?: "Служба остановлена"
+        )
+    }
     var error by remember { mutableStateOf<String?>(null) }
     var pendingArgs by remember { mutableStateOf<List<String>?>(null) }
 
@@ -119,7 +123,8 @@ internal fun ByeDpiSettingsDialog(onDismiss: () -> Unit) {
     }
 
     val active = serviceState == ByeDpiController.STATE_STARTING ||
-        serviceState == ByeDpiController.STATE_RUNNING
+        serviceState == ByeDpiController.STATE_RUNNING ||
+        serviceState == ByeDpiController.STATE_STOPPING
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -214,6 +219,7 @@ internal fun ByeDpiSettingsDialog(onDismiss: () -> Unit) {
                         when (serviceState) {
                             ByeDpiController.STATE_RUNNING -> "Работает"
                             ByeDpiController.STATE_STARTING -> "Запуск"
+                            ByeDpiController.STATE_STOPPING -> "Остановка"
                             ByeDpiController.STATE_ERROR -> "Ошибка"
                             else -> "Остановлено"
                         },
@@ -256,10 +262,10 @@ internal fun ByeDpiSettingsDialog(onDismiss: () -> Unit) {
                                 return@Button
                             }
                             preferences.edit()
-                                .putString(KEY_MODE, mode)
-                                .putString(KEY_STRATEGY, strategy)
-                                .putString(KEY_DNS, dns.trim())
-                                .putBoolean(KEY_IPV6, ipv6)
+                                .putString("mode", mode)
+                                .putString("strategy", strategy)
+                                .putString("dns", dns.trim())
+                                .putBoolean("ipv6", ipv6)
                                 .apply()
                             error = null
                             if (mode == "vpn") {
@@ -286,7 +292,7 @@ internal fun ByeDpiSettingsDialog(onDismiss: () -> Unit) {
                     enabled = active || serviceState == ByeDpiController.STATE_ERROR,
                     onClick = {
                         ByeDpiController.stop(context)
-                        serviceState = ByeDpiController.STATE_STOPPED
+                        serviceState = ByeDpiController.STATE_STOPPING
                         serviceMessage = "Остановка ByeDPI…"
                     }
                 ) {
