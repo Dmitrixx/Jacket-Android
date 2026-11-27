@@ -19,6 +19,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -37,6 +38,10 @@ import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import android.content.Intent
+import android.widget.Toast
+import app.jacket.mobile.adblock.AdBlockPolicy
+import io.github.romanvht.byedpi.activities.MainActivity as ByeDpiMainActivity
 import app.jacket.mobile.lampac.LampacRuntimeInstaller
 import app.jacket.mobile.lampac.LampacModuleInfo
 import app.jacket.mobile.lampac.LampacRuntimePhase
@@ -60,6 +65,9 @@ fun LampaApp(onExit: () -> Unit) {
         runtimeLogScrollState.scrollTo(runtimeLogScrollState.maxValue)
     }
     var settingsVisible by remember { mutableStateOf(false) }
+    var adBlockSettingsVisible by remember { mutableStateOf(false) }
+    var blockAdDomains by remember { mutableStateOf(true) }
+    var blockTrackers by remember { mutableStateOf(false) }
     var modulesVisible by remember { mutableStateOf(false) }
     var moduleLoading by remember { mutableStateOf(false) }
     var moduleSaving by remember { mutableStateOf(false) }
@@ -122,8 +130,86 @@ fun LampaApp(onExit: () -> Unit) {
         }
     }
 
+    LaunchedEffect(adBlockSettingsVisible) {
+        if (adBlockSettingsVisible) {
+            val preferences = context.getSharedPreferences(
+                AdBlockPolicy.PREFERENCES_NAME,
+                android.content.Context.MODE_PRIVATE
+            )
+            blockAdDomains = preferences.getBoolean(AdBlockPolicy.KEY_BLOCK_AD_DOMAINS, true)
+            blockTrackers = preferences.getBoolean(AdBlockPolicy.KEY_BLOCK_TRACKERS, false)
+        }
+    }
+
     LaunchedEffect(modulesVisible) {
-        if (modulesVisible) {
+        if (adBlockSettingsVisible) {
+        AlertDialog(
+            onDismissRequest = { adBlockSettingsVisible = false },
+            title = { Text("Блокировка рекламы", fontWeight = FontWeight.Bold) },
+            text = {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 420.dp)
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(14.dp)
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Рекламные домены", fontWeight = FontWeight.Medium)
+                            Text(
+                                "Блокировать известные сторонние рекламные сети в запросах WebView.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Switch(
+                            checked = blockAdDomains,
+                            onCheckedChange = { enabled ->
+                                blockAdDomains = enabled
+                                context.getSharedPreferences(
+                                    AdBlockPolicy.PREFERENCES_NAME,
+                                    android.content.Context.MODE_PRIVATE
+                                ).edit().putBoolean(AdBlockPolicy.KEY_BLOCK_AD_DOMAINS, enabled).apply()
+                            }
+                        )
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Аналитические трекеры", fontWeight = FontWeight.Medium)
+                            Text(
+                                "Дополнительно блокировать известные сервисы аналитики. Некоторые сайты могут потерять статистику или отдельные функции.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Switch(
+                            checked = blockTrackers,
+                            onCheckedChange = { enabled ->
+                                blockTrackers = enabled
+                                context.getSharedPreferences(
+                                    AdBlockPolicy.PREFERENCES_NAME,
+                                    android.content.Context.MODE_PRIVATE
+                                ).edit().putBoolean(AdBlockPolicy.KEY_BLOCK_TRACKERS, enabled).apply()
+                            }
+                        )
+                    }
+                    Text(
+                        "Важно: эти фильтры работают с сетевыми запросами внутри Lampa WebView. Они не удаляют рекламные фрагменты, уже встроенные в HLS/DASH-видеопоток, и не фильтруют запросы внешних плееров VLC/MX Player.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { adBlockSettingsVisible = false }) {
+                    Text("Готово")
+                }
+            }
+        )
+    }
+
+    if (modulesVisible) {
             moduleLoading = true
             moduleError = null
             moduleSearch = ""
@@ -149,7 +235,19 @@ fun LampaApp(onExit: () -> Unit) {
             LampaWebViewScreen(
                 modifier = Modifier.fillMaxSize(),
                 onBack = onExit,
-                onOpenLampacSettings = { settingsVisible = true }
+                onOpenLampacSettings = { settingsVisible = true },
+                onOpenAdBlockSettings = { adBlockSettingsVisible = true },
+                onOpenByeDpi = {
+                    runCatching {
+                        context.startActivity(Intent(context, ByeDpiMainActivity::class.java))
+                    }.onFailure {
+                        Toast.makeText(
+                            context,
+                            "Не удалось открыть ByeByeDPI: ${it.message ?: "ошибка запуска"}",
+                            Toast.LENGTH_LONG
+                        ).show()
+                    }
+                }
             )
         }
 
