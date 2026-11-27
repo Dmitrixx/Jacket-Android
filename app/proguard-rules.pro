@@ -16,5 +16,5 @@
 -keep class app.jacket.mobile.byedpi.core.ByeDpiNative { *; }
 -keep class app.jacket.mobile.byedpi.core.ByedpiVpnSocketProtector { *; }
 -keepclassmembers class app.jacket.mobile.byedpi.core.ByedpiVpnSocketProtector {
-    public static void protectSocket(int);
+    public static boolean protectSocket(int);
 }
