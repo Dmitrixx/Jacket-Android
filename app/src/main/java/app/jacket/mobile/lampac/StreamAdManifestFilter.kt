@@ -312,7 +312,7 @@ internal object StreamAdManifestFilter {
     }
 
     private fun attributeNumber(line: String, name: String): Double? {
-        val match = Regex("""(?:^|[,;])\s*${Regex.escape(name)}\s*=\s*"?([0-9]+(?:\.[0-9]+)?)""",
+        val match = Regex("""(?:^|[:,;])\s*${Regex.escape(name)}\s*=\s*"?([0-9]+(?:\.[0-9]+)?)""",
             RegexOption.IGNORE_CASE
         ).find(line) ?: return null
         return match.groupValues[1].toDoubleOrNull()
