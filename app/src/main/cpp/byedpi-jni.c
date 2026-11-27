@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <unistd.h>
 
 #include "error.h"
 #include "main.h"
@@ -34,7 +35,7 @@ JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *reserved) {
                 env,
                 protector_class,
                 "protectSocket",
-                "(I)V"
+                "(I)Z"
             );
             (*env)->DeleteLocalRef(env, local_class);
         }
@@ -43,30 +44,35 @@ JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *reserved) {
     return JNI_VERSION_1_6;
 }
 
-static void protect_socket_with_vpn(int fd) {
-    if (java_vm == NULL || fd < 0) return;
+static int protect_socket_with_vpn(int fd) {
+    if (java_vm == NULL || fd < 0) return 0;
+    if (protector_class == NULL || protect_socket_method == NULL) return 0;
 
     JNIEnv *env = NULL;
     int attached_here = 0;
     jint state = (*java_vm)->GetEnv(java_vm, (void **) &env, JNI_VERSION_1_6);
     if (state == JNI_EDETACHED) {
-        if ((*java_vm)->AttachCurrentThread(java_vm, &env, NULL) != JNI_OK) return;
+        if ((*java_vm)->AttachCurrentThread(java_vm, &env, NULL) != JNI_OK) return 0;
         attached_here = 1;
     } else if (state != JNI_OK || env == NULL) {
-        return;
+        return 0;
     }
 
-    if (protector_class != NULL && protect_socket_method != NULL) {
-        (*env)->CallStaticVoidMethod(env, protector_class, protect_socket_method, (jint) fd);
-    }
-
+    jboolean protected = (*env)->CallStaticBooleanMethod(
+        env,
+        protector_class,
+        protect_socket_method,
+        (jint) fd
+    );
     if ((*env)->ExceptionCheck(env)) {
         (*env)->ExceptionClear(env);
+        protected = JNI_FALSE;
     }
 
     if (attached_here) {
         (*java_vm)->DetachCurrentThread(java_vm);
     }
+    return protected == JNI_TRUE;
 }
 
 /**
@@ -76,7 +82,11 @@ static void protect_socket_with_vpn(int fd) {
  */
 int __wrap_socket(int domain, int type, int protocol) {
     int fd = __real_socket(domain, type, protocol);
-    if (fd >= 0) protect_socket_with_vpn(fd);
+    if (fd >= 0 && !protect_socket_with_vpn(fd)) {
+        close(fd);
+        errno = EACCES;
+        return -1;
+    }
     return fd;
 }
 
