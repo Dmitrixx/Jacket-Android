@@ -49,6 +49,7 @@ import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.net.HttpURLConnection
 import java.net.URL
+import java.nio.charset.Charset
 import java.nio.charset.StandardCharsets
 
 private const val LAMPA_ORIGIN = "http://127.0.0.1:9118"
@@ -269,14 +270,15 @@ private fun interceptStreamAdManifest(
 
         if (status !in 200..299) return null
 
-        val charset = connection.contentType
+        val charsetName = connection.contentType
             ?.substringAfter("charset=", "")
             ?.substringBefore(';')
             ?.trim()
             ?.takeIf { it.isNotBlank() }
             ?: "UTF-8"
-        val source = runCatching { String(rawBytes, charset(charset)) }
-            .getOrElse { String(rawBytes, StandardCharsets.UTF_8) }
+        val responseCharset = runCatching { Charset.forName(charsetName) }
+            .getOrDefault(StandardCharsets.UTF_8)
+        val source = String(rawBytes, responseCharset)
 
         val filtered = StreamAdManifestFilter.filter(source, connection.url.toString())
         if (filtered.removedSegments > 0 || filtered.removedPeriods > 0 ||
@@ -312,11 +314,11 @@ private fun interceptStreamAdManifest(
 
         WebResourceResponse(
             mimeType,
-            charset,
+            charsetName,
             status,
             connection.responseMessage ?: "OK",
             preservedHeaders,
-            ByteArrayInputStream(filtered.content.toByteArray(charset(charset)))
+            ByteArrayInputStream(filtered.content.toByteArray(responseCharset))
         )
     } catch (error: Exception) {
         LampacRuntimeState.appendLog(
