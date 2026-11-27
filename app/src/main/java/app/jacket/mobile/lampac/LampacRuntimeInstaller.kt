@@ -626,6 +626,8 @@ internal fun buildLampacOfflineDpkgCommand(command: String): String {
         // This rootfs is never booted: Android owns PID 1. Register a minimal local
         // provider for Debian's virtual init package so APT cannot select systemd-sysv.
         "printf '%s\\n' 'Package: lampa-proot-init-provider' 'Version: 1.0' 'Architecture: all' 'Provides: init' 'Conflicts: systemd-sysv, sysvinit-core' 'Description: Virtual init provider for Android-managed PRoot' > /tmp/lampa-proot-init-provider/DEBIAN/control; " +
+        // PRoot may inherit umask 077 from Android. dpkg-deb requires DEBIAN/ to be searchable.
+        "chmod 755 /tmp/lampa-proot-init-provider/DEBIAN; chmod 644 /tmp/lampa-proot-init-provider/DEBIAN/control; " +
         "dpkg-deb --build /tmp/lampa-proot-init-provider /tmp/lampa-proot-init-provider.deb >/dev/null; " +
         "dpkg --purge --force-all systemd-sysv sysvinit-core >/dev/null 2>&1 || true; " +
         "dpkg -i /tmp/lampa-proot-init-provider.deb; " +
