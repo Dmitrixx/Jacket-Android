@@ -38,6 +38,31 @@ class StreamAdManifestFilterTest {
     }
 
     @Test
+    fun usesCueOutDurationWhenCueInIsMissing() {
+        val playlist = """
+            #EXTM3U
+            #EXT-X-PLAYLIST-TYPE:VOD
+            #EXTINF:6.0,
+            content-before.ts
+            #EXT-X-CUE-OUT:12.0
+            #EXTINF:6.0,
+            ad-one.ts
+            #EXTINF:6.0,
+            ad-two.ts
+            #EXTINF:6.0,
+            content-after.ts
+            #EXT-X-ENDLIST
+        """.trimIndent()
+
+        val result = StreamAdManifestFilter.filterHls(playlist)
+
+        assertEquals(2, result.removedSegments)
+        assertFalse(result.content.contains("ad-one.ts"))
+        assertFalse(result.content.contains("ad-two.ts"))
+        assertTrue(result.content.contains("content-after.ts"))
+    }
+
+    @Test
     fun supportsScte35DateRangeCueMarkers() {
         val playlist = """
             #EXTM3U
