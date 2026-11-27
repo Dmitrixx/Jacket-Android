@@ -824,7 +824,28 @@ internal fun readLegacyLampacInitConfig(prefixDir: File): String? {
     return source.readText(Charsets.UTF_8)
 }
 
-/** True only when the PRoot Debian root contains the required base system tools. */
+/**
+ * Read the architecture recorded for Debian's own dpkg package.
+ *
+ * The distro OCI selector sees the Android ARMv7 executable as generic "arm".
+ * A multi-arch Debian index can therefore resolve to armel instead of armhf.
+ * Checking dpkg's installed architecture prevents that incompatible rootfs
+ * from being reused for the ARM32 runtime.
+ */
+internal fun debianRootfsDpkgArchitecture(root: File): String? {
+    val statusFile = File(root, "var/lib/dpkg/status")
+    val status = runCatching { statusFile.readText(Charsets.UTF_8) }.getOrNull() ?: return null
+    val dpkgStanza = status
+        .split(Regex("\\r?\\n\\r?\\n"))
+        .firstOrNull { stanza -> stanza.lineSequence().any { it == "Package: dpkg" } }
+        ?: return null
+    return dpkgStanza.lineSequence()
+        .firstOrNull { it.startsWith("Architecture: ") }
+        ?.substringAfter("Architecture: ")
+        ?.trim()
+}
+
+/** True only when the PRoot Debian root contains the required base system tools and ABI. */
 internal fun isDebianRootfsReady(
     root: File,
     architecture: LampacRuntimeArchitecture? = null
@@ -849,6 +870,15 @@ internal fun isDebianRootfsReady(
     }
     if (expectedCodename != null &&
         !field("VERSION_CODENAME").equals(expectedCodename, ignoreCase = true)
+    ) return false
+
+    val expectedDpkgArchitecture = when (architecture) {
+        LampacRuntimeArchitecture.ARM64 -> "arm64"
+        LampacRuntimeArchitecture.ARM32 -> "armhf"
+        null -> null
+    }
+    if (expectedDpkgArchitecture != null &&
+        !debianRootfsDpkgArchitecture(root).equals(expectedDpkgArchitecture, ignoreCase = true)
     ) return false
 
     return File(root, "bin/sh").canExecute() &&
