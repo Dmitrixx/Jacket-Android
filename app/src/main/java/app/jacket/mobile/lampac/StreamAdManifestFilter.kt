@@ -54,7 +54,7 @@ internal object StreamAdManifestFilter {
             lines.any { it.startsWith("#EXT-X-PLAYLIST-TYPE:", true) &&
                 it.substringAfter(':').trim().equals("VOD", true) }
 
-        if (!isVod) return StreamAdFilterResult(content)
+        if (!isVod && baseUrl.isNullOrBlank()) return StreamAdFilterResult(content)
 
         val output = mutableListOf<String>()
         val pendingSegmentTags = mutableListOf<String>()
@@ -187,7 +187,7 @@ internal object StreamAdManifestFilter {
             output += pendingSegmentTags.filterNot { it.trim().startsWith("#EXTINF:", true) }
         }
 
-        if (!markersFound) return StreamAdFilterResult(content)
+        if (!markersFound && baseUrl.isNullOrBlank()) return StreamAdFilterResult(content)
         val rewritten = output.toMutableList()
         if (removedBeforeFirstKept > 0) {
             val sequenceIndex = rewritten.indexOfFirst { it.startsWith("#EXT-X-MEDIA-SEQUENCE:", true) }
@@ -245,8 +245,9 @@ internal object StreamAdManifestFilter {
             }
         }
 
-        if (removedPeriods == 0) return StreamAdFilterResult(content)
+        if (removedPeriods == 0 && baseUrl.isNullOrBlank()) return StreamAdFilterResult(content)
 
+        if (baseUrl != null) resolveDashReferences(root, baseUrl)
         val serialized = runCatching {
             val transformerFactory = TransformerFactory.newInstance().apply {
                 setAttribute(XMLConstants.ACCESS_EXTERNAL_DTD, "")
