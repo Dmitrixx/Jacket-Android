@@ -26,11 +26,19 @@ val buildHevSocks5Tunnel by tasks.registering(Exec::class) {
         File(ndkDirectory, "ndk-build")
     }
 
+    val ndkProjectDirectory = layout.buildDirectory.dir("hev-ndk-project").get().asFile
+    val ndkOutputDirectory = layout.buildDirectory.dir("hev-ndk-obj").get().asFile
     workingDir(rootProject.projectDir)
+    doFirst {
+        ndkProjectDirectory.mkdirs()
+        ndkOutputDirectory.mkdirs()
+    }
     commandLine(
         ndkBuild.absolutePath,
-        "NDK_PROJECT_PATH=${layout.buildDirectory.dir("hev-ndk-project").get().asFile.absolutePath}",
+        "NDK_PROJECT_PATH=${ndkProjectDirectory.absolutePath}",
+        "NDK_OUT=${ndkOutputDirectory.absolutePath}",
         "NDK_LIBS_OUT=${hevNativeLibraries.get().asFile.absolutePath}",
+        "APP_PLATFORM=android-28",
         "APP_BUILD_SCRIPT=${hevRoot.resolve("Android.mk").absolutePath}",
         "NDK_APPLICATION_MK=${hevRoot.resolve("Application.mk").absolutePath}"
     )
