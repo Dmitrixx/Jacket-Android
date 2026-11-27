@@ -1,5 +1,12 @@
 # Changelog
 
+## 3.0.39 — Fix ARMv7 Debian architecture selection
+
+- Pin 32-bit Android to the ARMv7-only Debian 13 image instead of the generic multi-architecture Trixie tag.
+- Verify that Debian's installed dpkg architecture is `armhf` before reusing an ARM32 rootfs; a mismatched `armel` rootfs is rebuilt.
+- Preserve and migrate the existing Lampac `init.conf` during the rootfs repair.
+- Add regression tests for the ARMv7 image selection and Debian ABI validation.
+
 ## 3.0.38 — Avoid inherited setgid permissions in Debian package staging
 
 - Build the local PRoot init-provider DEB under the Debian rootfs `/root` instead of Android-bound `/tmp`, which can inherit setgid mode 2755.
