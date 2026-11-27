@@ -341,9 +341,85 @@ internal class ExternalMediaProxyServer(
                 LampacRuntimeState.appendLog(detail)
             }
 
-            // Keep the origin's exact body framing. HttpURLConnection transparently
-            // de-chunks responses; that breaks clients expecting a streaming response
-            // with Transfer-Encoding: chunked and no Content-Length.
+            val isManifestResponse = method == "GET" &&
+                status in 200..299 &&
+                (rawPath.endsWith(".m3u8", ignoreCase = true) ||
+                    rawPath.endsWith(".m3u", ignoreCase = true) ||
+                    rawPath.endsWith(".mpd", ignoreCase = true) ||
+                    contentType?.contains("mpegurl", ignoreCase = true) == true ||
+                    contentType?.contains("dash+xml", ignoreCase = true) == true)
+
+            if (isManifestResponse) {
+                val originalBody = readManifestBody(upstreamInput, responseHeaders)
+                val manifestBase = buildString {
+                    append("http://")
+                    append(upstreamHost)
+                    append(':')
+                    append(upstreamPort)
+                    append(rawPath)
+                    if (!rawQuery.isNullOrBlank()) append("?").append(rawQuery)
+                }
+                val source = String(originalBody, StandardCharsets.UTF_8)
+                val filtered = runCatching {
+                    StreamAdManifestFilter.filter(source, manifestBase)
+                }.getOrElse {
+                    LampacRuntimeState.appendLog(
+                        "Внешний плеер: не удалось разобрать манифест рекламы; оставляем исходный поток."
+                    )
+                    StreamAdFilterResult(source)
+                }
+                val currentPort = port ?: throw IOException("Внешний прокси уже остановлен")
+                val oldOrigin = "http://$upstreamHost:$upstreamPort"
+                val localOrigin = "http://127.0.0.1:$currentPort"
+                val rewrittenManifest = filtered.content.replace(
+                    oldOrigin,
+                    localOrigin,
+                    ignoreCase = true
+                )
+                val body = rewrittenManifest.toByteArray(StandardCharsets.UTF_8)
+
+                if (filtered.removedSegments > 0 || filtered.removedPeriods > 0 ||
+                    filtered.removedInterstitialMarkers > 0
+                ) {
+                    LampacRuntimeState.appendLog(
+                        "Внешний плеер: удалены рекламные вставки — " +
+                            "HLS-сегменты: ${filtered.removedSegments}, " +
+                            "DASH-периоды: ${filtered.removedPeriods}, " +
+                            "interstitial: ${filtered.removedInterstitialMarkers}."
+                    )
+                }
+
+                responseStarted = true
+                output.write("$statusLine\\r\\n".toByteArray(StandardCharsets.ISO_8859_1))
+                responseHeaders.forEach { (name, rawValue) ->
+                    if (name.equals("Connection", true) ||
+                        name.equals("Keep-Alive", true) ||
+                        name.equals("Proxy-Connection", true) ||
+                        name.equals("Content-Length", true) ||
+                        name.equals("Transfer-Encoding", true) ||
+                        name.equals("Content-Encoding", true) ||
+                        name.equals("Content-MD5", true) ||
+                        name.equals("ETag", true)
+                    ) return@forEach
+
+                    val value = if (name.equals("Location", true)) rewriteLocation(rawValue) else rawValue
+                    output.write(
+                        "$name: $value\\r\\n".toByteArray(StandardCharsets.ISO_8859_1)
+                    )
+                }
+                output.write(
+                    "Content-Length: ${body.size}\\r\\n".toByteArray(StandardCharsets.ISO_8859_1)
+                )
+                output.write("Content-Type: ${contentType ?: "application/vnd.apple.mpegurl"}; charset=utf-8\\r\\n"
+                    .toByteArray(StandardCharsets.ISO_8859_1))
+                output.write("Connection: close\\r\\n\\r\\n".toByteArray(StandardCharsets.ISO_8859_1))
+                output.write(body)
+                output.flush()
+                return
+            }
+
+            // Keep the origin's exact body framing for media segments. Raw socket
+            // forwarding preserves chunked video bytes and Range responses.
             responseStarted = true
             output.write("$statusLine\r\n".toByteArray(StandardCharsets.ISO_8859_1))
             responseHeaders.forEach { (name, rawValue) ->
@@ -386,6 +462,79 @@ internal class ExternalMediaProxyServer(
         } finally {
             runCatching { upstream.close() }
         }
+    }
+
+    /**
+     * HLS/DASH manifests are small, finite documents, unlike media segments.
+     * Decode their HTTP framing so ad markers can be removed and a new
+     * Content-Length can be returned to VLC/MX Player.
+     */
+    private fun readManifestBody(
+        input: BufferedInputStream,
+        headers: List<Pair<String, String>>
+    ): ByteArray {
+        val output = java.io.ByteArrayOutputStream()
+        val transferEncoding = headers.firstOrNull {
+            it.first.equals("Transfer-Encoding", true)
+        }?.second.orEmpty()
+        val contentLength = headers.firstOrNull {
+            it.first.equals("Content-Length", true)
+        }?.second?.toLongOrNull()
+        val limit = MAX_MANIFEST_BYTES
+
+        if (transferEncoding.contains("chunked", ignoreCase = true)) {
+            while (true) {
+                val line = readLine(input, MAX_HEADER_LINE_BYTES)
+                    ?: throw IOException("Manifest chunk-size line is missing")
+                val chunkSize = line.substringBefore(';').trim().toLongOrNull(16)
+                    ?: throw IOException("Invalid HTTP chunk size in manifest")
+                if (chunkSize == 0L) {
+                    while (true) {
+                        val trailer = readLine(input, MAX_HEADER_LINE_BYTES)
+                            ?: throw IOException("Manifest chunk trailers are incomplete")
+                        if (trailer.isEmpty()) break
+                    }
+                    break
+                }
+                if (chunkSize < 0 || chunkSize > limit || output.size().toLong() + chunkSize > limit) {
+                    throw IOException("Manifest exceeds the $limit byte safety limit")
+                }
+                var remaining = chunkSize.toInt()
+                val buffer = ByteArray(IO_BUFFER_SIZE)
+                while (remaining > 0) {
+                    val count = input.read(buffer, 0, minOf(buffer.size, remaining))
+                    if (count < 0) throw IOException("Manifest chunk ended unexpectedly")
+                    output.write(buffer, 0, count)
+                    remaining -= count
+                }
+                val chunkTerminator = readLine(input, 2)
+                if (chunkTerminator != "") throw IOException("Invalid HTTP chunk terminator")
+            }
+        } else if (contentLength != null) {
+            if (contentLength < 0 || contentLength > limit) {
+                throw IOException("Manifest exceeds the $limit byte safety limit")
+            }
+            var remaining = contentLength.toInt()
+            val buffer = ByteArray(IO_BUFFER_SIZE)
+            while (remaining > 0) {
+                val count = input.read(buffer, 0, minOf(buffer.size, remaining))
+                if (count < 0) throw IOException("Manifest ended before Content-Length")
+                output.write(buffer, 0, count)
+                remaining -= count
+            }
+        } else {
+            val buffer = ByteArray(IO_BUFFER_SIZE)
+            while (true) {
+                val count = input.read(buffer)
+                if (count < 0) break
+                if (output.size().toLong() + count > limit) {
+                    throw IOException("Manifest exceeds the $limit byte safety limit")
+                }
+                output.write(buffer, 0, count)
+            }
+        }
+
+        return output.toByteArray()
     }
 
     private fun mediaRouteLabel(rawPath: String): String = when {
@@ -504,6 +653,7 @@ internal class ExternalMediaProxyServer(
         const val MAX_HEADER_BYTES = 32 * 1024
         const val MAX_HEADER_COUNT = 64
         const val MAX_QUERY_LENGTH = 16 * 1024
+        const val MAX_MANIFEST_BYTES = 8 * 1024 * 1024
         const val HEADER_NAME_PUNCTUATION = "!#$%&'*+-.^_`|~"
         val BODYLESS_STATUS_CODES = setOf(204, 304)
     }
