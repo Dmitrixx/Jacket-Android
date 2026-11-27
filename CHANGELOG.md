@@ -1,5 +1,13 @@
 # Changelog
 
+## 3.0.35 — Restore Lampac installer build
+
+- Restore the shared .NET runtime installation command used by both ARM64 and ARMv7 installers.
+- Keep staged runtime validation and automatic rollback to the previous .NET directory when activation fails.
+- Retain tests for archive-path validation, safe quoting and recovery of the previous runtime.
+- Keep the Debian PRoot package-selection and systemd-exclusion fixes from 3.0.34.
+
+
 ## 3.0.22 — Support 32-bit ARM Android TV devices
 
 - Add an ARMv7 PRoot and `pr-cli` build so embedded Lampac can run on 32-bit Android userspace.
