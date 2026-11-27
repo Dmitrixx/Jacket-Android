@@ -21,7 +21,7 @@ internal data class StreamAdFilterResult(
     val markersFound: Boolean = false
 ) {
     val changed: Boolean
-        get() = removedSegments > 0 || removedPeriods > 0 || removedInterstitialMarkers > 0
+        get() = markersFound || removedSegments > 0 || removedPeriods > 0 || removedInterstitialMarkers > 0
 }
 
 /**
@@ -124,6 +124,15 @@ internal object StreamAdManifestFilter {
                 continue
             }
 
+            if (line.startsWith("#EXT-X-CUE-OUT-CONT", true)) {
+                markersFound = true
+                val duration = attributeNumber(line, "Duration")
+                val elapsed = attributeNumber(line, "ElapsedTime") ?: 0.0
+                if (!insideAd) beginAd(duration?.minus(elapsed))
+                else if (duration != null) remainingAdSeconds = (duration - elapsed).coerceAtLeast(0.0)
+                continue
+            }
+
             val cueOutDuration = cueOutDuration(line)
             if (line.startsWith("#EXT-X-CUE-OUT", true) ||
                 line.startsWith("#EXT-X-SCTE35-OUT", true) ||
@@ -136,15 +145,6 @@ internal object StreamAdManifestFilter {
             if (isAppleInterstitial(line)) {
                 removedInterstitialMarkers++
                 markersFound = true
-                continue
-            }
-
-            if (line.startsWith("#EXT-X-CUE-OUT-CONT", true)) {
-                markersFound = true
-                val duration = attributeNumber(line, "Duration")
-                val elapsed = attributeNumber(line, "ElapsedTime") ?: 0.0
-                if (!insideAd) beginAd(duration?.minus(elapsed))
-                else if (duration != null) remainingAdSeconds = (duration - elapsed).coerceAtLeast(0.0)
                 continue
             }
 
@@ -296,7 +296,7 @@ internal object StreamAdManifestFilter {
     }
 
     private fun attributeNumber(line: String, name: String): Double? {
-        val match = Regex("""(?:^|[,;])\\s*${Regex.escape(name)}\\s*=\\s*\\"?([0-9]+(?:\\.[0-9]+)?)""",
+        val match = Regex("""(?:^|[,;])\s*${Regex.escape(name)}\s*=\s*"?([0-9]+(?:\.[0-9]+)?)""",
             RegexOption.IGNORE_CASE
         ).find(line) ?: return null
         return match.groupValues[1].toDoubleOrNull()
