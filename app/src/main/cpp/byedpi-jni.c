@@ -15,10 +15,31 @@ static pthread_mutex_t proxy_mutex = PTHREAD_MUTEX_INITIALIZER;
 static int proxy_started;
 static int proxy_running;
 static JavaVM *java_vm;
+static jclass protector_class;
+static jmethodID protect_socket_method;
 
 JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *reserved) {
     (void) reserved;
     java_vm = vm;
+
+    JNIEnv *env = NULL;
+    if ((*vm)->GetEnv(vm, (void **) &env, JNI_VERSION_1_6) == JNI_OK && env != NULL) {
+        jclass local_class = (*env)->FindClass(
+            env,
+            "app/jacket/mobile/byedpi/core/ByedpiVpnSocketProtector"
+        );
+        if (local_class != NULL) {
+            protector_class = (jclass) (*env)->NewGlobalRef(env, local_class);
+            protect_socket_method = (*env)->GetStaticMethodID(
+                env,
+                protector_class,
+                "protectSocket",
+                "(I)V"
+            );
+            (*env)->DeleteLocalRef(env, local_class);
+        }
+        if ((*env)->ExceptionCheck(env)) (*env)->ExceptionClear(env);
+    }
     return JNI_VERSION_1_6;
 }
 
@@ -35,21 +56,8 @@ static void protect_socket_with_vpn(int fd) {
         return;
     }
 
-    jclass protector = (*env)->FindClass(
-        env,
-        "app/jacket/mobile/byedpi/core/ByedpiVpnSocketProtector"
-    );
-    if (protector != NULL) {
-        jmethodID method = (*env)->GetStaticMethodID(
-            env,
-            protector,
-            "protectSocket",
-            "(I)V"
-        );
-        if (method != NULL) {
-            (*env)->CallStaticVoidMethod(env, protector, method, (jint) fd);
-        }
-        (*env)->DeleteLocalRef(env, protector);
+    if (protector_class != NULL && protect_socket_method != NULL) {
+        (*env)->CallStaticVoidMethod(env, protector_class, protect_socket_method, (jint) fd);
     }
 
     if ((*env)->ExceptionCheck(env)) {
