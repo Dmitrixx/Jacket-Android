@@ -115,6 +115,8 @@ fun LampaWebViewScreen(
                     request: WebResourceRequest
                 ): Boolean {
                     val uri = request.url
+                    // A known ad-network redirect must not escape to the external browser.
+                    if (AdBlockPolicy.shouldBlock(context, uri, isForMainFrame = false)) return true
                     if (isLocalLampaOrigin(uri)) return false
                     openExternal(context, uri)
                     return true
