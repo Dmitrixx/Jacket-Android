@@ -11,12 +11,14 @@ import java.io.IOException
 import java.nio.charset.StandardCharsets
 
 /**
- * Use the same Debian Forky-slim base as the upstream Lampac runtime image.
- * A dedicated alias prevents collisions with older or user-created Debian containers.
+ * ARM64 uses the upstream Forky-slim base. ARM32 uses an explicit ARMv7-only
+ * Debian 13 image: pr-cli detects the generic ELF "arm" ABI, which is ambiguous
+ * between armel (arm32v5) and armhf (arm32v7) in Debian's multi-arch manifest.
+ * A dedicated alias prevents collisions with older or user-created containers.
  */
 internal const val LAMPAC_DEBIAN_ALIAS = "lampac-debian"
 internal const val LAMPAC_DEBIAN_OCI_IMAGE = "docker.io/library/debian:forky-slim"
-internal const val LAMPAC_DEBIAN_ARM32_OCI_IMAGE = "docker.io/library/debian:trixie-slim"
+internal const val LAMPAC_DEBIAN_ARM32_OCI_IMAGE = "docker.io/arm32v7/debian:13-slim"
 
 internal fun lampacDebianInstallArguments(
     architecture: LampacRuntimeArchitecture = LampacRuntimeArchitecture.ARM64
