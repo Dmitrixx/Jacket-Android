@@ -621,17 +621,21 @@ internal fun buildLampacOfflineDpkgCommand(command: String): String {
         "lampa_divert_stub /usr/sbin/policy-rc.d 101; " +
         // This is an Android-hosted Debian userspace, not a bootable Debian system.
         // Prevent an inherited systemd-sysv selection from pulling the full init manager.
-        "mkdir -p /etc/apt/preferences.d /tmp/lampa-proot-init-provider/DEBIAN; " +
+        // /tmp is bind-mounted to Android app cache and may carry setgid mode 2777.
+        // Build the tiny init-provider package on the Debian rootfs instead.
+        "umask 022; mkdir -p /etc/apt/preferences.d /root/lampa-proot-init-provider/DEBIAN; " +
         "printf '%s\\n' 'Package: systemd systemd-sysv' 'Pin: version *' 'Pin-Priority: -1' > /etc/apt/preferences.d/99-lampac-no-systemd; " +
         // This rootfs is never booted: Android owns PID 1. Register a minimal local
         // provider for Debian's virtual init package so APT cannot select systemd-sysv.
-        "printf '%s\\n' 'Package: lampa-proot-init-provider' 'Version: 1.0' 'Architecture: all' 'Provides: init' 'Conflicts: systemd-sysv, sysvinit-core' 'Description: Virtual init provider for Android-managed PRoot' > /tmp/lampa-proot-init-provider/DEBIAN/control; " +
-        // PRoot may inherit umask 077 from Android. dpkg-deb requires DEBIAN/ to be searchable.
-        "chmod 755 /tmp/lampa-proot-init-provider/DEBIAN; chmod 644 /tmp/lampa-proot-init-provider/DEBIAN/control; " +
-        "dpkg-deb --build /tmp/lampa-proot-init-provider /tmp/lampa-proot-init-provider.deb >/dev/null; " +
+        "printf '%s\\n' 'Package: lampa-proot-init-provider' 'Version: 1.0' 'Architecture: all' 'Provides: init' 'Conflicts: systemd-sysv, sysvinit-core' 'Description: Virtual init provider for Android-managed PRoot' > /root/lampa-proot-init-provider/DEBIAN/control; " +
+        // Explicitly clear inherited special mode bits as PRoot can expose setgid directories.
+        "chmod 0755 /root/lampa-proot-init-provider/DEBIAN; chmod g-s /root/lampa-proot-init-provider/DEBIAN; " +
+        "chmod 0644 /root/lampa-proot-init-provider/DEBIAN/control; chmod g-s /root/lampa-proot-init-provider/DEBIAN/control; " +
+        "test \"$(stat -c '%a' /root/lampa-proot-init-provider/DEBIAN)\" = 755; " +
+        "dpkg-deb --build /root/lampa-proot-init-provider /root/lampa-proot-init-provider.deb >/dev/null; " +
         "dpkg --purge --force-all systemd-sysv sysvinit-core >/dev/null 2>&1 || true; " +
-        "dpkg -i /tmp/lampa-proot-init-provider.deb; " +
-        "rm -rf /tmp/lampa-proot-init-provider /tmp/lampa-proot-init-provider.deb; " +
+        "dpkg -i /root/lampa-proot-init-provider.deb; " +
+        "rm -rf /root/lampa-proot-init-provider /root/lampa-proot-init-provider.deb; " +
         "set +e; { " + command +
         "; } > /tmp/lampa-dpkg-install.log 2>&1; status=\$?; " +
         "if [ \"\$status\" -eq 0 ]; then " +
