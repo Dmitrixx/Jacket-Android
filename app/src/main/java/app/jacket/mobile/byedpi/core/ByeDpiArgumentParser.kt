@@ -16,8 +16,12 @@ internal object ByeDpiArgumentParser {
         }) {
             "IP и порт прокси задаются приложением; параметры -i/-p, --daemon и --transparent запрещены."
         }
-        require(tokens.none { !it.startsWith("-") }) {
-            "В стратегии обнаружен лишний аргумент без параметра"
+        require(tokens.all { token ->
+            token.isNotEmpty() &&
+                token.length <= 4096 &&
+                '\u0000' !in token
+        }) {
+            "Параметр стратегии пустой, слишком длинный или содержит недопустимый символ"
         }
 
         return (listOf("ciadpi", "--ip", "127.0.0.1", "--port", "1080") + tokens).toTypedArray()
