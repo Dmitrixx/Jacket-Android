@@ -14,7 +14,12 @@ internal object ByeDpiController {
     const val STATE_STOPPED = "stopped"
     const val STATE_STARTING = "starting"
     const val STATE_RUNNING = "running"
+    const val STATE_STOPPING = "stopping"
     const val STATE_ERROR = "error"
+
+    const val PREFERENCES_NAME = "lampa_bye_dpi"
+    const val KEY_STATE = "engine_state"
+    const val KEY_MESSAGE = "engine_message"
 
     fun start(
         context: Context,
@@ -32,10 +37,18 @@ internal object ByeDpiController {
             putExtra(ByeDpiServiceContract.EXTRA_DNS, dns)
             putExtra(ByeDpiServiceContract.EXTRA_IPV6, ipv6)
         }
+        context.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE).edit()
+            .putString(KEY_STATE, STATE_STARTING)
+            .putString(KEY_MESSAGE, "Запускаем ByeDPI…")
+            .apply()
         ContextCompat.startForegroundService(context, intent)
     }
 
     fun stop(context: Context) {
+        context.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE).edit()
+            .putString(KEY_STATE, STATE_STOPPING)
+            .putString(KEY_MESSAGE, "Останавливаем ByeDPI…")
+            .apply()
         context.stopService(Intent(context, ByeDpiVpnService::class.java))
         context.stopService(Intent(context, ByeDpiProxyService::class.java))
     }
