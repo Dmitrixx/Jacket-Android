@@ -1,5 +1,12 @@
 # Changelog
 
+## 3.0.38 — Avoid inherited setgid permissions in Debian package staging
+
+- Build the local PRoot init-provider DEB under the Debian rootfs `/root` instead of Android-bound `/tmp`, which can inherit setgid mode 2755.
+- Explicitly clear the setgid bit from the generated control directory and validate its final mode is exactly 755 before invoking `dpkg-deb`.
+- Extend installer tests to assert rootfs-local staging, exact mode validation and absence of the old `/tmp` path.
+
+
 ## 3.0.37 — Fix Debian PRoot init-provider package permissions
 
 - Set the generated package control directory to mode 0755 and its control file to 0644 before invoking `dpkg-deb`.
