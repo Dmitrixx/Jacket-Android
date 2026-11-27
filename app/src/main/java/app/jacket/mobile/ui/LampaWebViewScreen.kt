@@ -239,8 +239,7 @@ private fun interceptStreamAdManifest(
 
         val permittedRequestHeaders = setOf(
             "accept", "accept-language", "authorization", "cookie",
-            "if-modified-since", "if-none-match", "origin", "range",
-            "referer", "user-agent"
+            "origin", "referer", "user-agent"
         )
         request.requestHeaders.forEach { (name, value) ->
             if (name.lowercase() in permittedRequestHeaders &&
