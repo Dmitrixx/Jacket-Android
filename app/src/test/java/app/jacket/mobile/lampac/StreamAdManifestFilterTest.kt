@@ -164,6 +164,54 @@ class StreamAdManifestFilterTest {
     }
 
     @Test
+    fun removesDashPeriodWithExplicitScte35CueOut() {
+        val mpd = """
+            <?xml version="1.0" encoding="UTF-8"?>
+            <MPD xmlns="urn:mpeg:dash:schema:mpd:2011" type="static">
+              <Period id="content-before"><AdaptationSet/></Period>
+              <Period id="break-start">
+                <EventStream schemeIdUri="urn:scte:scte35:2013:xml" timescale="90000">
+                  <Event id="1" duration="900000">
+                    <SpliceInfoSection>
+                      <SpliceInsert outOfNetworkIndicator="true"/>
+                    </SpliceInfoSection>
+                  </Event>
+                </EventStream>
+                <AdaptationSet/>
+              </Period>
+              <Period id="content-after"><AdaptationSet/></Period>
+            </MPD>
+        """.trimIndent()
+
+        val result = StreamAdManifestFilter.filterDash(mpd)
+
+        assertEquals(1, result.removedPeriods)
+        assertFalse(result.content.contains("break-start"))
+        assertTrue(result.content.contains("content-before"))
+        assertTrue(result.content.contains("content-after"))
+    }
+
+    @Test
+    fun removesDashPeriodWithAdvertisementRole() {
+        val mpd = """
+            <MPD xmlns="urn:mpeg:dash:schema:mpd:2011" type="static">
+              <Period id="main"><AdaptationSet/></Period>
+              <Period id="period-2">
+                <AdaptationSet>
+                  <Role schemeIdUri="urn:mpeg:dash:role:2011" value="advertisement"/>
+                </AdaptationSet>
+              </Period>
+            </MPD>
+        """.trimIndent()
+
+        val result = StreamAdManifestFilter.filterDash(mpd)
+
+        assertEquals(1, result.removedPeriods)
+        assertFalse(result.content.contains("period-2"))
+        assertTrue(result.content.contains("main"))
+    }
+
+    @Test
     fun resolvesRelativeHlsSegmentsAgainstFinalManifestUrl() {
         val playlist = """
             #EXTM3U
