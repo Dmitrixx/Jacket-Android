@@ -398,6 +398,7 @@ internal class ExternalMediaProxyServer(
                         name.equals("Content-Length", true) ||
                         name.equals("Transfer-Encoding", true) ||
                         name.equals("Content-Encoding", true) ||
+                        name.equals("Content-Type", true) ||
                         name.equals("Content-MD5", true) ||
                         name.equals("ETag", true)
                     ) return@forEach
@@ -410,7 +411,10 @@ internal class ExternalMediaProxyServer(
                 output.write(
                     "Content-Length: ${body.size}\\r\\n".toByteArray(StandardCharsets.ISO_8859_1)
                 )
-                output.write("Content-Type: ${contentType ?: "application/vnd.apple.mpegurl"}; charset=utf-8\\r\\n"
+                val manifestMimeType = if (rawPath.endsWith(".mpd", ignoreCase = true) ||
+                    contentType?.contains("dash+xml", ignoreCase = true) == true
+                ) "application/dash+xml" else "application/vnd.apple.mpegurl"
+                output.write("Content-Type: $manifestMimeType; charset=utf-8\\r\\n"
                     .toByteArray(StandardCharsets.ISO_8859_1))
                 output.write("Connection: close\\r\\n\\r\\n".toByteArray(StandardCharsets.ISO_8859_1))
                 output.write(body)
