@@ -1287,3 +1287,44 @@ class LampacRuntimeInstaller(context: android.content.Context) {
     private fun formatBytes(value: Long): String =
         String.format("%.0f МБ", value / (1024.0 * 1024.0))
 }
+
+/**
+ * Build a recoverable .NET runtime swap. Validate the staged runtime before
+ * moving the current runtime, and restore the previous directory on a failed
+ * activation or an interrupted swap.
+ */
+internal fun buildDotnetInstallCommand(archivePath: String): String {
+    require(archivePath.isNotBlank() && '\u0000' !in archivePath) {
+        "Некорректный путь к архиву .NET"
+    }
+    val quotedArchive = "'" + archivePath.replace("'", "'\\''") + "'"
+    return """
+        set -e
+        if [ -d /opt/dotnet.previous ]; then
+          if [ -x /opt/dotnet/dotnet ] && /opt/dotnet/dotnet --info >/dev/null 2>&1; then
+            rm -rf /opt/dotnet.previous
+          else
+            rm -rf /opt/dotnet
+            mv /opt/dotnet.previous /opt/dotnet
+          fi
+        fi
+        rm -rf /opt/dotnet.stage
+        mkdir -p /opt/dotnet.stage
+        tar -xzf $quotedArchive -C /opt/dotnet.stage
+        /opt/dotnet.stage/dotnet --info
+        if [ -d /opt/dotnet ]; then
+          rm -rf /opt/dotnet.previous
+          mv /opt/dotnet /opt/dotnet.previous
+        fi
+        if ! mv /opt/dotnet.stage /opt/dotnet; then
+          if [ -d /opt/dotnet.previous ]; then mv /opt/dotnet.previous /opt/dotnet; fi
+          exit 1
+        fi
+        if ! /opt/dotnet/dotnet --info; then
+          rm -rf /opt/dotnet
+          if [ -d /opt/dotnet.previous ]; then mv /opt/dotnet.previous /opt/dotnet; fi
+          exit 1
+        fi
+        rm -rf /opt/dotnet.previous
+    """.trimIndent()
+}
