@@ -10,6 +10,8 @@ package app.jacket.mobile.byedpi.core
 internal class ByeDpiNative {
     companion object {
         init {
+            // Load HEV into the app linker namespace before the JNI bridge calls dlopen().
+            System.loadLibrary("hev-socks5-tunnel")
             System.loadLibrary("byedpi")
         }
     }
