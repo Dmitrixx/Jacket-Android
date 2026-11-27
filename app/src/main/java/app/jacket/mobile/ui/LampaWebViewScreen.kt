@@ -40,6 +40,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import app.jacket.mobile.BuildConfig
+import app.jacket.mobile.adblock.AdBlockPolicy
 import app.jacket.mobile.lampac.ExternalMediaProxy
 import app.jacket.mobile.lampac.LampaWebAssetUpdater
 import app.jacket.mobile.lampac.routeExternalMediaUrl
@@ -52,13 +53,17 @@ private const val LAMPA_ASSET_PREFIX = "/app/"
 fun LampaWebViewScreen(
     modifier: Modifier = Modifier,
     onBack: () -> Unit,
-    onOpenLampacSettings: () -> Unit
+    onOpenLampacSettings: () -> Unit,
+    onOpenAdBlockSettings: () -> Unit,
+    onOpenByeDpi: () -> Unit
 ) {
     val context = LocalContext.current
     val playerOpen = remember { mutableStateOf(false) }
     val lampacStatus = remember { mutableStateOf("Lampac: ожидание подключения") }
     val currentOnBack by rememberUpdatedState(onBack)
     val currentOnOpenLampacSettings by rememberUpdatedState(onOpenLampacSettings)
+    val currentOnOpenAdBlockSettings by rememberUpdatedState(onOpenAdBlockSettings)
+    val currentOnOpenByeDpi by rememberUpdatedState(onOpenByeDpi)
     val chromeClient = remember(context) {
         context.findActivity()?.let(::LampaFullscreenChromeClient)
     }
@@ -85,6 +90,8 @@ fun LampaWebViewScreen(
                     context.applicationContext,
                     onExit = { currentOnBack() },
                     onOpenLampacSettings = { currentOnOpenLampacSettings() },
+                    onOpenAdBlockSettings = { currentOnOpenAdBlockSettings() },
+                    onOpenByeDpi = { currentOnOpenByeDpi() },
                     onPlayerOpenChanged = { playerOpen.value = it },
                     onLampacStateChanged = { lampacStatus.value = it }
                 ),
@@ -96,7 +103,12 @@ fun LampaWebViewScreen(
                 override fun shouldInterceptRequest(
                     view: WebView?,
                     request: WebResourceRequest
-                ): WebResourceResponse? = interceptLampaAsset(context, request)
+                ): WebResourceResponse? {
+                    if (AdBlockPolicy.shouldBlock(context, request.url, request.isForMainFrame)) {
+                        return textResponse(204, "No Content")
+                    }
+                    return interceptLampaAsset(context, request)
+                }
 
                 override fun shouldOverrideUrlLoading(
                     view: WebView?,
@@ -244,6 +256,8 @@ private class LampaAndroidBridge(
     private val context: Context,
     private val onExit: () -> Unit,
     private val onOpenLampacSettings: () -> Unit,
+    private val onOpenAdBlockSettings: () -> Unit,
+    private val onOpenByeDpi: () -> Unit,
     private val onPlayerOpenChanged: (Boolean) -> Unit,
     private val onLampacStateChanged: (String) -> Unit
 ) {
@@ -276,6 +290,16 @@ private class LampaAndroidBridge(
     @JavascriptInterface
     fun openLampacSettings() {
         mainHandler.post { onOpenLampacSettings() }
+    }
+
+    @JavascriptInterface
+    fun openAdBlockSettings() {
+        mainHandler.post { onOpenAdBlockSettings() }
+    }
+
+    @JavascriptInterface
+    fun openByeDpi() {
+        mainHandler.post { onOpenByeDpi() }
     }
 
     @JavascriptInterface
