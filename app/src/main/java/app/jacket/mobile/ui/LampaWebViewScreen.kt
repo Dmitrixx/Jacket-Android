@@ -42,9 +42,14 @@ import androidx.compose.ui.viewinterop.AndroidView
 import app.jacket.mobile.BuildConfig
 import app.jacket.mobile.adblock.AdBlockPolicy
 import app.jacket.mobile.lampac.ExternalMediaProxy
+import app.jacket.mobile.lampac.StreamAdManifestFilter
 import app.jacket.mobile.lampac.LampaWebAssetUpdater
 import app.jacket.mobile.lampac.routeExternalMediaUrl
 import java.io.ByteArrayInputStream
+import java.io.ByteArrayOutputStream
+import java.net.HttpURLConnection
+import java.net.URL
+import java.nio.charset.StandardCharsets
 
 private const val LAMPA_ORIGIN = "http://127.0.0.1:9118"
 private const val LAMPA_ASSET_PREFIX = "/app/"
@@ -107,6 +112,7 @@ fun LampaWebViewScreen(
                     if (AdBlockPolicy.shouldBlock(context, request.url, request.isForMainFrame)) {
                         return textResponse(204, "No Content")
                     }
+                    interceptStreamAdManifest(context, request)?.let { return it }
                     return interceptLampaAsset(context, request)
                 }
 
@@ -186,6 +192,140 @@ fun LampaWebViewScreen(
             color = MaterialTheme.colorScheme.onSurface,
             style = MaterialTheme.typography.labelSmall
         )
+    }
+}
+
+/**
+ * Fetches only HLS/DASH manifests through the native WebView client, removes
+ * explicitly signalled ad segments/periods, and returns a local manifest copy.
+ * Media segment bytes are still fetched directly from their original CDN URLs.
+ */
+private fun interceptStreamAdManifest(
+    context: Context,
+    request: WebResourceRequest
+): WebResourceResponse? {
+    if (!request.method.equals("GET", true)) return null
+    val preferences = context.getSharedPreferences(
+        AdBlockPolicy.PREFERENCES_NAME,
+        Context.MODE_PRIVATE
+    )
+    if (!preferences.getBoolean(AdBlockPolicy.KEY_REMOVE_STREAM_ADS, true)) return null
+
+    val requestedUri = request.url
+    if (!requestedUri.scheme.equals("http", true) &&
+        !requestedUri.scheme.equals("https", true)
+    ) return null
+
+    val path = requestedUri.path.orEmpty().lowercase()
+    val isManifest = path.endsWith(".m3u8") ||
+        path.endsWith(".m3u") ||
+        path.endsWith(".mpd") ||
+        requestedUri.getQueryParameter("format")?.contains("m3u8", true) == true ||
+        requestedUri.getQueryParameter("format")?.contains("dash", true) == true
+    if (!isManifest) return null
+
+    val connection = runCatching {
+        (URL(requestedUri.toString()).openConnection() as? HttpURLConnection)
+            ?: return null
+    }.getOrNull() ?: return null
+
+    return try {
+        connection.instanceFollowRedirects = true
+        connection.connectTimeout = 10_000
+        connection.readTimeout = 15_000
+        connection.requestMethod = "GET"
+        connection.setRequestProperty("Accept-Encoding", "identity")
+
+        val permittedRequestHeaders = setOf(
+            "accept", "accept-language", "authorization", "cookie",
+            "if-modified-since", "if-none-match", "origin", "range",
+            "referer", "user-agent"
+        )
+        request.requestHeaders.forEach { (name, value) ->
+            if (name.lowercase() in permittedRequestHeaders &&
+                '\r' !in value && '\n' !in value
+            ) {
+                connection.setRequestProperty(name, value)
+            }
+        }
+
+        val status = connection.responseCode
+        val responseStream = if (status >= 400) connection.errorStream else connection.inputStream
+        val rawBytes = responseStream?.use { input ->
+            val output = ByteArrayOutputStream()
+            val buffer = ByteArray(16 * 1024)
+            var total = 0
+            while (true) {
+                val count = input.read(buffer)
+                if (count < 0) break
+                total += count
+                if (total > 2 * 1024 * 1024) {
+                    throw IllegalStateException("Manifest exceeds 2 MiB safety limit")
+                }
+                output.write(buffer, 0, count)
+            }
+            output.toByteArray()
+        } ?: ByteArray(0)
+
+        if (status !in 200..299) return null
+
+        val charset = connection.contentType
+            ?.substringAfter("charset=", "")
+            ?.substringBefore(';')
+            ?.trim()
+            ?.takeIf { it.isNotBlank() }
+            ?: "UTF-8"
+        val source = runCatching { String(rawBytes, charset(charset)) }
+            .getOrElse { String(rawBytes, StandardCharsets.UTF_8) }
+
+        val filtered = StreamAdManifestFilter.filter(source, connection.url.toString())
+        if (filtered.removedSegments > 0 || filtered.removedPeriods > 0 ||
+            filtered.removedInterstitialMarkers > 0
+        ) {
+            LampacRuntimeState.appendLog(
+                "Удалены рекламные блоки потока: HLS-сегментов ${filtered.removedSegments}, " +
+                    "DASH-периодов ${filtered.removedPeriods}, interstitial-маркеров ${filtered.removedInterstitialMarkers}."
+            )
+        }
+
+        val contentType = connection.contentType?.substringBefore(';')?.trim().orEmpty()
+        val mimeType = when {
+            contentType.isNotBlank() -> contentType
+            path.endsWith(".mpd") -> "application/dash+xml"
+            else -> "application/vnd.apple.mpegurl"
+        }
+        val preservedHeaders = linkedMapOf<String, String>()
+        listOf(
+            "Access-Control-Allow-Origin",
+            "Access-Control-Allow-Credentials",
+            "Access-Control-Allow-Headers",
+            "Access-Control-Allow-Methods",
+            "Access-Control-Expose-Headers",
+            "Cache-Control",
+            "ETag",
+            "Expires",
+            "Last-Modified",
+            "Vary"
+        ).forEach { name ->
+            connection.getHeaderField(name)?.let { preservedHeaders[name] = it }
+        }
+
+        WebResourceResponse(
+            mimeType,
+            charset,
+            status,
+            connection.responseMessage ?: "OK",
+            preservedHeaders,
+            ByteArrayInputStream(filtered.content.toByteArray(charset(charset)))
+        )
+    } catch (error: Exception) {
+        LampacRuntimeState.appendLog(
+            "Фильтр рекламы: не удалось обработать манифест ${requestedUri.host ?: "источника"} " +
+                "(${error.javaClass.simpleName}). Обычная загрузка продолжится."
+        )
+        null
+    } finally {
+        connection.disconnect()
     }
 }
 
