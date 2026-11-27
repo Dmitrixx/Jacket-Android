@@ -419,6 +419,8 @@ class LampacRuntimeInstallerTest {
             assertTrue(command.contains("Package: lampa-proot-init-provider"))
             assertTrue(command.contains("Provides: init"))
             assertTrue(command.contains("Conflicts: systemd-sysv, sysvinit-core"))
+            assertTrue(command.contains("chmod 755 /tmp/lampa-proot-init-provider/DEBIAN"))
+            assertTrue(command.contains("chmod 644 /tmp/lampa-proot-init-provider/DEBIAN/control"))
             assertTrue(command.contains("dpkg-deb --build /tmp/lampa-proot-init-provider"))
             assertTrue(command.contains("dpkg -i /tmp/lampa-proot-init-provider.deb"))
             assertFalse(command.contains("apt-get install -y --no-install-recommends sysvinit-core"))
