@@ -619,6 +619,714 @@ internal fun buildLampacOfflineDpkgCommand(command: String): String {
         "lampa_divert_stub /usr/bin/deb-systemd-invoke 0; " +
         "lampa_divert_stub /usr/bin/deb-systemd-helper 0; " +
         "lampa_divert_stub /usr/sbin/policy-rc.d 101; " +
+        // This is an Android-hosted Debian userspace, not a bootable Debian system.
+        // Prevent an inherited systemd-sysv selection from pulling the full init manager.
+        "mkdir -p /etc/apt/preferences.d; " +
+        "printf '%s\\n' 'Package: systemd systemd-sysv' 'Pin: version *' 'Pin-Priority: -1' > /etc/apt/preferences.d/99-lampac-no-systemd; " +
+        "if dpkg-query -W -f='\${db:Status-Status}' systemd-sysv 2>/dev/null | grep -Eq '^(installed|unpacked|half-configured|half-installed|config-files)
+        command +
+        "; } > /tmp/lampa-dpkg-install.log 2>&1; status=\$?; " +
+        "if [ \"\$status\" -eq 0 ]; then " +
+        "echo '--- apt/dpkg output (last 120 lines) ---'; tail -n 120 /tmp/lampa-dpkg-install.log; " +
+        "rm -f /tmp/lampa-dpkg-install.log; else " +
+        "echo '--- failed Debian package stage ---'; " +
+        "grep '^__LAMPAC_STAGE=' /tmp/lampa-dpkg-install.log | tail -n 1 || true; " +
+        "echo '--- apt/dpkg errors and context ---'; " +
+        "grep -Ein -B 3 -A 5 '(^E:|^Err:|dpkg: error|error processing archive|sub-process .* returned|failed to|dependency problems)' /tmp/lampa-dpkg-install.log | tail -n 70 || true; " +
+        "echo '--- apt/dpkg output (last 120 lines) ---'; tail -n 120 /tmp/lampa-dpkg-install.log; " +
+        "echo '--- apt/dpkg failure log preserved for Android diagnostics ---'; " +
+        "apt-get clean >/dev/null 2>&1 || true; " +
+        "rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*.deb; " +
+        "exit \"\$status\"; fi"
+}
+
+/** Ensure the private Debian rootfs has a persistent, standard 32-hex machine-id. */
+internal fun ensureLampacDebianMachineId(rootfs: File) {
+    require(rootfs.isDirectory) { "Debian rootfs недоступен" }
+    val root = rootfs.canonicalFile
+    val etc = File(root, "etc")
+    if (!etc.exists() && !etc.mkdirs()) throw IOException("Не удалось создать /etc в Debian")
+    require(etc.canonicalFile == etc) { "Каталог /etc в Debian указывает за пределы rootfs" }
+
+    val machineIdFile = File(etc, "machine-id")
+    val dbusDirectory = File(root, "var/lib/dbus")
+    val dbusMachineId = File(dbusDirectory, "machine-id")
+
+    fun readRootRelativeFile(file: File): String? = runCatching {
+        val path = file.toPath()
+        val resolved = if (Files.isSymbolicLink(path)) {
+            val linkTarget = Files.readSymbolicLink(path)
+            if (linkTarget.isAbsolute) {
+                File(root, linkTarget.toString().trimStart(File.separatorChar))
+            } else {
+                File(file.parentFile, linkTarget.toString())
+            }
+        } else {
+            file
+        }.canonicalFile
+        resolved.takeIf { it.toPath().startsWith(root.toPath()) && it.isFile }
+            ?.readText(Charsets.UTF_8)?.trim()
+    }.getOrNull()
+
+    val validId = listOf(machineIdFile, dbusMachineId)
+        .asSequence()
+        .mapNotNull(::readRootRelativeFile)
+        .firstOrNull { it.matches(Regex("(?i)^[0-9a-f]{32}$")) }
+
+    val machineId = validId ?: ByteArray(16).also { SecureRandom().nextBytes(it) }
+        .joinToString("") { "%02x".format(it.toInt() and 0xff) }
+
+    if (Files.isSymbolicLink(machineIdFile.toPath())) Files.deleteIfExists(machineIdFile.toPath())
+    if (validId == null || readRootRelativeFile(machineIdFile) != machineId) {
+        machineIdFile.writeText("$machineId\n", Charsets.UTF_8)
+    }
+
+    if (!dbusDirectory.exists() && !dbusDirectory.mkdirs()) {
+        throw IOException("Не удалось создать /var/lib/dbus в Debian")
+    }
+    val dbusPath = dbusMachineId.toPath()
+    val correctDbusLink = Files.isSymbolicLink(dbusPath) &&
+        Files.readSymbolicLink(dbusPath).toString() == "/etc/machine-id"
+    if (!correctDbusLink) {
+        Files.deleteIfExists(dbusPath)
+        Files.createSymbolicLink(dbusPath, java.nio.file.Paths.get("/etc/machine-id"))
+    }
+}
+
+/**
+ * The PRoot OCI downloader keeps verified Debian image layers in var/lib/pr/dlcache
+ * after the rootfs has been extracted. Those files are only a re-download cache:
+ * once Debian's rootfs is ready, the installed filesystem no longer depends on them.
+ *
+ * Delete only direct regular files, matching pr-cli clear-cache semantics. Do not
+ * follow symlinks or recurse into unexpected directories in this app-private path.
+ */
+internal fun clearLampacProotDownloadCache(prefixDir: File): Long {
+    if (!prefixDir.isDirectory) return 0L
+    val canonicalPrefix = runCatching { prefixDir.canonicalFile.toPath() }.getOrNull() ?: return 0L
+    val cacheDir = File(prefixDir, "var/lib/pr/dlcache")
+    val cachePath = cacheDir.toPath()
+    if (!Files.isDirectory(cachePath, java.nio.file.LinkOption.NOFOLLOW_LINKS)) return 0L
+
+    val canonicalCache = runCatching { cacheDir.canonicalFile.toPath() }.getOrNull() ?: return 0L
+    if (!canonicalCache.startsWith(canonicalPrefix) || canonicalCache == canonicalPrefix) return 0L
+
+    var reclaimedBytes = 0L
+    return try {
+        Files.newDirectoryStream(cachePath).use { entries ->
+            for (entry in entries) {
+                if (!Files.isRegularFile(entry, java.nio.file.LinkOption.NOFOLLOW_LINKS)) continue
+                val size = runCatching { Files.size(entry) }.getOrDefault(0L)
+                val deleted = runCatching { Files.deleteIfExists(entry) }.getOrDefault(false)
+                if (deleted) reclaimedBytes += size
+            }
+            reclaimedBytes
+        }
+    } catch (_: IOException) {
+        reclaimedBytes
+    }
+}
+
+internal fun buildLampacSystemPackagesInstallCommand(
+    architecture: LampacRuntimeArchitecture = LampacRuntimeArchitecture.ARM64
+): String {
+    // Debian Forky publishes libicu78; ARM32 uses Trixie, whose runtime ABI is libicu76.
+    val icuPackage = when (architecture) {
+        LampacRuntimeArchitecture.ARM64 -> "libicu78"
+        LampacRuntimeArchitecture.ARM32 -> "libicu76"
+    }
+    val browserInstall = when (architecture) {
+        LampacRuntimeArchitecture.ARM64 ->
+            "curl -fSL --retry 3 https://dl.google.com/linux/direct/google-chrome-stable_current_arm64.deb -o /tmp/google-chrome-stable.deb && " +
+                "test \"$(dpkg-deb -f /tmp/google-chrome-stable.deb Architecture)\" = arm64 && " +
+                "apt-get install -y --no-install-recommends /tmp/google-chrome-stable.deb && " +
+                "ln -sf /usr/bin/google-chrome-stable /usr/bin/chromium && " +
+                "rm -f /tmp/google-chrome-stable.deb && "
+        LampacRuntimeArchitecture.ARM32 ->
+            "apt-get install -y --no-install-recommends chromium && " +
+                "ln -sf /usr/bin/chromium /usr/bin/google-chrome-stable && "
+    }
+
+    return buildLampacOfflineDpkgCommand(
+        "echo '__LAMPAC_STAGE=apt-update' && apt-get update && " +
+            "echo '__LAMPAC_STAGE=opensysusers' && apt-get install -y --no-install-recommends opensysusers && " +
+            "echo '__LAMPAC_STAGE=dpkg-recovery' && dpkg --root=/ --configure -a && " +
+            "echo '__LAMPAC_STAGE=runtime-packages' && apt-get install -y --no-install-recommends ca-certificates curl fontconfig $icuPackage zlib1g tar nodejs " +
+            "ffmpeg imagemagick xvfb libnspr4 " +
+            "gstreamer1.0-libav gstreamer1.0-plugins-bad gstreamer1.0-plugins-base gstreamer1.0-plugins-base-apps " +
+            "gstreamer1.0-plugins-good gstreamer1.0-plugins-ugly gstreamer1.0-tools " +
+            "libgstreamer-plugins-base1.0-0 libgstreamer1.0-0 && " +
+            "echo '__LAMPAC_STAGE=browser-package' && " + browserInstall +
+            "test -x /usr/bin/node && node --version && " +
+            "echo '__LAMPAC_STAGE=runtime-validation' && " +
+            "test -x /usr/bin/chromium && chromium --version && ffmpeg -version && gst-inspect-1.0 --version && " +
+            "echo '__LAMPAC_STAGE=apt-cleanup' && apt-get clean && rm -rf /var/lib/apt/lists/*"
+    )
+}
+
+/** A lightweight repair for older installs: it adds only the Debian-architecture Node.js package. */
+internal fun buildLampacNodeInstallCommand(): String =
+    buildLampacOfflineDpkgCommand(
+        "apt-get update && " +
+            "apt-get install -y --no-install-recommends opensysusers && " +
+            "dpkg --root=/ --configure -a && " +
+            "apt-get install -y --no-install-recommends nodejs && " +
+            "test -x /usr/bin/node && node --version && " +
+            "apt-get clean && rm -rf /var/lib/apt/lists/*"
+    )
+
+/**
+ * Playwright's JS package is architecture-independent. The runtime uses
+ * Debian's architecture-matched Node.js through PLAYWRIGHT_NODEJS_PATH rather than assuming
+ * that a platform-specific executable in the release archive matches Android.
+ */
+internal fun isLampacPlaywrightPackageReady(lampacDirectory: File): Boolean {
+    val packageDirectory = File(lampacDirectory, ".playwright/package")
+    // index.js is checked by Lampac's startup guard; cli.js is the actual
+    // Playwright driver entrypoint launched by Microsoft.Playwright.
+    return File(packageDirectory, "index.js").isFile &&
+        File(packageDirectory, "cli.js").isFile
+}
+
+
+/**
+ * Finds the previous app's Debian alias config before a new OCI runtime is
+ * created. The old legacy and old OCI locations are both checked, but neither
+ * rootfs is removed automatically.
+ */
+internal fun readLegacyLampacInitConfig(prefixDir: File): String? {
+    val candidates = listOf(
+        File(
+            prefixDir,
+            "var/lib/pr/containers/$LAMPAC_DEBIAN_ALIAS/rootfs/opt/lampac/init.conf"
+        ),
+        File(prefixDir, "var/lib/pr/installed-rootfs/debian/opt/lampac/init.conf"),
+        File(prefixDir, "var/lib/pr/containers/debian/rootfs/opt/lampac/init.conf")
+    )
+    val source = candidates.firstOrNull { it.isFile } ?: return null
+    require(source.length() in 1..LampacEmbeddedConfig.MAX_INIT_CONFIG_BYTES.toLong()) {
+        "Существующий init.conf Lampac пуст или превышает лимит 2 МиБ; миграция настроек отменена."
+    }
+    return source.readText(Charsets.UTF_8)
+}
+
+/** True only when the PRoot Debian root contains the required base system tools. */
+internal fun isDebianRootfsReady(
+    root: File,
+    architecture: LampacRuntimeArchitecture? = null
+): Boolean {
+    if (!root.isDirectory) return false
+    val osRelease = File(root, "etc/os-release")
+    if (!osRelease.isFile) return false
+
+    val osFields = runCatching { osRelease.readLines() }.getOrNull() ?: return false
+    fun field(name: String): String? = osFields
+        .firstOrNull { it.startsWith("$name=") }
+        ?.substringAfter('=')
+        ?.trim()
+        ?.removeSurrounding("\"")
+        ?.removeSurrounding("'")
+
+    if (!field("ID").equals("debian", ignoreCase = true)) return false
+    val expectedCodename = when (architecture) {
+        LampacRuntimeArchitecture.ARM64 -> "forky"
+        LampacRuntimeArchitecture.ARM32 -> "trixie"
+        null -> null
+    }
+    if (expectedCodename != null &&
+        !field("VERSION_CODENAME").equals(expectedCodename, ignoreCase = true)
+    ) return false
+
+    return File(root, "bin/sh").canExecute() &&
+        File(root, "usr/bin/apt-get").canExecute()
+}
+
+/**
+ * Installs a private ABI-matched Debian rootfs, ASP.NET Core 10 and a checksum-pinned
+ * Lampac release. It intentionally does not call Lampac's systemd installer.
+ */
+class LampacRuntimeInstaller(context: android.content.Context) {
+    private val appContext = context.applicationContext
+    private val host = LampaProotHost(appContext)
+    private val commands = LampacProotCommands(host)
+    private val commandRunner = LampacProotCommandRunner(commands)
+    private val downloads = File(appContext.filesDir, "lampac/downloads")
+
+    fun installedVersion(): String? {
+        val opt = File(host.debianRootfsDir, "opt")
+        val target = File(opt, "lampac")
+        val backup = File(opt, ".lampac-backup")
+        // Recover the previous server if the process died between the two
+        // directory renames that activate an update.
+        if (!target.exists() && backup.isDirectory) backup.renameTo(target)
+        val marker = File(host.debianRootfsDir, "opt/lampac/.lampa-lampac-version")
+        val version = runCatching { marker.readText(Charsets.UTF_8).trim() }.getOrNull()
+        return version?.takeIf { it.matches(Regex("[0-9]+\\.[0-9]+\\.[0-9]+")) }
+    }
+
+    fun isInstalled(): Boolean {
+        val root = host.debianRootfsDir
+        val version = installedVersion()
+        val architecture = LampacProotBootstrap.runtimeArchitecture()
+        if (version != null && architecture != null &&
+            isDebianRootfsReady(root, architecture) && isCompleteLampacRuntime(root, version)
+        ) {
+            return true
+        }
+
+        // If activation completed but the process was interrupted before the
+        // new tree could be used, restore the staged backup before reporting
+        // the runtime as missing. Also handle a missing marker in a partial tree.
+        if (hasPendingUpdateBackup()) {
+            rollbackPendingUpdateBackup()
+            val restoredVersion = installedVersion()
+            return restoredVersion != null && architecture != null &&
+                isDebianRootfsReady(root, architecture) &&
+                isCompleteLampacRuntime(root, restoredVersion)
+        }
+        return false
+    }
+
+    private fun lampacInstallBackup(): File =
+        File(host.debianRootfsDir, "opt/.lampac-backup")
+
+    fun hasPendingUpdateBackup(): Boolean = lampacInstallBackup().isDirectory
+
+    fun commitPendingUpdateBackup() {
+        val backup = lampacInstallBackup()
+        if (backup.exists() && !backup.deleteRecursively()) {
+            LampacRuntimeState.appendLog("Не удалось удалить резервную копию предыдущего Lampac.")
+        }
+    }
+
+    fun rollbackPendingUpdateBackup(): Boolean {
+        val opt = File(host.debianRootfsDir, "opt")
+        val target = File(opt, "lampac")
+        val backup = lampacInstallBackup()
+        if (!backup.isDirectory) return false
+
+        val failed = File(opt, ".lampac-failed")
+        failed.deleteRecursively()
+        if (target.exists() && !target.renameTo(failed)) {
+            throw IOException("Не удалось переместить неудачную версию Lampac")
+        }
+        if (!backup.renameTo(target)) {
+            if (failed.exists()) failed.renameTo(target)
+            throw IOException("Не удалось восстановить предыдущую версию Lampac")
+        }
+        failed.deleteRecursively()
+        return true
+    }
+
+    fun availableBytes(): Long = StatFs(appContext.filesDir.absolutePath).availableBytes
+
+    /** Read the private Lampac configuration for an explicit user export. */
+    fun readInitConfig(): String {
+        check(isInstalled()) { "Сначала установите встроенный Lampac" }
+        val file = File(host.debianRootfsDir, "opt/lampac/init.conf")
+        require(file.length() in 1..LampacEmbeddedConfig.MAX_INIT_CONFIG_BYTES.toLong()) {
+            "init.conf пуст или превышает лимит 2 МиБ"
+        }
+        return file.readText(Charsets.UTF_8)
+    }
+
+    /** Import the user\'s Lampac settings without changing the private listener. */
+    /** Discover modules and read their effective enabled state from init.conf. */
+    fun readModuleSettings(): LampacModuleSettings {
+        check(isInstalled()) { "Сначала установите встроенный Lampac" }
+        val serverDirectory = File(host.debianRootfsDir, "opt/lampac")
+        val modules = LampacModuleCatalog.discover(serverDirectory)
+        val config = readInitConfig()
+        return LampacModuleSettings(
+            modules = modules,
+            enabledModuleIds = LampacEmbeddedConfig.readEnabledModules(config, modules)
+        )
+    }
+
+    /** Persist individual module choices without changing provider credentials or listener settings. */
+    fun saveModuleSettings(enabledModuleIds: Set<String>): File {
+        check(isInstalled()) { "Сначала установите встроенный Lampac" }
+        val serverDirectory = File(host.debianRootfsDir, "opt/lampac")
+        val modules = LampacModuleCatalog.discover(serverDirectory)
+        val updated = LampacEmbeddedConfig.prepareModuleSelection(
+            content = readInitConfig(),
+            enabledModuleIds = enabledModuleIds,
+            modules = modules
+        )
+        return LampacEmbeddedConfig.importInitConfig(serverDirectory, updated)
+    }
+
+    fun importInitConfig(content: String): File {
+        check(isInstalled()) { "Сначала установите встроенный Lampac" }
+        val serverDirectory = File(host.debianRootfsDir, "opt/lampac")
+        return LampacEmbeddedConfig.importInitConfig(serverDirectory, content)
+    }
+
+    suspend fun install(
+        onProgress: (LampacInstallProgress) -> Unit = {}
+    ): File = withContext(Dispatchers.IO) {
+        val send = { phase: String, message: String, done: Long, total: Long ->
+            onProgress(
+                LampacInstallProgress(
+                    phase = phase,
+                    message = message,
+                    downloadedBytes = done,
+                    totalBytes = total,
+                    percent = if (total > 0) ((done * 100L) / total).toInt().coerceIn(0, 100) else null
+                )
+            )
+        }
+
+        val runtimeArchitecture = LampacProotBootstrap.runtimeArchitecture()
+            ?: throw IllegalStateException(
+                "Встроенный Lampac поддерживает ARM64 и ARMv7 Android. Для этой архитектуры доступно подключение удалённого сервера."
+            )
+
+        send("prepare", "Подготавливаем PRoot (" + runtimeArchitecture.name + ")…", 0, 0)
+        val prepared = LampacProotBootstrap.prepare(host)
+
+        // Once the OCI rootfs exists, its verified layer blobs are no longer
+        // needed. Remove this re-download cache before any repair or install.
+        if (isDebianRootfsReady(prepared.debianRootfsDir, runtimeArchitecture)) {
+            val reclaimed = clearLampacProotDownloadCache(host.prefixDir)
+            if (reclaimed > 0L) {
+                send(
+                    "storage-cleanup",
+                    "Освобождено ${formatBytes(reclaimed)} из кэша слоёв Debian",
+                    0,
+                    0
+                )
+            }
+        }
+
+        // Newer APKs may add a runtime prerequisite without changing the
+        // Lampac payload. Repair that in place before requiring space for a
+        // second 480 MB archive or replacing the user's existing init.conf.
+        val existingVersion = installedVersion()
+        if (isDebianRootfsReady(prepared.debianRootfsDir, runtimeArchitecture) &&
+            existingVersion != null &&
+            isLampacRuntimePayloadReady(prepared.debianRootfsDir, existingVersion) &&
+            !isLampacNodeReady(prepared.debianRootfsDir)
+        ) {
+            ensureLampacDebianMachineId(prepared.debianRootfsDir)
+            send("nodejs-migration", "Добавляем Node.js для Playwright без повторной загрузки Lampac…", 0, 0)
+            val nodeInstall = commandRunner.runAsRoot(buildLampacNodeInstallCommand()) { line ->
+                send("nodejs-migration", line.take(220), 0, 0)
+            }
+            check(nodeInstall == 0 && isLampacNodeReady(prepared.debianRootfsDir)) {
+                "Не удалось добавить Node.js для Playwright (код $nodeInstall)"
+            }
+            val existingServer = File(prepared.debianRootfsDir, "opt/lampac")
+            send("installed", "Node.js добавлен. Существующий Lampac и настройки сохранены.", 1, 1)
+            return@withContext existingServer
+        }
+
+        // Do not apply the former fixed 4.5 GiB preflight threshold here.
+        // On some Android TV sticks it can exceed the entire /data partition.
+        // The exact Lampac ZIP expansion size is checked after its central
+        // directory has been read and before extraction; temporary archives
+        // are removed in finally blocks so a failed low-space attempt is retryable.
+
+        val legacyInitConfig = readLegacyLampacInitConfig(host.prefixDir)
+        if (!isDebianRootfsReady(prepared.debianRootfsDir, runtimeArchitecture)) {
+            val containerDir = prepared.debianRootfsDir.parentFile
+            if (containerDir?.exists() == true) {
+                send("debian-repair", "Обнаружена незавершённая установка Debian. Удаляем повреждённый контейнер…", 0, 0)
+                val removeCode = commandRunner.execute(listOf("remove", LAMPAC_DEBIAN_ALIAS)) { line ->
+                    send("debian-repair", line.take(220), 0, 0)
+                }
+                check(removeCode == 0 || !containerDir.exists()) {
+                    "Не удалось безопасно очистить незавершённый контейнер Debian (код $removeCode). Повторите установку после освобождения памяти."
+                }
+            }
+
+            send("debian", "Загружаем и устанавливаем Debian " + runtimeArchitecture.name + "…", 0, 0)
+            val result = commandRunner.installDebian(runtimeArchitecture) { line ->
+                send("debian", line.take(220), 0, 0)
+            }
+            check(result == 0 && isDebianRootfsReady(prepared.debianRootfsDir, runtimeArchitecture)) {
+                "Не удалось установить Debian " + runtimeArchitecture.name + " в PRoot (код $result)"
+            }
+            val reclaimed = clearLampacProotDownloadCache(host.prefixDir)
+            if (reclaimed > 0L) {
+                send(
+                    "storage-cleanup",
+                    "Освобождено ${formatBytes(reclaimed)} из кэша слоёв Debian",
+                    0,
+                    0
+                )
+            }
+        }
+
+        ensureLampacDebianMachineId(prepared.debianRootfsDir)
+        // Remove diagnostics left by earlier installs. Otherwise old SIGSYS
+        // records (e.g. rseq/fchmodat2 from an older PRoot binary) are shown
+        // together with a new failure and make the active cause ambiguous.
+        listOf("sigsys-log.txt", "lampa-dpkg-install.log").forEach { name ->
+            val staleLog = File(host.cacheDir, name)
+            if (staleLog.exists() || java.nio.file.Files.isSymbolicLink(staleLog.toPath())) {
+                staleLog.delete()
+            }
+        }
+        send("packages", "Подготавливаем системные библиотеки Debian…", 0, 0)
+        val apt = commandRunner.runAsRoot(buildLampacSystemPackagesInstallCommand(runtimeArchitecture)) { line ->
+            send("packages", line.take(220), 0, 0)
+        }
+        if (apt != 0) {
+            send(
+                "packages-diagnostic",
+                if (apt == 134) {
+                    "PRoot завершился с кодом 134 (SIGABRT). Считываем сохранённый журнал до аварии…"
+                } else {
+                    "Установка пакетов завершилась с кодом $apt. Считываем сохранённый журнал…"
+                },
+                0,
+                0
+            )
+            // /tmp inside Debian is bound to this app-private cache directory.
+            // If PRoot aborts, the shell cannot run its tail/rm cleanup, so recover
+            // the package log directly from the host filesystem after the PTY exits.
+            listOf(
+                "lampa-dpkg-install.log" to "Журнал apt/dpkg",
+                "sigsys-log.txt" to "Журнал заблокированных системных вызовов PRoot"
+            ).forEach { (name, label) ->
+                val diagnosticFile = File(host.cacheDir, name)
+                if (diagnosticFile.isFile) {
+                    runCatching {
+                        val tail = java.util.ArrayDeque<String>()
+                        diagnosticFile.bufferedReader(Charsets.UTF_8).useLines { source ->
+                            source.forEach { row ->
+                                if (tail.size >= 100) tail.removeFirst()
+                                tail.addLast(row)
+                            }
+                        }
+                        send("packages-diagnostic", "$label:", 0, 0)
+                        tail.forEach { row ->
+                            send("packages-diagnostic", row.take(220), 0, 0)
+                        }
+                        diagnosticFile.delete()
+                    }.onFailure { error ->
+                        send(
+                            "packages-diagnostic",
+                            "Не удалось прочитать $name: ${error.javaClass.simpleName}",
+                            0,
+                            0
+                        )
+                    }
+                } else {
+                    send("packages-diagnostic", "$label: файл не создан.", 0, 0)
+                }
+            }
+        }
+        check(apt == 0) { "Не удалось установить системные библиотеки Debian (код $apt)" }
+
+        val dotnetRid = if (runtimeArchitecture == LampacRuntimeArchitecture.ARM32) "linux-arm" else "linux-arm64"
+        val dotnetUrl = if (runtimeArchitecture == LampacRuntimeArchitecture.ARM32) {
+            LampacRuntimeArtifacts.DOTNET_ARM32_URL
+        } else {
+            LampacRuntimeArtifacts.DOTNET_URL
+        }
+        val dotnetSha512 = if (runtimeArchitecture == LampacRuntimeArchitecture.ARM32) {
+            LampacRuntimeArtifacts.DOTNET_ARM32_SHA512
+        } else {
+            LampacRuntimeArtifacts.DOTNET_SHA512
+        }
+        send("dotnet-download", "Загружаем ASP.NET Core Runtime ${LampacRuntimeArtifacts.DOTNET_VERSION} " + runtimeArchitecture.name + "…", 0, 0)
+        val dotnetArchive = LampacArtifactDownloader.download(
+            LampacArtifactSpec(
+                fileName = "aspnetcore-runtime-${LampacRuntimeArtifacts.DOTNET_VERSION}-${dotnetRid}.tar.gz",
+                url = dotnetUrl,
+                digestAlgorithm = "SHA-512",
+                expectedDigest = dotnetSha512,
+                maxBytes = 160L * 1024L * 1024L
+            ),
+            downloads
+        ) { done, total -> send("dotnet-download", "Загрузка .NET: ${formatBytes(done)}", done, total) }
+
+        try {
+            send("dotnet-install", "Устанавливаем .NET в Debian…", 0, 0)
+            val dotnetInstall = commandRunner.runAsRoot(
+                buildDotnetInstallCommand(dotnetArchive.absolutePath)
+            ) { line -> send("dotnet-install", line.take(220), 0, 0) }
+            check(dotnetInstall == 0) { "Не удалось установить .NET Runtime (код $dotnetInstall)" }
+        } finally {
+            // The verified .NET archive is only a temporary installation input.
+            // Free it even when extraction or validation fails on a small /data partition.
+            dotnetArchive.delete()
+        }
+
+        send("lampac-download", "Загружаем Lampac NextGen ${LampacRuntimeArtifacts.LAMPAC_VERSION} (~480 МБ)…", 0, 0)
+        val lampacArchive = LampacArtifactDownloader.download(
+            LampacArtifactSpec(
+                fileName = "lampac-nextgen-${LampacRuntimeArtifacts.LAMPAC_VERSION}.zip",
+                url = LampacRuntimeArtifacts.LAMPAC_URL,
+                digestAlgorithm = "SHA-256",
+                expectedDigest = LampacRuntimeArtifacts.LAMPAC_SHA256,
+                expectedBytes = LampacRuntimeArtifacts.LAMPAC_BYTES,
+                maxBytes = LampacRuntimeArtifacts.LAMPAC_BYTES
+            ),
+            downloads
+        ) { done, total -> send("lampac-download", "Загрузка Lampac: ${formatBytes(done)}", done, total) }
+
+        try {
+            if (legacyInitConfig != null) {
+                val newServerDirectory = File(prepared.debianRootfsDir, "opt/lampac")
+                if (!File(newServerDirectory, "init.conf").isFile) {
+                    LampacEmbeddedConfig.importInitConfig(newServerDirectory, legacyInitConfig)
+                    send("config-migration", "Сохранены прежние настройки и ключи источников Lampac.", 1, 1)
+                }
+            }
+
+            send("lampac-extract", "Проверяем архив и устанавливаем Lampac…", 0, 0)
+            val serverDir = LampacZipInstaller.install(
+                archive = lampacArchive,
+                rootfs = prepared.debianRootfsDir,
+                version = LampacRuntimeArtifacts.LAMPAC_VERSION
+            ) { done, total ->
+                send("lampac-extract", "Распаковка Lampac: ${formatBytes(done)}", done, total)
+            }
+
+            check(File(serverDir, "Core.dll").isFile && File(prepared.debianRootfsDir, "opt/dotnet/dotnet").isFile) {
+                "Установка Lampac завершилась без обязательных файлов"
+            }
+            send("installed", "Lampac установлен. Сервер пока остановлен.", 1, 1)
+            serverDir
+        } finally {
+            // Keep /data recoverable after a failed extraction: the archive is
+            // downloaded again on retry, while the ZIP installer removes its stage.
+            lampacArchive.delete()
+        }
+    }
+
+    suspend fun updateFromRelease(
+        version: String,
+        url: String,
+        sha256: String,
+        expectedBytes: Long,
+        onProgress: (LampacInstallProgress) -> Unit = {}
+    ): File = withContext(Dispatchers.IO) {
+        require(version.matches(Regex("[0-9]+\\.[0-9]+\\.[0-9]+"))) {
+            "Версия Lampac в релизе некорректна"
+        }
+        require(sha256.matches(Regex("[0-9a-fA-F]{64}"))) {
+            "В релизе Lampac отсутствует корректная SHA-256"
+        }
+        require(expectedBytes in 1..1024L * 1024L * 1024L) {
+            "Размер архива Lampac превышает лимит обновления"
+        }
+        val current = installedVersion() ?: throw IOException("Не найдена установленная версия Lampac")
+        require(compareSemanticVersions(version, current) > 0) {
+            "Релиз Lampac не новее установленной версии"
+        }
+        check(isInstalled()) { "Текущая установка Lampac неполная; обновление отменено" }
+        check(!hasPendingUpdateBackup()) {
+            "Предыдущее обновление Lampac ещё не подтверждено запуском. Перезапустите сервер и повторите проверку."
+        }
+
+        val send = { phase: String, message: String, done: Long, total: Long ->
+            onProgress(
+                LampacInstallProgress(
+                    phase = phase,
+                    message = message,
+                    downloadedBytes = done,
+                    totalBytes = total,
+                    percent = if (total > 0) ((done * 100L) / total).toInt().coerceIn(0, 100) else null
+                )
+            )
+        }
+        send("update-download", "Загружаем Lampac $version…", 0, expectedBytes)
+        val archive = LampacArtifactDownloader.download(
+            LampacArtifactSpec(
+                fileName = "lampac-nextgen-$version.zip",
+                url = url,
+                digestAlgorithm = "SHA-256",
+                expectedDigest = sha256.lowercase(),
+                expectedBytes = expectedBytes,
+                maxBytes = expectedBytes
+            ),
+            downloads
+        ) { done, total ->
+            send("update-download", "Загрузка Lampac: ${formatBytes(done)}", done, total)
+        }
+
+        try {
+            send("update-extract", "Проверяем и устанавливаем Lampac $version…", 0, expectedBytes)
+            val updated = LampacZipInstaller.install(
+                archive = archive,
+                rootfs = host.debianRootfsDir,
+                version = version,
+                retainBackup = true
+            ) { done, total ->
+                send("update-extract", "Установка Lampac: ${formatBytes(done)}", done, total)
+            }
+            check(isInstalled() && installedVersion() == version) {
+                "После обновления проверка целостности Lampac не пройдена"
+            }
+            send("updated", "Lampac обновлён до $version. Настройки и данные сохранены.", expectedBytes, expectedBytes)
+            updated
+        } finally {
+            archive.delete()
+        }
+    }
+
+    private fun compareSemanticVersions(first: String, second: String): Int {
+        val a = first.split('.').map { it.toInt() }
+        val b = second.split('.').map { it.toInt() }
+        for (index in 0..2) {
+            val compare = a[index].compareTo(b[index])
+            if (compare != 0) return compare
+        }
+        return 0
+    }
+
+    private fun shellQuote(value: String): String = "'" + value.replace("'", "'\\''") + "'"
+
+    private fun formatBytes(value: Long): String =
+        String.format("%.0f МБ", value / (1024.0 * 1024.0))
+}
+
+/**
+ * Build a recoverable .NET runtime swap. Validate the staged runtime before
+ * moving the current runtime, and restore the previous directory on a failed
+ * activation or an interrupted swap.
+ */
+internal fun buildDotnetInstallCommand(archivePath: String): String {
+    require(archivePath.isNotBlank() && '\u0000' !in archivePath) {
+        "Некорректный путь к архиву .NET"
+    }
+    val quotedArchive = "'" + archivePath.replace("'", "'\\''") + "'"
+    return """
+        set -e
+        if [ -d /opt/dotnet.previous ]; then
+          if [ -x /opt/dotnet/dotnet ] && /opt/dotnet/dotnet --info >/dev/null 2>&1; then
+            rm -rf /opt/dotnet.previous
+          else
+            rm -rf /opt/dotnet
+            mv /opt/dotnet.previous /opt/dotnet
+          fi
+        fi
+        rm -rf /opt/dotnet.stage
+        mkdir -p /opt/dotnet.stage
+        tar -xzf $quotedArchive -C /opt/dotnet.stage
+        /opt/dotnet.stage/dotnet --info
+        if [ -d /opt/dotnet ]; then
+          rm -rf /opt/dotnet.previous
+          mv /opt/dotnet /opt/dotnet.previous
+        fi
+        if ! mv /opt/dotnet.stage /opt/dotnet; then
+          if [ -d /opt/dotnet.previous ]; then mv /opt/dotnet.previous /opt/dotnet; fi
+          exit 1
+        fi
+        if ! /opt/dotnet/dotnet --info; then
+          rm -rf /opt/dotnet
+          if [ -d /opt/dotnet.previous ]; then mv /opt/dotnet.previous /opt/dotnet; fi
+          exit 1
+        fi
+        rm -rf /opt/dotnet.previous
+    """.trimIndent()
+}
+; then " +
+        "dpkg --purge --force-all systemd-sysv; fi; " +
         "set +e; { " +
         command +
         "; } > /tmp/lampa-dpkg-install.log 2>&1; status=\$?; " +
