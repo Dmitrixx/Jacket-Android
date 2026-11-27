@@ -1328,24 +1328,6 @@ internal fun buildDotnetInstallCommand(archivePath: String): String {
         rm -rf /opt/dotnet.previous
     """.trimIndent()
 }
-; then " +
-        "dpkg --purge --force-all systemd-sysv; fi; " +
-        "set +e; { " +
-        command +
-        "; } > /tmp/lampa-dpkg-install.log 2>&1; status=\$?; " +
-        "if [ \"\$status\" -eq 0 ]; then " +
-        "echo '--- apt/dpkg output (last 120 lines) ---'; tail -n 120 /tmp/lampa-dpkg-install.log; " +
-        "rm -f /tmp/lampa-dpkg-install.log; else " +
-        "echo '--- failed Debian package stage ---'; " +
-        "grep '^__LAMPAC_STAGE=' /tmp/lampa-dpkg-install.log | tail -n 1 || true; " +
-        "echo '--- apt/dpkg errors and context ---'; " +
-        "grep -Ein -B 3 -A 5 '(^E:|^Err:|dpkg: error|error processing archive|sub-process .* returned|failed to|dependency problems)' /tmp/lampa-dpkg-install.log | tail -n 70 || true; " +
-        "echo '--- apt/dpkg output (last 120 lines) ---'; tail -n 120 /tmp/lampa-dpkg-install.log; " +
-        "echo '--- apt/dpkg failure log preserved for Android diagnostics ---'; " +
-        "apt-get clean >/dev/null 2>&1 || true; " +
-        "rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*.deb; " +
-        "exit \"\$status\"; fi"
-}
 
 /** Ensure the private Debian rootfs has a persistent, standard 32-hex machine-id. */
 internal fun ensureLampacDebianMachineId(rootfs: File) {
