@@ -25,14 +25,15 @@ internal object ByedpiVpnSocketProtector {
     }
 
     @JvmStatic
-    fun protectSocket(fd: Int) {
-        val service = activeService.get() ?: return
-        try {
-            if (!service.protect(fd)) {
-                Log.w("ByeDPI", "VpnService.protect($fd) returned false")
-            }
+    fun protectSocket(fd: Int): Boolean {
+        val service = activeService.get() ?: return true
+        return try {
+            val protected = service.protect(fd)
+            if (!protected) Log.w("ByeDPI", "VpnService.protect($fd) returned false")
+            protected
         } catch (error: Exception) {
             Log.w("ByeDPI", "Could not protect native socket $fd", error)
+            false
         }
     }
 }
