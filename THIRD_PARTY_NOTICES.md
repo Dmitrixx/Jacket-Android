@@ -31,3 +31,11 @@ The installed server comes from the official full lampac-nextgen.zip release ass
 AndroidX, Gradle, Node.js, Rollup, Babel, Sass, Autoprefixer and other build dependencies retain their upstream licences. Node dependencies are installed during the build and are not copied into the source repositories as vendored package files.
 
 This is a private personal-use build. Any redistribution or network deployment must be reviewed against GPL and AGPL obligations, including source and licence-notice requirements.
+
+## ByeByeDPI companion application
+
+- Project: https://github.com/romanvht/ByeByeDPI
+- Official releases: https://github.com/romanvht/ByeByeDPI/releases
+- Licence: GNU GPL-3.0-only.
+
+ByeByeDPI is not linked into the Lampa APK. Lampa's upstream web client is licensed under GPL-2.0, while ByeByeDPI is GPL-3.0-only; the projects are kept as separate applications. The Lampa settings menu checks for the installed package `io.github.romanvht.byedpi` and launches its original interface, or opens the official release page when it is not installed.
