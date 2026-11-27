@@ -14,6 +14,7 @@ object AdBlockPolicy {
     const val PREFERENCES_NAME = "lampa_adblock"
     const val KEY_BLOCK_AD_DOMAINS = "block_ad_domains"
     const val KEY_BLOCK_TRACKERS = "block_trackers"
+    const val KEY_REMOVE_STREAM_ADS = "remove_stream_ads"
 
     private val adDomains = setOf(
         "doubleclick.net",
