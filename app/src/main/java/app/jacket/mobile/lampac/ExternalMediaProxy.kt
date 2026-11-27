@@ -390,7 +390,7 @@ internal class ExternalMediaProxyServer(
                 }
 
                 responseStarted = true
-                output.write("$statusLine\\r\\n".toByteArray(StandardCharsets.ISO_8859_1))
+                output.write("$statusLine\r\n".toByteArray(StandardCharsets.ISO_8859_1))
                 responseHeaders.forEach { (name, rawValue) ->
                     if (name.equals("Connection", true) ||
                         name.equals("Keep-Alive", true) ||
@@ -405,18 +405,18 @@ internal class ExternalMediaProxyServer(
 
                     val value = if (name.equals("Location", true)) rewriteLocation(rawValue) else rawValue
                     output.write(
-                        "$name: $value\\r\\n".toByteArray(StandardCharsets.ISO_8859_1)
+                        "$name: $value\r\n".toByteArray(StandardCharsets.ISO_8859_1)
                     )
                 }
                 output.write(
-                    "Content-Length: ${body.size}\\r\\n".toByteArray(StandardCharsets.ISO_8859_1)
+                    "Content-Length: ${body.size}\r\n".toByteArray(StandardCharsets.ISO_8859_1)
                 )
                 val manifestMimeType = if (rawPath.endsWith(".mpd", ignoreCase = true) ||
                     contentType?.contains("dash+xml", ignoreCase = true) == true
                 ) "application/dash+xml" else "application/vnd.apple.mpegurl"
-                output.write("Content-Type: $manifestMimeType; charset=utf-8\\r\\n"
+                output.write("Content-Type: $manifestMimeType; charset=utf-8\r\n"
                     .toByteArray(StandardCharsets.ISO_8859_1))
-                output.write("Connection: close\\r\\n\\r\\n".toByteArray(StandardCharsets.ISO_8859_1))
+                output.write("Connection: close\r\n\r\n".toByteArray(StandardCharsets.ISO_8859_1))
                 output.write(body)
                 output.flush()
                 return
