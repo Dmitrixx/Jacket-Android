@@ -73,6 +73,7 @@ android {
     compileSdk = 36
 
     defaultConfig {
+        consumerProguardFiles("consumer-rules.pro")
         minSdk = 28
         buildConfigField("String", "APPLICATION_ID", "\"io.github.romanvht.byedpi\"")
         buildConfigField("String", "VERSION_NAME", "\"1.8.2\"")
@@ -91,10 +92,6 @@ android {
     buildFeatures {
         buildConfig = true
         viewBinding = true
-    }
-
-    defaultConfig {
-        consumerProguardFiles("consumer-rules.pro")
     }
 
     compileOptions {
