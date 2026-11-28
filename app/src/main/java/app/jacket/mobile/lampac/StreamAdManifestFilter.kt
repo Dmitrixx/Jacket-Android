@@ -213,8 +213,6 @@ internal object StreamAdManifestFilter {
                 setFeature("http://apache.org/xml/features/disallow-doctype-decl", true)
                 setFeature("http://xml.org/sax/features/external-general-entities", false)
                 setFeature("http://xml.org/sax/features/external-parameter-entities", false)
-                setAttribute("http://javax.xml.XMLConstants/property/accessExternalDTD", "")
-                setAttribute("http://javax.xml.XMLConstants/property/accessExternalSchema", "")
             }
             factory.newDocumentBuilder().parse(ByteArrayInputStream(content.toByteArray(StandardCharsets.UTF_8)))
         }.getOrNull() ?: return StreamAdFilterResult(content)
@@ -264,8 +262,6 @@ internal object StreamAdManifestFilter {
         if (removedPeriods == 0) return StreamAdFilterResult(content)
         val serialized = runCatching {
             val transformerFactory = TransformerFactory.newInstance().apply {
-                setAttribute("http://javax.xml.XMLConstants/property/accessExternalDTD", "")
-                setAttribute("http://javax.xml.XMLConstants/property/accessExternalStylesheet", "")
             }
             val transformer = transformerFactory.newTransformer().apply {
                 setOutputProperty(OutputKeys.OMIT_XML_DECLARATION, "no")
