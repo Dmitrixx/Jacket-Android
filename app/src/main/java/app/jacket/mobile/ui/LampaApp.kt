@@ -267,13 +267,15 @@ fun LampaApp(onExit: () -> Unit) {
                                             LampacRuntimeInstaller(context).readAdminPanelPassword()
                                         }
                                     }
-                                    adminPanelPassword = result.getOrNull()
-                                    adminPanelPasswordMessage = when {
-                                        result.isFailure -> result.exceptionOrNull()?.message
-                                            ?: "Не удалось прочитать root-пароль Lampac."
-                                        adminPanelPassword == null ->
-                                            "Пароль ещё не создан. Запустите Lampac и повторите запрос."
-                                        else -> null
+                                    if (settingsVisible) {
+                                        adminPanelPassword = result.getOrNull()
+                                        adminPanelPasswordMessage = when {
+                                            result.isFailure -> result.exceptionOrNull()?.message
+                                                ?: "Не удалось прочитать root-пароль Lampac."
+                                            adminPanelPassword == null ->
+                                                "Пароль ещё не создан. Запустите Lampac и повторите запрос."
+                                            else -> null
+                                        }
                                     }
                                     adminPanelPasswordLoading = false
                                 }
