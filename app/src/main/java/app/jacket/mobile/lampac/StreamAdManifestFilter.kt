@@ -264,7 +264,7 @@ internal object StreamAdManifestFilter {
         if (removedPeriods == 0) return StreamAdFilterResult(content)
         val serialized = runCatching {
             val transformerFactory = TransformerFactory.newInstance().apply {
-                setAttribute(XMLConstants.ACCESS_EXTERNAL_DTD, "")
+                setAttribute("http://javax.xml.XMLConstants/property/accessExternalDTD", "")
                 setAttribute("http://javax.xml.XMLConstants/property/accessExternalStylesheet", "")
             }
             val transformer = transformerFactory.newTransformer().apply {
