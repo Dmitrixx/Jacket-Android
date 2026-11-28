@@ -95,7 +95,7 @@ class StreamAdManifestFilterTest {
             #EXT-X-PLAYLIST-TYPE:VOD
             #EXTINF:4.0,
             before.ts
-            #EXT-X-CUE-OUT-CONT:ElapsedTime=4.0,Duration=8.0
+            #EXT-X-CUE-OUT-CONT:ElapsedTime=4.0,Duration=12.0
             #EXTINF:4.0,
             ad-one.ts
             #EXTINF:4.0,
