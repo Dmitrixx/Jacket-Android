@@ -391,7 +391,7 @@ private object LampacZipInstaller {
                 } else {
                     LampacEmbeddedConfig.importInitConfig(stage, previousInitConfig)
                 }
-                LampacCoreModuleManifestPolicy.enableDefaultMediaModules(stage)
+                LampacCoreModuleManifestPolicy.applyDefaultModuleManifestPolicy(stage)
                 File(stage, MARKER_FILE).writeText(version)
                 onProgress(totalBytes, totalBytes)
             }
@@ -980,7 +980,7 @@ class LampacRuntimeInstaller(context: android.content.Context) {
     fun readModuleSettings(): LampacModuleSettings {
         check(isInstalled()) { "Сначала установите встроенный Lampac" }
         val serverDirectory = File(host.debianRootfsDir, "opt/lampac")
-        LampacCoreModuleManifestPolicy.enableDefaultMediaModules(serverDirectory)
+        LampacCoreModuleManifestPolicy.applyDefaultModuleManifestPolicy(serverDirectory)
         val modules = LampacModuleCatalog.discover(serverDirectory)
         val config = readInitConfig()
         return LampacModuleSettings(
@@ -993,7 +993,7 @@ class LampacRuntimeInstaller(context: android.content.Context) {
     fun saveModuleSettings(enabledModuleIds: Set<String>): File {
         check(isInstalled()) { "Сначала установите встроенный Lampac" }
         val serverDirectory = File(host.debianRootfsDir, "opt/lampac")
-        LampacCoreModuleManifestPolicy.enableDefaultMediaModules(serverDirectory)
+        LampacCoreModuleManifestPolicy.applyDefaultModuleManifestPolicy(serverDirectory)
         val modules = LampacModuleCatalog.discover(serverDirectory)
         val updated = LampacEmbeddedConfig.prepareModuleSelection(
             content = readInitConfig(),
@@ -1006,7 +1006,7 @@ class LampacRuntimeInstaller(context: android.content.Context) {
     fun importInitConfig(content: String): File {
         check(isInstalled()) { "Сначала установите встроенный Lampac" }
         val serverDirectory = File(host.debianRootfsDir, "opt/lampac")
-        LampacCoreModuleManifestPolicy.enableDefaultMediaModules(serverDirectory)
+        LampacCoreModuleManifestPolicy.applyDefaultModuleManifestPolicy(serverDirectory)
         return LampacEmbeddedConfig.importInitConfig(serverDirectory, content)
     }
 
