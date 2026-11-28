@@ -54,7 +54,7 @@ class LampacModuleCatalogTest {
 
             assertEquals(
                 setOf("Music", "Tracks", "WatchTogether"),
-                LampacCoreModuleManifestPolicy.enableDefaultMediaModules(root)
+                LampacCoreModuleManifestPolicy.applyDefaultModuleManifestPolicy(root)
             )
             listOf("Music", "Tracks", "WatchTogether").forEach { id ->
                 assertTrue(
@@ -64,7 +64,7 @@ class LampacModuleCatalogTest {
             assertFalse(JSONObject(File(root, "module/AdminPanel/manifest.json").readText()).getBoolean("enable"))
             assertFalse(JSONObject(File(root, "module/ExternalBind/manifest.json").readText()).getBoolean("enable"))
             assertFalse(JSONObject(File(root, "mods/CustomModule/manifest.json").readText()).getBoolean("enable"))
-            assertTrue(LampacCoreModuleManifestPolicy.enableDefaultMediaModules(root).isEmpty())
+            assertTrue(LampacCoreModuleManifestPolicy.applyDefaultModuleManifestPolicy(root).isEmpty())
         } finally {
             root.deleteRecursively()
         }
