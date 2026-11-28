@@ -224,7 +224,7 @@ internal object StreamAdManifestFilter {
         val children = root.childNodes
         for (index in 0 until children.length) {
             val child = children.item(index)
-            if (child is Element && localName(child) == "Period") periods += child
+            if (child is Element && localName(child) == "period") periods += child
         }
 
         var removedPeriods = 0
