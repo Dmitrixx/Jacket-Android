@@ -45,6 +45,7 @@ object LampacEmbeddedConfig {
                 .put("Args", JSONArray(listOf("--no-sandbox")))
         )
         .put("openstat", JSONObject().put("enable", true))
+        .put("gst", JSONObject().put("enable", true))
         .put(
             "JacRed",
             JSONObject()
@@ -76,7 +77,9 @@ object LampacEmbeddedConfig {
         )
         .put(
             "LampaWeb",
-            JSONObject().put("initPlugins", buildDefaultClientPlugins())
+            JSONObject()
+                .put("initPlugins", buildDefaultClientPlugins())
+                .put("customPlugins", buildDefaultCustomPlugins())
         )
         .apply { ensureProviderDefaults(this) }
         .toString(2)
@@ -106,9 +109,12 @@ object LampacEmbeddedConfig {
         val browserChanged = ensureBrowserDefaults(config)
         val jacredChanged = ensureJacRedConfigured(config)
         val clientPluginsChanged = ensureDefaultClientPlugins(config)
+        val customPluginsChanged = ensureDefaultCustomPlugins(config)
+        val gstChanged = ensureGStreamerDefaults(config)
         val providersChanged = ensureProviderDefaults(config)
         if (!modulesChanged && !listenerChanged && !browserChanged &&
-            !jacredChanged && !clientPluginsChanged && !providersChanged
+            !jacredChanged && !clientPluginsChanged && !customPluginsChanged &&
+            !gstChanged && !providersChanged
         ) return target
 
         writeConfigAtomically(target, config.toString(2))
@@ -121,9 +127,12 @@ object LampacEmbeddedConfig {
         val browserChanged = ensureBrowserDefaults(config)
         val jacredChanged = ensureJacRedConfigured(config)
         val clientPluginsChanged = ensureDefaultClientPlugins(config)
+        val customPluginsChanged = ensureDefaultCustomPlugins(config)
+        val gstChanged = ensureGStreamerDefaults(config)
         val providersChanged = ensureProviderDefaults(config)
         return listenerChanged || modulesChanged || browserChanged ||
-            jacredChanged || clientPluginsChanged || providersChanged
+            jacredChanged || clientPluginsChanged || customPluginsChanged ||
+            gstChanged || providersChanged
     }
 
     /**
@@ -135,6 +144,10 @@ object LampacEmbeddedConfig {
     private fun buildDefaultClientPlugins(): JSONObject = JSONObject()
         .put("pirate_store", true)
         .put("jacred", true)
+        .put("dlna", true)
+        .put("tracks", true)
+        .put("catalog", true)
+        .put("watch_together", true)
         .put("tmdbProxy", true)
         .put("cubProxy", true)
         .put("online", true)
@@ -157,6 +170,50 @@ object LampacEmbeddedConfig {
         return before != plugins.toString()
     }
 
+    private fun buildDefaultCustomPlugins(): JSONArray = JSONArray()
+        .put(JSONObject().put("url", "{localhost}/music.js").put("status", 1))
+        .put(JSONObject().put("url", "{localhost}/gst.js").put("status", 1))
+
+    /**
+     * Add the Music and GStreamer client entrypoints without duplicating a
+     * tokenized URL or overwriting user-managed custom plugin entries.
+     */
+    internal fun ensureDefaultCustomPlugins(config: JSONObject): Boolean {
+        val web = config.optJSONObject("LampaWeb") ?: JSONObject().also {
+            config.put("LampaWeb", it)
+        }
+        val plugins = web.optJSONArray("customPlugins") ?: JSONArray().also {
+            web.put("customPlugins", it)
+        }
+        val before = plugins.toString()
+        val defaults = listOf(
+            "{localhost}/music.js" to "music",
+            "{localhost}/gst.js" to "gst"
+        )
+        defaults.forEach { (url, family) ->
+            val familyPattern = Regex(
+                """(?:^|/)""" + Regex.escape(family) + """(?:\.js(?:[?#].*)?|/js(?:/.*)?$)""",
+                RegexOption.IGNORE_CASE
+            )
+            val alreadyConfigured = (0 until plugins.length()).any { index ->
+                val existingUrl = plugins.optJSONObject(index)?.optString("url").orEmpty()
+                familyPattern.containsMatchIn(existingUrl)
+            }
+            if (!alreadyConfigured) {
+                plugins.put(JSONObject().put("url", url).put("status", 1))
+            }
+        }
+        return before != plugins.toString()
+    }
+
+    internal fun ensureGStreamerDefaults(config: JSONObject): Boolean {
+        val gst = config.optJSONObject("gst") ?: JSONObject().also {
+            config.put("gst", it)
+        }
+        val before = gst.toString()
+        if (!gst.has("enable")) gst.put("enable", true)
+        return before != gst.toString()
+    }
     /**
      * Provider defaults that need an Android-safe/current endpoint. Do not replace
      * user-supplied mirrors or credentials. Filmix's upstream default API host
