@@ -38,7 +38,8 @@ import androidx.core.content.ContextCompat
 import app.jacket.mobile.byedpi.core.ByeDpiArgumentParser
 import app.jacket.mobile.byedpi.services.ByeDpiVpnService
 
-private const val DEFAULT_STRATEGY = "--disorder 1"
+private const val DEFAULT_STRATEGY = "--disorder 1 --auto=torst --tlsrec 1+s"
+private const val LEGACY_DEFAULT_STRATEGY = "--disorder 1"
 
 @Composable
 internal fun ByeDpiSettingsDialog(onDismiss: () -> Unit) {
@@ -51,12 +52,22 @@ internal fun ByeDpiSettingsDialog(onDismiss: () -> Unit) {
         mutableStateOf(preferences.getString("mode", "vpn") ?: "vpn")
     }
     var strategy by remember {
-        mutableStateOf(preferences.getString("strategy", DEFAULT_STRATEGY) ?: DEFAULT_STRATEGY)
+        val saved = preferences.getString("strategy", null)
+        // Upgrade only the former built-in default; keep any user-authored strategy intact.
+        val initial = if (saved.isNullOrBlank() || saved == LEGACY_DEFAULT_STRATEGY) {
+            DEFAULT_STRATEGY
+        } else {
+            saved
+        }
+        if (saved != initial) {
+            preferences.edit().putString("strategy", initial).apply()
+        }
+        mutableStateOf(initial)
     }
     var dns by remember {
         mutableStateOf(preferences.getString("dns", "1.1.1.1") ?: "1.1.1.1")
     }
-    var ipv6 by remember { mutableStateOf(preferences.getBoolean("ipv6", false)) }
+    var ipv6 by remember { mutableStateOf(preferences.getBoolean("ipv6", true)) }
     var serviceState by remember {
         mutableStateOf(
             preferences.getString(ByeDpiController.KEY_STATE, ByeDpiController.STATE_STOPPED)
@@ -141,6 +152,25 @@ internal fun ByeDpiSettingsDialog(onDismiss: () -> Unit) {
                     "ByeDPI встроен непосредственно в Lampa. Настройки и служба находятся в этом меню; отдельное приложение устанавливать не нужно."
                 )
 
+                Button(
+                    enabled = !active,
+                    modifier = Modifier.fillMaxWidth(),
+                    onClick = {
+                        mode = "vpn"
+                        strategy = DEFAULT_STRATEGY
+                        dns = "1.1.1.1"
+                        ipv6 = true
+                        error = null
+                    }
+                ) {
+                    Text("Профиль: кинотеатры + торренты")
+                }
+                Text(
+                    "Универсальный профиль без списка доменов: применяется ко всем приложениям устройства, а не только к выбранным сайтам.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+
                 Text("Режим работы", fontWeight = FontWeight.SemiBold)
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     RadioButton(
@@ -183,7 +213,7 @@ internal fun ByeDpiSettingsDialog(onDismiss: () -> Unit) {
                     modifier = Modifier.fillMaxWidth(),
                     label = { Text("Стратегия ByeDPI") },
                     supportingText = {
-                        Text("Например: --disorder 1. Можно вставить полную строку параметров ByeDPI.")
+                        Text("По умолчанию: --disorder 1 --auto=torst --tlsrec 1+s. Можно вставить свою строку параметров.")
                     },
                     minLines = 2,
                     maxLines = 4
@@ -213,6 +243,11 @@ internal fun ByeDpiSettingsDialog(onDismiss: () -> Unit) {
                         onCheckedChange = { ipv6 = it }
                     )
                 }
+                Text(
+                    "Для торрент-клиента: TCP и UDP проходят через VPN-туннель. Стратегия ByeDPI меняет только подходящие TCP/HTTP(S)-запросы; UDP-трафик (DHT/uTP) передаётся без TCP-десинхронизации.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
 
                 Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
                     Text(
