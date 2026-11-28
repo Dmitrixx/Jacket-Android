@@ -169,15 +169,15 @@ class ExternalMediaProxyTest {
                 socket.getOutputStream().apply {
                     write(
                         (
-                            "HTTP/1.1 200 OK\\r\\n" +
-                                "Content-Type: application/vnd.apple.mpegurl\\r\\n" +
-                                "Transfer-Encoding: chunked\\r\\n" +
-                                "Connection: close\\r\\n\\r\\n" +
-                                "${playlistBytes.size.toString(16)}\\r\\n"
+                            "HTTP/1.1 200 OK\r\n" +
+                                "Content-Type: application/vnd.apple.mpegurl\r\n" +
+                                "Transfer-Encoding: chunked\r\n" +
+                                "Connection: close\r\n\r\n" +
+                                "${playlistBytes.size.toString(16)}\r\n"
                             ).toByteArray(StandardCharsets.ISO_8859_1)
                     )
                     write(playlistBytes)
-                    write("\\r\\n0\\r\\n\\r\\n".toByteArray(StandardCharsets.ISO_8859_1))
+                    write("\r\n0\r\n\r\n".toByteArray(StandardCharsets.ISO_8859_1))
                     flush()
                 }
             }
@@ -188,8 +188,8 @@ class ExternalMediaProxyTest {
             assertTrue(proxy.start())
             val response = sendRequest(
                 proxy.port!!,
-                "GET /proxy/q0j7token.m3u8?audio=0 HTTP/1.1\\r\\n" +
-                    "Host: 127.0.0.1\\r\\n\\r\\n"
+                "GET /proxy/q0j7token.m3u8?audio=0 HTTP/1.1\r\n" +
+                    "Host: 127.0.0.1\r\n\r\n"
             )
             upstreamThread.join(3_000)
 
