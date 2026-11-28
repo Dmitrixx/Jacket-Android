@@ -1,5 +1,13 @@
 # Changelog
 
+## 3.0.43 — Universal ByeDPI profile for streaming and torrents
+
+- Add a one-tap all-device VPN profile for online cinemas and torrent apps, with no domain whitelist.
+- Use the upstream ByeDPI strategy `--disorder 1 --auto=torst --tlsrec 1+s`; it applies the TLS-record fallback after a timeout or reset.
+- Enable IPv6 routing by default for new VPN setups and when applying the universal profile.
+- Migrate only the previous built-in `--disorder 1` default; preserve custom user strategies.
+- Clarify that TCP/HTTP(S) desynchronization does not modify UDP-based BitTorrent DHT/uTP traffic.
+
 ## 3.0.42 — Enable the protected Admin Panel; disable Music
 
 - Enable the upstream AdminPanel module in the installed Lampac manifest. Its routes remain protected by Lampac's generated root password.
