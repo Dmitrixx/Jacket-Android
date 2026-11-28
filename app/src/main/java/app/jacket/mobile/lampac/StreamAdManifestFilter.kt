@@ -32,7 +32,7 @@ internal data class StreamAdFilterResult(
  */
 internal object StreamAdManifestFilter {
     private val adPeriodId = Regex(
-        """(^|[-_.])(ad|ads|advert|advertisement|commercial|preroll|midroll|postroll)([-_.]|$)""",
+        """(^|[\\s._-])(ad|ads|advert|advertisement|commercial|preroll|midroll|postroll)(?=$|[\\s._-])""",
         RegexOption.IGNORE_CASE
     )
 
