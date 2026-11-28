@@ -40,6 +40,35 @@ class LampacModuleCatalogTest {
         }
     }
 
+    @Test
+    fun enablesOnlyAllowlistedMediaModulesInOfficialModuleManifests() {
+        val root = Files.createTempDirectory("lampac-core-manifest-policy").toFile()
+        try {
+            writeManifest(File(root, "module/Music/manifest.json"), false)
+            writeManifest(File(root, "module/Tracks/manifest.json"), false)
+            writeManifest(File(root, "module/WatchTogether/manifest.json"), false)
+            writeManifest(File(root, "module/AdminPanel/manifest.json"), false)
+            writeManifest(File(root, "module/ExternalBind/manifest.json"), false)
+            writeManifest(File(root, "mods/CustomModule/manifest.json"), false)
+
+            assertEquals(
+                setOf("Music", "Tracks", "WatchTogether"),
+                LampacCoreModuleManifestPolicy.enableDefaultMediaModules(root)
+            )
+            listOf("Music", "Tracks", "WatchTogether").forEach { id ->
+                assertTrue(
+                    JSONObject(File(root, "module/$id/manifest.json").readText()).getBoolean("enable")
+                )
+            }
+            assertFalse(JSONObject(File(root, "module/AdminPanel/manifest.json").readText()).getBoolean("enable"))
+            assertFalse(JSONObject(File(root, "module/ExternalBind/manifest.json").readText()).getBoolean("enable"))
+            assertFalse(JSONObject(File(root, "mods/CustomModule/manifest.json").readText()).getBoolean("enable"))
+            assertTrue(LampacCoreModuleManifestPolicy.enableDefaultMediaModules(root).isEmpty())
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
     private fun writeManifest(file: File, enabled: Boolean) {
         file.parentFile?.mkdirs()
         file.writeText("""{"enable":$enabled,"tree":["Controller.cs"]}""")
