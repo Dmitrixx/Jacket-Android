@@ -94,7 +94,7 @@ object LampacEmbeddedConfig {
         }
         require(serverDirectory.isDirectory) { "Путь Lampac не является каталогом" }
 
-        LampacCoreModuleManifestPolicy.enableDefaultMediaModules(serverDirectory)
+        LampacCoreModuleManifestPolicy.applyDefaultModuleManifestPolicy(serverDirectory)
 
         val target = File(serverDirectory, "init.conf")
         if (!target.isFile) return writeInitConfig(serverDirectory)
@@ -171,12 +171,12 @@ object LampacEmbeddedConfig {
     }
 
     private fun buildDefaultCustomPlugins(): JSONArray = JSONArray()
-        .put(JSONObject().put("url", "{localhost}/music.js").put("status", 1))
         .put(JSONObject().put("url", "{localhost}/gst.js").put("status", 1))
 
     /**
-     * Add the Music and GStreamer client entrypoints without duplicating a
-     * tokenized URL or overwriting user-managed custom plugin entries.
+     * Add the GStreamer client entrypoint without duplicating a tokenized URL
+     * or overwriting user-managed custom plugin entries. Remove only the Music
+     * URL inserted by the previous Android default profile.
      */
     internal fun ensureDefaultCustomPlugins(config: JSONObject): Boolean {
         val web = config.optJSONObject("LampaWeb") ?: JSONObject().also {
@@ -186,24 +186,30 @@ object LampacEmbeddedConfig {
             web.put("customPlugins", it)
         }
         val before = plugins.toString()
-        val defaults = listOf(
-            "{localhost}/music.js" to "music",
-            "{localhost}/gst.js" to "gst"
-        )
+        val retained = JSONArray()
+        (0 until plugins.length()).forEach { index ->
+            val plugin = plugins.optJSONObject(index) ?: return@forEach
+            if (plugin.optString("url") != "{localhost}/music.js") retained.put(plugin)
+        }
+        if (retained.toString() != plugins.toString()) {
+            web.put("customPlugins", retained)
+        }
+        val activePlugins = web.getJSONArray("customPlugins")
+        val defaults = listOf("{localhost}/gst.js" to "gst")
         defaults.forEach { (url, family) ->
             val familyPattern = Regex(
                 """(?:^|/)""" + Regex.escape(family) + """(?:\.js(?:[?#].*)?|/js(?:/.*)?$)""",
                 RegexOption.IGNORE_CASE
             )
-            val alreadyConfigured = (0 until plugins.length()).any { index ->
-                val existingUrl = plugins.optJSONObject(index)?.optString("url").orEmpty()
+            val alreadyConfigured = (0 until activePlugins.length()).any { index ->
+                val existingUrl = activePlugins.optJSONObject(index)?.optString("url").orEmpty()
                 familyPattern.containsMatchIn(existingUrl)
             }
             if (!alreadyConfigured) {
-                plugins.put(JSONObject().put("url", url).put("status", 1))
+                activePlugins.put(JSONObject().put("url", url).put("status", 1))
             }
         }
-        return before != plugins.toString()
+        return before != activePlugins.toString()
     }
 
     internal fun ensureGStreamerDefaults(config: JSONObject): Boolean {
