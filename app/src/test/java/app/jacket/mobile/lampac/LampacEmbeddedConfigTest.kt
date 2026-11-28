@@ -74,12 +74,12 @@ class LampacEmbeddedConfigTest {
     }
 
     @Test
-    fun defaultCustomPluginsExposeMusicAndGStreamerWithoutReplacingUserEntries() {
+    fun defaultCustomPluginsExposeGStreamerWithoutMusic() {
         val config = JSONObject(LampacEmbeddedConfig.buildJson())
         val plugins = config.getJSONObject("LampaWeb").getJSONArray("customPlugins")
         val urls = (0 until plugins.length()).map { plugins.getJSONObject(it).getString("url") }
 
-        assertTrue("{localhost}/music.js" in urls)
+        assertFalse(urls.any { it.contains("/music") })
         assertTrue("{localhost}/gst.js" in urls)
         assertTrue(LampacEmbeddedConfig.ensureDefaultCustomPlugins(config).not())
     }
@@ -98,10 +98,11 @@ class LampacEmbeddedConfigTest {
         val actual = config.getJSONObject("LampaWeb").getJSONArray("customPlugins")
         val urls = (0 until actual.length()).map { actual.getJSONObject(it).getString("url") }
 
-        assertEquals(3, actual.length())
-        assertTrue("{localhost}/music/js/private-token" in urls)
+        assertEquals(2, actual.length())
+        assertFalse(urls.any { it.contains("/music") })
         assertTrue("https://example.invalid/custom.js" in urls)
         assertTrue("{localhost}/gst.js" in urls)
+        assertFalse(LampacEmbeddedConfig.ensureDefaultCustomPlugins(config))
     }
 
     @Test
