@@ -31,7 +31,7 @@ internal object StreamAdManifestFilter {
      * and /pre-roll/creative.m4s.
      */
     private val adMediaToken = Regex(
-        """(?:^|[/?#&=._:\-\s])(?:ad|ads|advert|advertisement|advertising|commercial|pre[-_.]?roll|mid[-_.]?roll|post[-_.]?roll|sponsor(?:ed)?|promo(?:tion)?)(?:[-_.]?\d+)?(?=$|[/?#&=._:\-\s])""",
+        """(?:^|[/?#&=._:\-\s])(?:ad[-_.]?(?:break|segment|spot|pod|marker)|ad|ads|advert|advertisement|advertising|commercial|vast|vmap|interstitial|pre[-_.]?roll|mid[-_.]?roll|post[-_.]?roll|sponsor(?:ed|ship)?|promo(?:tional|tion)?)(?:[-_.]?\d+)?(?=$|[/?#&=._:\-\s])""",
         RegexOption.IGNORE_CASE
     )
 
@@ -195,7 +195,10 @@ internal object StreamAdManifestFilter {
             }
 
             if ((line.startsWith("#EXT-X-MEDIA:", true) ||
-                    line.startsWith("#EXT-X-I-FRAME-STREAM-INF:", true)) &&
+                    line.startsWith("#EXT-X-I-FRAME-STREAM-INF:", true) ||
+                    line.startsWith("#EXT-X-RENDITION-REPORT:", true) ||
+                    line.startsWith("#EXT-X-SESSION-DATA:", true) ||
+                    line.startsWith("#EXT-X-MAP:", true)) &&
                 hasAdUriAttribute(line)
             ) {
                 removedSegments++
@@ -218,10 +221,8 @@ internal object StreamAdManifestFilter {
                 line.startsWith("#EXT-X-PRELOAD-HINT:", true)
             ) {
                 if (insideAd || hasAdUriAttribute(line)) {
-                    if (hasAdUriAttribute(line)) {
-                        removedSegments++
-                        markersFound = true
-                    }
+                    removedSegments++
+                    markersFound = true
                 } else {
                     output += resolveHlsUriAttribute(rawLine, baseUrl)
                 }
@@ -290,6 +291,7 @@ internal object StreamAdManifestFilter {
         }
 
         var removedPeriods = 0
+        var markersFound = false
         periods.forEach { period ->
             val adLabel = buildString {
                 append(period.getAttribute("contentType"))
@@ -323,13 +325,21 @@ internal object StreamAdManifestFilter {
                 }
             }
 
-            if (adMediaToken.containsMatchIn(adLabel) || hasScte35CueOut(period)) {
+            val hasExplicitAdLabel = adMediaToken.containsMatchIn(adLabel)
+            if (hasScte35CueOut(period)) markersFound = true
+
+            // SCTE-35 can mark an insertion point inside the actual movie Period.
+            // Only remove a Period when its own metadata/identity clearly labels it as an ad.
+            if (hasExplicitAdLabel) {
                 period.parentNode.removeChild(period)
                 removedPeriods++
+                markersFound = true
             }
         }
 
-        if (removedPeriods == 0) return StreamAdFilterResult(content)
+        if (removedPeriods == 0) {
+            return StreamAdFilterResult(content, markersFound = markersFound)
+        }
         val serialized = runCatching {
             val transformer = TransformerFactory.newInstance().newTransformer().apply {
                 setOutputProperty(OutputKeys.OMIT_XML_DECLARATION, "no")
@@ -343,7 +353,7 @@ internal object StreamAdManifestFilter {
         return StreamAdFilterResult(
             content = serialized,
             removedPeriods = removedPeriods,
-            markersFound = true
+            markersFound = markersFound
         )
     }
 
@@ -351,6 +361,7 @@ internal object StreamAdManifestFilter {
         line.startsWith("#EXT-X-BYTERANGE", true) ||
             line.startsWith("#EXT-X-PROGRAM-DATE-TIME", true) ||
             line.startsWith("#EXT-X-GAP", true) ||
+            line.equals("#EXT-X-DISCONTINUITY", true) ||
             line.startsWith("#EXT-X-DATERANGE:", true)
 
     private fun isScte35OutDateRange(line: String): Boolean =
@@ -363,20 +374,22 @@ internal object StreamAdManifestFilter {
 
     private fun isAppleInterstitial(line: String): Boolean =
         line.startsWith("#EXT-X-DATERANGE:", true) &&
-            line.contains("CLASS=\"com.apple.hls.interstitial\"", true) &&
-            line.contains("X-ASSET-URI=", true)
+            line.contains("com.apple.hls.interstitial", true) &&
+            (line.contains("X-ASSET-URI=", true) ||
+                line.contains("X-ASSET-LIST=", true))
 
     private fun isAdDateRange(line: String): Boolean {
         if (!line.startsWith("#EXT-X-DATERANGE:", true)) return false
-        val label = listOf("ID", "CLASS", "X-ASSET-URI", "ASSET-URI")
-            .mapNotNull { attributeValue(line, it) }
-            .joinToString(" ")
+        val label = listOf(
+            "ID", "CLASS", "X-ASSET-URI", "X-ASSET-LIST", "ASSET-URI",
+            "X-AD-ID", "X-AD-URL", "SCTE35-CMD"
+        ).mapNotNull { attributeValue(line, it) }.joinToString(" ")
         return adMediaToken.containsMatchIn(label)
     }
 
     private fun hasAdUriAttribute(line: String): Boolean {
-        val uri = attributeValue(line, "URI")
-            ?: attributeValue(line, "X-ASSET-URI")
+        val uri = listOf("URI", "X-ASSET-URI", "X-ASSET-LIST", "ASSET-URI")
+            .firstNotNullOfOrNull { attributeValue(line, it) }
             ?: return false
         return isAdMediaUri(uri)
     }
@@ -384,13 +397,19 @@ internal object StreamAdManifestFilter {
     private fun isAdMediaUri(value: String): Boolean {
         val parsed = runCatching { URI(value.trim()) }.getOrNull()
         val candidate = if (parsed != null) {
-            parsed.rawPath.orEmpty() + parsed.rawQuery?.let { "?$it" }.orEmpty()
+            parsed.host.orEmpty() + parsed.rawPath.orEmpty() +
+                parsed.rawQuery?.let { "?$it" }.orEmpty()
         } else {
             value
         }
-        val decoded = runCatching {
-            URLDecoder.decode(candidate, StandardCharsets.UTF_8.name())
-        }.getOrDefault(candidate)
+        var decoded = candidate
+        repeat(2) {
+            val next = runCatching {
+                URLDecoder.decode(decoded, StandardCharsets.UTF_8.name())
+            }.getOrDefault(decoded)
+            if (next == decoded) return@repeat
+            decoded = next
+        }
         return adMediaToken.containsMatchIn(decoded)
     }
 

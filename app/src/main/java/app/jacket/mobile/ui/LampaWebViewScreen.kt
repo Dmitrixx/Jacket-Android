@@ -232,13 +232,19 @@ private fun interceptStreamAdManifest(
         path.endsWith(".mpd") ||
         requestedUri.getQueryParameter("format")?.contains("m3u8", true) == true ||
         requestedUri.getQueryParameter("format")?.contains("dash", true) == true
-    if (!isManifest) return null
+    val isLocalLampacMediaRoute = isLocalLampaOrigin(requestedUri) && (
+        path == "/ts/stream" || path.startsWith("/ts/stream/") ||
+            path == "/ts/gst" || path.startsWith("/ts/gst/") ||
+            path.startsWith("/proxy/") || path.startsWith("/proxy-dash/")
+        )
+    if (!isManifest && !isLocalLampacMediaRoute) return null
 
     val connection = runCatching {
         (URL(requestedUri.toString()).openConnection() as? HttpURLConnection)
             ?: return null
     }.getOrNull() ?: return null
 
+    var connectionTransferredToWebView = false
     return try {
         connection.instanceFollowRedirects = true
         connection.connectTimeout = 10_000
@@ -248,7 +254,7 @@ private fun interceptStreamAdManifest(
 
         val permittedRequestHeaders = setOf(
             "accept", "accept-language", "authorization", "cookie",
-            "origin", "referer", "user-agent"
+            "if-range", "range", "origin", "referer", "user-agent"
         )
         request.requestHeaders.forEach { (name, value) ->
             if (name.lowercase() in permittedRequestHeaders &&
@@ -259,6 +265,58 @@ private fun interceptStreamAdManifest(
         }
 
         val status = connection.responseCode
+        val upstreamContentType = connection.contentType.orEmpty()
+        val normalizedContentType = upstreamContentType.substringBefore(';').trim().lowercase()
+        val responseIsManifest = isManifest ||
+            normalizedContentType.contains("mpegurl") ||
+            normalizedContentType.contains("dash+xml")
+
+        if (!responseIsManifest) {
+            val mediaStream = if (status >= 400) connection.errorStream else connection.inputStream
+            val responseHeaders = linkedMapOf<String, String>()
+            listOf(
+                "Access-Control-Allow-Origin",
+                "Access-Control-Allow-Credentials",
+                "Access-Control-Allow-Headers",
+                "Access-Control-Allow-Methods",
+                "Access-Control-Expose-Headers",
+                "Accept-Ranges",
+                "Content-Range",
+                "Content-Disposition",
+                "Cache-Control",
+                "ETag",
+                "Expires",
+                "Last-Modified",
+                "Vary"
+            ).forEach { name ->
+                connection.getHeaderField(name)?.let { responseHeaders[name] = it }
+            }
+            connection.getHeaderField("Content-Length")?.let {
+                responseHeaders["Content-Length"] = it
+            }
+
+            val mimeType = normalizedContentType.ifBlank { "application/octet-stream" }
+            val mediaBody = mediaStream ?: ByteArrayInputStream(ByteArray(0))
+            val managedStream = object : java.io.FilterInputStream(mediaBody) {
+                override fun close() {
+                    try {
+                        super.close()
+                    } finally {
+                        connection.disconnect()
+                    }
+                }
+            }
+            connectionTransferredToWebView = true
+            return WebResourceResponse(
+                mimeType,
+                "UTF-8",
+                status,
+                connection.responseMessage ?: "OK",
+                responseHeaders,
+                managedStream
+            )
+        }
+
         val responseStream = if (status >= 400) connection.errorStream else connection.inputStream
         val rawBytes = responseStream?.use { input ->
             val output = ByteArrayOutputStream()
@@ -268,8 +326,8 @@ private fun interceptStreamAdManifest(
                 val count = input.read(buffer)
                 if (count < 0) break
                 total += count
-                if (total > 2 * 1024 * 1024) {
-                    throw IllegalStateException("Manifest exceeds 2 MiB safety limit")
+                if (total > 8 * 1024 * 1024) {
+                    throw IllegalStateException("Manifest exceeds 8 MiB safety limit")
                 }
                 output.write(buffer, 0, count)
             }
@@ -298,7 +356,7 @@ private fun interceptStreamAdManifest(
             )
         }
 
-        val contentType = connection.contentType?.substringBefore(';')?.trim().orEmpty()
+        val contentType = upstreamContentType.substringBefore(';').trim()
         val mimeType = when {
             contentType.isNotBlank() -> contentType
             path.endsWith(".mpd") -> "application/dash+xml"
@@ -335,7 +393,7 @@ private fun interceptStreamAdManifest(
         )
         null
     } finally {
-        connection.disconnect()
+        if (!connectionTransferredToWebView) connection.disconnect()
     }
 }
 

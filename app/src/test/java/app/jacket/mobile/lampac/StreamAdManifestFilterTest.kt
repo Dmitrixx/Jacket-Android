@@ -240,6 +240,71 @@ class StreamAdManifestFilterTest {
     }
 
     @Test
+    fun removesAdSegmentsNamedByHostAndNestedUrlEncoding() {
+        val playlist = """
+            #EXTM3U
+            #EXT-X-PLAYLIST-TYPE:VOD
+            #EXTINF:6.0,
+            https://ads.cdn.example.test/%252Fcampaign%252Fads%252Fspot-01.ts
+            #EXTINF:6.0,
+            https://cdn.example.test/content/download.mp4
+            #EXT-X-ENDLIST
+        """.trimIndent()
+
+        val result = StreamAdManifestFilter.filterHls(playlist)
+
+        assertEquals(1, result.removedSegments)
+        assertFalse(result.content.contains("spot-01.ts"))
+        assertTrue(result.content.contains("download.mp4"))
+    }
+
+    @Test
+    fun removesAppleInterstitialAssetListMarker() {
+        val playlist = """
+            #EXTM3U
+            #EXT-X-PLAYLIST-TYPE:VOD
+            #EXT-X-DATERANGE:ID="interstitial-2",CLASS="com.apple.hls.interstitial",START-DATE="2026-01-01T00:00:00Z",X-ASSET-LIST="https://cdn.example.test/ads/interstitial.json"
+            #EXTINF:10.0,
+            movie.ts
+            #EXT-X-ENDLIST
+        """.trimIndent()
+
+        val result = StreamAdManifestFilter.filterHls(playlist)
+
+        assertEquals(1, result.removedInterstitialMarkers)
+        assertFalse(result.content.contains("interstitial.json"))
+        assertTrue(result.content.contains("movie.ts"))
+    }
+
+    @Test
+    fun removesMarkedLiveAdSegmentsWhenManifestUrlIsAvailable() {
+        val playlist = """
+            #EXTM3U
+            #EXT-X-TARGETDURATION:6
+            #EXT-X-MEDIA-SEQUENCE:20
+            #EXTINF:6.0,
+            live-before.ts
+            #EXT-X-CUE-OUT:6
+            #EXTINF:6.0,
+            live-ad.ts
+            #EXT-X-CUE-IN
+            #EXTINF:6.0,
+            live-after.ts
+        """.trimIndent()
+
+        val result = StreamAdManifestFilter.filterHls(
+            playlist,
+            "https://live.example.test/channel/index.m3u8"
+        )
+
+        assertEquals(1, result.removedSegments)
+        assertFalse(result.content.contains("live-ad.ts"))
+        assertTrue(result.content.contains("live-before.ts"))
+        assertTrue(result.content.contains("live-after.ts"))
+        assertTrue(result.content.contains("#EXT-X-DISCONTINUITY"))
+    }
+
+    @Test
     fun removesExplicitAdPeriodsFromDashManifest() {
         val mpd = """
             <?xml version="1.0" encoding="UTF-8"?>
@@ -264,7 +329,7 @@ class StreamAdManifestFilterTest {
             <?xml version="1.0" encoding="UTF-8"?>
             <MPD xmlns="urn:mpeg:dash:schema:mpd:2011" type="static">
               <Period id="content-before"><AdaptationSet/></Period>
-              <Period id="break-start">
+              <Period id="ad-break-start">
                 <EventStream schemeIdUri="urn:scte:scte35:2013:xml" timescale="90000">
                   <Event id="1" duration="900000">
                     <SpliceInfoSection>
@@ -284,6 +349,31 @@ class StreamAdManifestFilterTest {
         assertFalse(result.content.contains("break-start"))
         assertTrue(result.content.contains("content-before"))
         assertTrue(result.content.contains("content-after"))
+    }
+
+    @Test
+    fun keepsMoviePeriodWhenScte35OnlyMarksAnInsertionPoint() {
+        val mpd = """
+            <MPD xmlns="urn:mpeg:dash:schema:mpd:2011" type="static">
+              <Period id="feature-film">
+                <EventStream schemeIdUri="urn:scte:scte35:2013:xml" timescale="90000">
+                  <Event id="1" duration="900000">
+                    <SpliceInfoSection>
+                      <SpliceInsert outOfNetworkIndicator="true"/>
+                    </SpliceInfoSection>
+                  </Event>
+                </EventStream>
+                <AdaptationSet/>
+              </Period>
+            </MPD>
+        """.trimIndent()
+
+        val result = StreamAdManifestFilter.filterDash(mpd)
+
+        assertEquals(0, result.removedPeriods)
+        assertTrue(result.content.contains("feature-film"))
+        assertTrue(result.markersFound)
+        assertFalse(result.changed)
     }
 
     @Test

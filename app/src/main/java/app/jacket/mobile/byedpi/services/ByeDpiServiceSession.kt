@@ -103,6 +103,7 @@ internal class ByeDpiServiceSession(
     fun stop() {
         if (stopping) return
         stopping = true
+        ByeDpiController.clearSession(service)
         emit(ByeDpiController.STATE_STOPPING, "Останавливаем ByeDPI…")
         thread(name = "ByeDPI-Stop", isDaemon = true) {
             runCatching { engine?.stopTunnel() }
