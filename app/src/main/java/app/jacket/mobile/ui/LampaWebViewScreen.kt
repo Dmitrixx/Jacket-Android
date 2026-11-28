@@ -44,6 +44,7 @@ import app.jacket.mobile.adblock.AdBlockPolicy
 import app.jacket.mobile.lampac.ExternalMediaProxy
 import app.jacket.mobile.lampac.StreamAdManifestFilter
 import app.jacket.mobile.lampac.LampaWebAssetUpdater
+import app.jacket.mobile.lampac.LampacRuntimeState
 import app.jacket.mobile.lampac.routeExternalMediaUrl
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
