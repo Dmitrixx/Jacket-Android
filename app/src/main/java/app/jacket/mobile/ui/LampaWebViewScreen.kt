@@ -62,7 +62,8 @@ fun LampaWebViewScreen(
     onBack: () -> Unit,
     onOpenLampacSettings: () -> Unit,
     onOpenAdBlockSettings: () -> Unit,
-    onOpenByeDpi: () -> Unit
+    onOpenByeDpi: () -> Unit,
+    adminPanelNavigationRequest: Int = 0
 ) {
     val context = LocalContext.current
     val playerOpen = remember { mutableStateOf(false) }
@@ -147,6 +148,12 @@ fun LampaWebViewScreen(
             }
 
             loadUrl("$LAMPA_ORIGIN/app/index.html")
+        }
+    }
+
+    LaunchedEffect(adminPanelNavigationRequest) {
+        if (adminPanelNavigationRequest > 0) {
+            webView.loadUrl("$LAMPA_ORIGIN/adminpanel/auth")
         }
     }
 
