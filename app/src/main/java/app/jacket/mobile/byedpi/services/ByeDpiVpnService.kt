@@ -24,7 +24,11 @@ class ByeDpiVpnService : VpnService() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        when (intent?.action) {
+        val startIntent = intent ?: run {
+            stopSelf(startId)
+            return START_NOT_STICKY
+        }
+        when (startIntent.action) {
             ByeDpiServiceContract.ACTION_QUERY -> {
                 val current = session
                 if (current != null) {
@@ -64,7 +68,7 @@ class ByeDpiVpnService : VpnService() {
         }
 
         startForegroundCompat(createNotification("Запускается VPN-туннель ByeDPI"))
-        val args = intent?.getStringArrayExtra(ByeDpiServiceContract.EXTRA_ARGS)
+        val args = startIntent.getStringArrayExtra(ByeDpiServiceContract.EXTRA_ARGS)
         if (args.isNullOrEmpty()) {
             ByeDpiController.publishState(
                 this,
@@ -78,8 +82,8 @@ class ByeDpiVpnService : VpnService() {
         if (session == null) session = ByeDpiServiceSession(this, this)
         session?.start(
             args,
-            intent.getStringExtra(ByeDpiServiceContract.EXTRA_DNS).orEmpty(),
-            intent.getBooleanExtra(ByeDpiServiceContract.EXTRA_IPV6, false)
+            startIntent.getStringExtra(ByeDpiServiceContract.EXTRA_DNS).orEmpty(),
+            startIntent.getBooleanExtra(ByeDpiServiceContract.EXTRA_IPV6, false)
         )
         return START_NOT_STICKY
     }
