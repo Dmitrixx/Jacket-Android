@@ -188,7 +188,7 @@ object LampacEmbeddedConfig {
         val before = plugins.toString()
         val retained = JSONArray()
         val musicRoutePattern = Regex(
-            """(?:^|/)music(?:\\.js(?:[?#].*)?|/js(?:/.*)?$)""",
+            """(?:^|/)music(?:\.js(?:[?#].*)?|/js(?:/.*)?$)""",
             RegexOption.IGNORE_CASE
         )
         (0 until plugins.length()).forEach { index ->
