@@ -32,7 +32,7 @@ internal data class StreamAdFilterResult(
  */
 internal object StreamAdManifestFilter {
     private val adPeriodId = Regex(
-        """(^|[\\s._-])(ad|ads|advert|advertisement|commercial|preroll|midroll|postroll)(?=$|[\\s._-])""",
+        """(^|[^A-Za-z0-9])(advertisement|advert|commercial|preroll|midroll|postroll|ads|ad)(?=$|[^A-Za-z0-9])""",
         RegexOption.IGNORE_CASE
     )
 
@@ -218,11 +218,20 @@ internal object StreamAdManifestFilter {
         }.getOrNull() ?: return StreamAdFilterResult(content)
 
         val root = document.documentElement ?: return StreamAdFilterResult(content)
+        // Query the namespace-aware DOM by local tag name instead of comparing
+        // provider-specific qualified names from direct child nodes.
         val periods = mutableListOf<Element>()
-        val children = root.childNodes
-        for (index in 0 until children.length) {
-            val child = children.item(index)
-            if (child is Element && localName(child) == "period") periods += child
+        val allPeriods = document.getElementsByTagNameNS("*", "Period")
+        for (index in 0 until allPeriods.length) {
+            val period = allPeriods.item(index) as? Element ?: continue
+            if (period.parentNode === root) periods += period
+        }
+        if (periods.isEmpty()) {
+            val fallbackPeriods = document.getElementsByTagName("Period")
+            for (index in 0 until fallbackPeriods.length) {
+                val period = fallbackPeriods.item(index) as? Element ?: continue
+                if (period.parentNode === root) periods += period
+            }
         }
 
         var removedPeriods = 0
