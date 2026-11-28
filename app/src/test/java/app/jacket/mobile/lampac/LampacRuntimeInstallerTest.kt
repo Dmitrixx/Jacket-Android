@@ -12,6 +12,40 @@ import java.nio.file.Files
 
 class LampacRuntimeInstallerTest {
     @Test
+    fun readsAdminPanelRootPasswordOnlyFromThePrivateLampacPasswdFile() {
+        val root = Files.createTempDirectory("lampac-admin-password").toFile()
+        try {
+            assertEquals(null, readLampacAdminPassword(root))
+
+            val passwordFile = File(root, "passwd")
+            passwordFile.writeText("  generated-root-secret\n")
+            assertEquals("generated-root-secret", readLampacAdminPassword(root))
+
+            passwordFile.writeText("   \n")
+            assertEquals(null, readLampacAdminPassword(root))
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun rejectsAnOversizedAdminPanelPasswordFile() {
+        val root = Files.createTempDirectory("lampac-admin-password-size").toFile()
+        try {
+            File(root, "passwd").writeText("x".repeat(4097))
+            var rejected = false
+            try {
+                readLampacAdminPassword(root)
+            } catch (_: IllegalArgumentException) {
+                rejected = true
+            }
+            assertTrue(rejected)
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
     fun debianBootstrapUsesTheUpstreamForkyOciImageAndStableAlias() {
         assertEquals(
             listOf("install", "docker.io/library/debian:forky-slim", "--override-alias", "lampac-debian"),
