@@ -91,6 +91,8 @@ object LampacEmbeddedConfig {
         }
         require(serverDirectory.isDirectory) { "Путь Lampac не является каталогом" }
 
+        LampacCoreModuleManifestPolicy.enableDefaultMediaModules(serverDirectory)
+
         val target = File(serverDirectory, "init.conf")
         if (!target.isFile) return writeInitConfig(serverDirectory)
 
