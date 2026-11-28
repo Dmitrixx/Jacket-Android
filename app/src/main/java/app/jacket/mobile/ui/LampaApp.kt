@@ -65,6 +65,12 @@ fun LampaApp(onExit: () -> Unit) {
     LaunchedEffect(runtime.logs.size) {
         runtimeLogScrollState.scrollTo(runtimeLogScrollState.maxValue)
     }
+    LaunchedEffect(settingsVisible) {
+        if (!settingsVisible) {
+            adminPanelPassword = null
+            adminPanelPasswordMessage = null
+        }
+    }
     var settingsVisible by remember { mutableStateOf(false) }
     var adminPanelPassword by remember { mutableStateOf<String?>(null) }
     var adminPanelPasswordMessage by remember { mutableStateOf<String?>(null) }
@@ -227,6 +233,10 @@ fun LampaApp(onExit: () -> Unit) {
                         }
                         Text(
                             "Ненужные модули можно отключить: они будут исключены из компиляции при следующем запуске Lampac.",
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                        Text(
+                            "Admin Panel защищена root-паролем. Сервер остаётся доступен только через 127.0.0.1.",
                             style = MaterialTheme.typography.bodySmall
                         )
                         TextButton(
