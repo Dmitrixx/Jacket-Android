@@ -1,6 +1,7 @@
+package app.jacket.mobile.ui
+
 import android.content.Intent
 import android.net.Uri
-package app.jacket.mobile.ui
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -65,12 +66,6 @@ fun LampaApp(onExit: () -> Unit) {
     LaunchedEffect(runtime.logs.size) {
         runtimeLogScrollState.scrollTo(runtimeLogScrollState.maxValue)
     }
-    LaunchedEffect(settingsVisible) {
-        if (!settingsVisible) {
-            adminPanelPassword = null
-            adminPanelPasswordMessage = null
-        }
-    }
     var settingsVisible by remember { mutableStateOf(false) }
     var adminPanelPassword by remember { mutableStateOf<String?>(null) }
     var adminPanelPasswordMessage by remember { mutableStateOf<String?>(null) }
@@ -102,6 +97,12 @@ fun LampaApp(onExit: () -> Unit) {
     // Read the delegated StateFlow snapshot once; this also keeps nullable progress
     // smart-casts stable inside Compose's deferred progress lambda.
     val progress = runtime.progress
+    LaunchedEffect(settingsVisible) {
+        if (!settingsVisible) {
+            adminPanelPassword = null
+            adminPanelPasswordMessage = null
+        }
+    }
 
     LaunchedEffect(Unit) {
         installed = withContext(Dispatchers.IO) {
