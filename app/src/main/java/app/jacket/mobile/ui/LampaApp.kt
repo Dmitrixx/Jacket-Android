@@ -1,8 +1,5 @@
 package app.jacket.mobile.ui
 
-import android.content.Intent
-import android.net.Uri
-
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -70,6 +67,7 @@ fun LampaApp(onExit: () -> Unit) {
     var adminPanelPassword by remember { mutableStateOf<String?>(null) }
     var adminPanelPasswordMessage by remember { mutableStateOf<String?>(null) }
     var adminPanelPasswordLoading by remember { mutableStateOf(false) }
+    var adminPanelNavigationRequest by remember { mutableStateOf(0) }
     var adBlockSettingsVisible by remember { mutableStateOf(false) }
     var byeDpiSettingsVisible by remember { mutableStateOf(false) }
     var blockAdDomains by remember { mutableStateOf(true) }
@@ -184,7 +182,8 @@ fun LampaApp(onExit: () -> Unit) {
                 onBack = onExit,
                 onOpenLampacSettings = { settingsVisible = true },
                 onOpenAdBlockSettings = { adBlockSettingsVisible = true },
-                onOpenByeDpi = { byeDpiSettingsVisible = true }
+                onOpenByeDpi = { byeDpiSettingsVisible = true },
+                adminPanelNavigationRequest = adminPanelNavigationRequest
             )
         }
 
@@ -243,16 +242,8 @@ fun LampaApp(onExit: () -> Unit) {
                         TextButton(
                             enabled = runtime.phase == LampacRuntimePhase.RUNNING,
                             onClick = {
-                                runCatching {
-                                    context.startActivity(
-                                        Intent(
-                                            Intent.ACTION_VIEW,
-                                            Uri.parse("http://127.0.0.1:9118/adminpanel/auth")
-                                        )
-                                    )
-                                }.onFailure {
-                                    adminPanelPasswordMessage = "Не удалось открыть браузер: ${it.message.orEmpty()}"
-                                }
+                                settingsVisible = false
+                                adminPanelNavigationRequest += 1
                             }
                         ) {
                             Text("Открыть Admin Panel")
