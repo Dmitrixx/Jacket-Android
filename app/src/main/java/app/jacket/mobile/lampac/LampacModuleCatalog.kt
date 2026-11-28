@@ -115,7 +115,7 @@ object LampacCoreModuleManifestPolicy {
         val moduleRoot = File(serverDirectory, "module")
         if (!moduleRoot.isDirectory) return emptySet()
 
-        val enabled = LinkedHashSet<String>()
+        val changedModuleIds = LinkedHashSet<String>()
         val modules = LampacModuleCatalog.discover(serverDirectory)
             .filter {
                 it.sourceRoot == "module" &&
@@ -151,10 +151,10 @@ object LampacCoreModuleManifestPolicy {
 
             json.put("enable", shouldEnable)
             writeManifestAtomically(manifest, json.toString(2))
-            enabled += module.id
+            changedModuleIds += module.id
         }
 
-        return enabled
+        return changedModuleIds
     }
 
     private fun writeManifestAtomically(target: File, content: String) {
