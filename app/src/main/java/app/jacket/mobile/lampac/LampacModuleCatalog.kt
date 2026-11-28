@@ -94,16 +94,18 @@ object LampacModuleCatalog {
 }
 
 /**
- * Selects the small set of optional, user-facing media modules that should be
- * ready in the Android bundle. Administrative, account-security and legacy
- * server modules deliberately remain disabled in their upstream manifests.
+ * Selects the Android default module profile. AdminPanel is enabled but
+ * remains protected by Lampac's root password. Music is deliberately
+ * disabled; unrelated and security-sensitive modules retain upstream flags.
  */
 object LampacCoreModuleManifestPolicy {
-    val DEFAULT_ENABLED_MEDIA_MODULES: Set<String> =
-        linkedSetOf("Music", "Tracks", "WatchTogether")
+    val DEFAULT_ENABLED_MODULES: Set<String> =
+        linkedSetOf("AdminPanel", "Tracks", "WatchTogether")
+
+    val DEFAULT_DISABLED_MODULES: Set<String> = setOf("Music")
 
     /**
-     * Enables selected modules from the installed official module tree.
+     * Applies the selected defaults only to official module manifests.
      * User-added modules under mods/ are never modified. Other manifest fields
      * and every non-selected upstream module keep their original values.
      *
@@ -115,7 +117,10 @@ object LampacCoreModuleManifestPolicy {
 
         val enabled = LinkedHashSet<String>()
         val modules = LampacModuleCatalog.discover(serverDirectory)
-            .filter { it.sourceRoot == "module" && it.id in DEFAULT_ENABLED_MEDIA_MODULES }
+            .filter {
+                it.sourceRoot == "module" &&
+                    (it.id in DEFAULT_ENABLED_MODULES || it.id in DEFAULT_DISABLED_MODULES)
+            }
 
         modules.forEach { module ->
             val relativePath = buildString {
@@ -141,9 +146,10 @@ object LampacCoreModuleManifestPolicy {
             } catch (error: Exception) {
                 throw IOException("Не удалось прочитать manifest.json модуля ${module.id}", error)
             }
-            if (json.optBoolean("enable", false)) return@forEach
+            val shouldEnable = module.id in DEFAULT_ENABLED_MODULES
+            if (json.optBoolean("enable", false) == shouldEnable) return@forEach
 
-            json.put("enable", true)
+            json.put("enable", shouldEnable)
             writeManifestAtomically(manifest, json.toString(2))
             enabled += module.id
         }
