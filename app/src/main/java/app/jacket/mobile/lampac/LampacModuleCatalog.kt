@@ -90,3 +90,82 @@ object LampacModuleCatalog {
         )
     }
 }
+
+/**
+ * Selects the small set of optional, user-facing media modules that should be
+ * ready in the Android bundle. Administrative, account-security and legacy
+ * server modules deliberately remain disabled in their upstream manifests.
+ */
+object LampacCoreModuleManifestPolicy {
+    val DEFAULT_ENABLED_MEDIA_MODULES: Set<String> =
+        linkedSetOf("Music", "Tracks", "WatchTogether")
+
+    /**
+     * Enables selected modules from the installed official module tree.
+     * User-added modules under mods/ are never modified. Other manifest fields
+     * and every non-selected upstream module keep their original values.
+     *
+     * @return ids whose manifest changed during this call.
+     */
+    fun enableDefaultMediaModules(serverDirectory: File): Set<String> {
+        val moduleRoot = File(serverDirectory, "module")
+        if (!moduleRoot.isDirectory) return emptySet()
+
+        val enabled = LinkedHashSet<String>()
+        val modules = LampacModuleCatalog.discover(serverDirectory)
+            .filter { it.sourceRoot == "module" && it.id in DEFAULT_ENABLED_MEDIA_MODULES }
+
+        modules.forEach { module ->
+            val relativePath = buildString {
+                append(module.id)
+                if (module.groupId != null) {
+                    insert(0, module.groupId + File.separator)
+                }
+                append(File.separator)
+                append("manifest.json")
+            }
+            val manifest = File(moduleRoot, relativePath)
+            val path = manifest.toPath()
+            if (!Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS)) return@forEach
+
+            val rootPath = moduleRoot.canonicalFile.toPath()
+            val canonicalManifest = manifest.canonicalFile.toPath()
+            require(canonicalManifest.startsWith(rootPath)) {
+                "Путь manifest.json модуля выходит за пределы каталога Lampac"
+            }
+
+            val json = try {
+                JSONObject(manifest.readText(Charsets.UTF_8))
+            } catch (error: Exception) {
+                throw IOException("Не удалось прочитать manifest.json модуля ${module.id}", error)
+            }
+            if (json.optBoolean("enable", false)) return@forEach
+
+            json.put("enable", true)
+            writeManifestAtomically(manifest, json.toString(2))
+            enabled += module.id
+        }
+
+        return enabled
+    }
+
+    private fun writeManifestAtomically(target: File, content: String) {
+        val temporary = Files.createTempFile(target.parentFile.toPath(), ".manifest-", ".tmp")
+        try {
+            Files.write(temporary, content.toByteArray(Charsets.UTF_8))
+            try {
+                Files.move(
+                    temporary,
+                    target.toPath(),
+                    StandardCopyOption.REPLACE_EXISTING,
+                    StandardCopyOption.ATOMIC_MOVE
+                )
+            } catch (_: java.nio.file.AtomicMoveNotSupportedException) {
+                Files.move(temporary, target.toPath(), StandardCopyOption.REPLACE_EXISTING)
+            }
+        } finally {
+            Files.deleteIfExists(temporary)
+        }
+    }
+}
+
