@@ -391,6 +391,7 @@ private object LampacZipInstaller {
                 } else {
                     LampacEmbeddedConfig.importInitConfig(stage, previousInitConfig)
                 }
+                LampacCoreModuleManifestPolicy.enableDefaultMediaModules(stage)
                 File(stage, MARKER_FILE).writeText(version)
                 onProgress(totalBytes, totalBytes)
             }
