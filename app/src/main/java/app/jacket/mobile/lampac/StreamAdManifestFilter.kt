@@ -6,7 +6,6 @@ import java.io.ByteArrayOutputStream
 import java.net.URI
 import java.nio.charset.StandardCharsets
 import java.util.Locale
-import javax.xml.XMLConstants
 import javax.xml.parsers.DocumentBuilderFactory
 import javax.xml.transform.OutputKeys
 import javax.xml.transform.TransformerFactory
@@ -214,8 +213,8 @@ internal object StreamAdManifestFilter {
                 setFeature("http://apache.org/xml/features/disallow-doctype-decl", true)
                 setFeature("http://xml.org/sax/features/external-general-entities", false)
                 setFeature("http://xml.org/sax/features/external-parameter-entities", false)
-                setAttribute(XMLConstants.ACCESS_EXTERNAL_DTD, "")
-                setAttribute(XMLConstants.ACCESS_EXTERNAL_SCHEMA, "")
+                setAttribute("http://javax.xml.XMLConstants/property/accessExternalDTD", "")
+                setAttribute("http://javax.xml.XMLConstants/property/accessExternalSchema", "")
             }
             factory.newDocumentBuilder().parse(ByteArrayInputStream(content.toByteArray(StandardCharsets.UTF_8)))
         }.getOrNull() ?: return StreamAdFilterResult(content)
@@ -266,7 +265,7 @@ internal object StreamAdManifestFilter {
         val serialized = runCatching {
             val transformerFactory = TransformerFactory.newInstance().apply {
                 setAttribute(XMLConstants.ACCESS_EXTERNAL_DTD, "")
-                setAttribute(XMLConstants.ACCESS_EXTERNAL_STYLESHEET, "")
+                setAttribute("http://javax.xml.XMLConstants/property/accessExternalStylesheet", "")
             }
             val transformer = transformerFactory.newTransformer().apply {
                 setOutputProperty(OutputKeys.OMIT_XML_DECLARATION, "no")
@@ -343,6 +342,54 @@ internal object StreamAdManifestFilter {
                 value
             }
         }.getOrDefault(value)
+    }
+
+    /**
+     * Reads cue metadata from a DASH Period. Only explicit SCTE-35 splice-out
+     * markers are treated as an advertisement boundary.
+     */
+    private fun hasScte35CueOut(period: Element): Boolean {
+        val descendants = period.getElementsByTagName("*")
+        for (index in 0 until descendants.length) {
+            val stream = descendants.item(index) as? Element ?: continue
+            if (localName(stream) != "eventstream") continue
+            val scheme = attributeIgnoreCase(stream, "schemeIdUri")
+            if (!scheme.contains("scte35", ignoreCase = true)) continue
+
+            val events = stream.getElementsByTagName("*")
+            for (eventIndex in 0 until events.length) {
+                val event = events.item(eventIndex) as? Element ?: continue
+                when (localName(event)) {
+                    "spliceinsert" -> {
+                        val outOfNetwork = attributeIgnoreCase(event, "outOfNetworkIndicator")
+                        if (outOfNetwork.equals("true", true) || outOfNetwork == "1") return true
+                    }
+                    "segmentationdescriptor" -> {
+                        val rawType = attributeIgnoreCase(event, "segmentationTypeId")
+                        val type = if (rawType.startsWith("0x", true)) {
+                            rawType.substring(2).toIntOrNull(16)
+                        } else {
+                            rawType.toIntOrNull()
+                        }
+                        if (type in setOf(34, 48, 52)) return true
+                    }
+                }
+            }
+        }
+        return false
+    }
+
+    private fun attributeIgnoreCase(element: Element, name: String): String {
+        val attributes = element.attributes
+        for (index in 0 until attributes.length) {
+            val attribute = attributes.item(index)
+            if (attribute.nodeName.equals(name, true) ||
+                attribute.localName?.equals(name, true) == true
+            ) {
+                return attribute.nodeValue.orEmpty()
+            }
+        }
+        return ""
     }
 
     private fun localName(element: Element): String =
