@@ -1,5 +1,15 @@
 # Changelog
 
+## 3.0.41 — Enable core Lampac media modules
+
+- Enable the Music, Tracks and WatchTogether modules in the installed official Lampac manifests; leave administrative, account-security and legacy Transcoding modules disabled.
+- Enable the matching Lampa client plugins and add the Music and GStreamer client scripts without duplicating existing tokenized custom plugin URLs.
+- Enable the GStreamer server setting by default while preserving explicit user overrides.
+- Apply the selected manifest defaults to both fresh installs and existing Lampac runtimes.
+- Fix the remaining XML API constant reference that blocked Android Kotlin compilation.
+- Add regression tests for manifest selection, plugin registration and preserved settings.
+
+
 ## 3.0.40 — Add Lampa ad filter and ByeByeDPI companion menu
 
 - Add a Lampa settings section for blocking known third-party advertising domains in embedded WebView requests.
