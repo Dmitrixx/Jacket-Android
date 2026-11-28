@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
     <queries>
         <intent>
             <action android:name="android.intent.action.VIEW" />
@@ -35,11 +36,14 @@
                 android:value="Run the user-started local Lampac media server on demand" />
         </service>
 
+        <!-- VPN apps are eligible for the systemExempted FGS type. Lint does not
+             infer this eligibility from BIND_VPN_SERVICE and the VPN service intent. -->
         <service
             android:name=".byedpi.services.ByeDpiVpnService"
             android:process=":byedpi_native"
             android:permission="android.permission.BIND_VPN_SERVICE"
             android:foregroundServiceType="systemExempted"
+            tools:ignore="ForegroundServicePermission"
             android:exported="false">
             <intent-filter>
                 <action android:name="android.net.VpnService" />
