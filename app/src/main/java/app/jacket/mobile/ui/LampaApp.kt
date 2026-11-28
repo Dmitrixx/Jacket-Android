@@ -1,3 +1,5 @@
+import android.content.Intent
+import android.net.Uri
 package app.jacket.mobile.ui
 
 import androidx.compose.foundation.background
@@ -64,6 +66,9 @@ fun LampaApp(onExit: () -> Unit) {
         runtimeLogScrollState.scrollTo(runtimeLogScrollState.maxValue)
     }
     var settingsVisible by remember { mutableStateOf(false) }
+    var adminPanelPassword by remember { mutableStateOf<String?>(null) }
+    var adminPanelPasswordMessage by remember { mutableStateOf<String?>(null) }
+    var adminPanelPasswordLoading by remember { mutableStateOf(false) }
     var adBlockSettingsVisible by remember { mutableStateOf(false) }
     var byeDpiSettingsVisible by remember { mutableStateOf(false) }
     var blockAdDomains by remember { mutableStateOf(true) }
@@ -224,6 +229,72 @@ fun LampaApp(onExit: () -> Unit) {
                             "Ненужные модули можно отключить: они будут исключены из компиляции при следующем запуске Lampac.",
                             style = MaterialTheme.typography.bodySmall
                         )
+                        TextButton(
+                            enabled = runtime.phase == LampacRuntimePhase.RUNNING,
+                            onClick = {
+                                runCatching {
+                                    context.startActivity(
+                                        Intent(
+                                            Intent.ACTION_VIEW,
+                                            Uri.parse("http://127.0.0.1:9118/adminpanel/auth")
+                                        )
+                                    )
+                                }.onFailure {
+                                    adminPanelPasswordMessage = "Не удалось открыть браузер: ${it.message.orEmpty()}"
+                                }
+                            }
+                        ) {
+                            Text("Открыть Admin Panel")
+                        }
+                        TextButton(
+                            enabled = !adminPanelPasswordLoading,
+                            onClick = {
+                                coroutineScope.launch {
+                                    adminPanelPasswordLoading = true
+                                    val result = withContext(Dispatchers.IO) {
+                                        runCatching {
+                                            LampacRuntimeInstaller(context).readAdminPanelPassword()
+                                        }
+                                    }
+                                    adminPanelPassword = result.getOrNull()
+                                    adminPanelPasswordMessage = when {
+                                        result.isFailure -> result.exceptionOrNull()?.message
+                                            ?: "Не удалось прочитать root-пароль Lampac."
+                                        adminPanelPassword == null ->
+                                            "Пароль ещё не создан. Запустите Lampac и повторите запрос."
+                                        else -> null
+                                    }
+                                    adminPanelPasswordLoading = false
+                                }
+                            }
+                        ) {
+                            Text(if (adminPanelPasswordLoading) "Читаем пароль…" else "Показать root-пароль")
+                        }
+                        adminPanelPassword?.let { password ->
+                            Surface(
+                                modifier = Modifier.fillMaxWidth(),
+                                color = MaterialTheme.colorScheme.surfaceVariant,
+                                shape = RoundedCornerShape(10.dp)
+                            ) {
+                                Column(
+                                    modifier = Modifier.padding(10.dp),
+                                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    Text("Пароль Admin Panel", fontWeight = FontWeight.Bold)
+                                    Text(password, style = MaterialTheme.typography.bodyMedium)
+                                    TextButton(
+                                        onClick = {
+                                            clipboardManager.setText(AnnotatedString(password))
+                                        }
+                                    ) {
+                                        Text("Копировать пароль")
+                                    }
+                                }
+                            }
+                        }
+                        adminPanelPasswordMessage?.let { message ->
+                            Text(message, style = MaterialTheme.typography.bodySmall)
+                        }
                     }
                     if (runtime.logs.isNotEmpty()) {
                         Surface(
