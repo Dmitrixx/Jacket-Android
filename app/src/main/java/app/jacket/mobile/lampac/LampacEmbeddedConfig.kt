@@ -187,9 +187,14 @@ object LampacEmbeddedConfig {
         }
         val before = plugins.toString()
         val retained = JSONArray()
+        val musicRoutePattern = Regex(
+            """(?:^|/)music(?:\\.js(?:[?#].*)?|/js(?:/.*)?$)""",
+            RegexOption.IGNORE_CASE
+        )
         (0 until plugins.length()).forEach { index ->
             val plugin = plugins.optJSONObject(index) ?: return@forEach
-            if (plugin.optString("url") != "{localhost}/music.js") retained.put(plugin)
+            val url = plugin.optString("url")
+            if (!musicRoutePattern.containsMatchIn(url)) retained.put(plugin)
         }
         if (retained.toString() != plugins.toString()) {
             web.put("customPlugins", retained)
