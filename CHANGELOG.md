@@ -1,5 +1,15 @@
 # Changelog
 
+## 3.0.42 — Enable the protected Admin Panel; disable Music
+
+- Enable the upstream AdminPanel module in the installed Lampac manifest. Its routes remain protected by Lampac's generated root password.
+- Add an Admin Panel launch button and an explicit reveal/copy action for the generated root password in the native Lampac settings.
+- Keep the Lampac listener on 127.0.0.1; the Admin Panel is not exposed on the LAN by this change.
+- Keep Tracks and WatchTogether enabled; disable Music in the official module manifest, including migration of existing installs.
+- Remove Music client-plugin routes from the default saved Lampa plugin list while preserving unrelated custom plugins.
+- Add regression tests for module selection and private root-password retrieval.
+
+
 ## 3.0.41 — Enable core Lampac media modules
 
 - Enable the Music, Tracks and WatchTogether modules in the installed official Lampac manifests; leave administrative, account-security and legacy Transcoding modules disabled.
