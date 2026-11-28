@@ -2,7 +2,6 @@ package app.jacket.mobile.byedpi.services
 
 import android.app.PendingIntent
 import android.app.Service
-import android.content.Context
 import android.content.Intent
 import android.net.VpnService
 import android.os.Build
@@ -31,6 +30,8 @@ internal class ByeDpiServiceSession(
     }
 
     @Volatile private var stopping = false
+    @Volatile private var currentState = ByeDpiController.STATE_STOPPED
+    @Volatile private var currentMessage = "Служба остановлена"
     @Volatile private var engine: ByeDpiNative? = null
     @Volatile private var proxyThread: Thread? = null
     @Volatile private var tunnelThread: Thread? = null
@@ -94,6 +95,11 @@ internal class ByeDpiServiceSession(
         }
     }
 
+    fun publishCurrentState() {
+        emit(currentState, currentMessage)
+    }
+
+    @Synchronized
     fun stop() {
         if (stopping) return
         stopping = true
@@ -181,18 +187,8 @@ internal class ByeDpiServiceSession(
     }
 
     private fun emit(state: String, message: String) {
-        service.getSharedPreferences(
-            ByeDpiController.PREFERENCES_NAME,
-            Context.MODE_PRIVATE
-        ).edit()
-            .putString(ByeDpiController.KEY_STATE, state)
-            .putString(ByeDpiController.KEY_MESSAGE, message)
-            .apply()
-        service.sendBroadcast(
-            Intent(ByeDpiController.ACTION_STATE)
-                .setPackage(service.packageName)
-                .putExtra(ByeDpiController.EXTRA_STATE, state)
-                .putExtra(ByeDpiController.EXTRA_MESSAGE, message)
-        )
+        currentState = state
+        currentMessage = message
+        ByeDpiController.publishState(service, state, message)
     }
 }

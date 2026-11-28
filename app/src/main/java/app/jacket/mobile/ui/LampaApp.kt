@@ -382,7 +382,7 @@ fun LampaApp(onExit: () -> Unit) {
                         Column(modifier = Modifier.weight(1f)) {
                             Text("Удалять рекламу внутри видеопотока", fontWeight = FontWeight.Medium)
                             Text(
-                                "Удалять отдельные HLS-сегменты и DASH-периоды, когда источник помечает рекламную вставку cue/SCTE-35 или явно называет период рекламным.",
+                                "Удалять HLS-сегменты и DASH-периоды по cue/SCTE-35, DATERANGE, рекламным меткам и явным ad-именам в адресах сегментов и периодов.",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -399,7 +399,7 @@ fun LampaApp(onExit: () -> Unit) {
                         )
                     }
                     Text(
-                        "Немаркированную рекламу, склеенную с фильмом в тех же сегментах, этот фильтр определить не может. Для неё потребуется распознавание аудио/видео; автоматическое удаление без пропусков пока не гарантируется.",
+                        "Если реклама уже склеена с фильмом в общий MP4/TS или отдаётся без меток и отдельных рекламных адресов, безопасно отличить её от фильма по манифесту невозможно.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -444,7 +444,7 @@ fun LampaApp(onExit: () -> Unit) {
                         )
                     }
                     Text(
-                        "Важно: фильтры действуют на сетевые запросы внутри Lampa WebView. Они не удаляют рекламные фрагменты, встроенные в HLS/DASH-видеопоток, и не фильтруют запросы внешних плееров VLC/MX Player.",
+                        "Фильтр HLS/DASH применяется во встроенном плеере и при передаче потока во внешний плеер через локальный прокси. Реклама, уже встроенная в единый MP4/TS или неотличимая от фильма по манифесту, может остаться.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )

@@ -1,5 +1,13 @@
 # Changelog
 
+## 3.0.44 — Reliable ByeDPI stop and stronger stream ad filtering
+
+- Make ByeDPI Stop an unconditional command; query the isolated native service for its live state instead of trusting stale cross-process preferences.
+- Handle explicit STOP and QUERY service actions in both VPN and SOCKS5 modes; keep the stop sequence graceful before shutting down the isolated native process.
+- Extend HLS filtering to provider DATERANGE labels and explicit ad segment/asset URIs, and extend DASH filtering to explicit ad paths in Period BaseURL and segment templates.
+- Fix parsing of comma-separated HLS DATERANGE and cue-continuation duration attributes.
+- Update the in-app filter description to cover the embedded and external-player relay paths and document the remaining limitation for ads muxed into ordinary media segments.
+
 ## 3.0.43 — Universal ByeDPI profile for streaming and torrents
 
 - Add a one-tap all-device VPN profile for online cinemas and torrent apps, with no domain whitelist.

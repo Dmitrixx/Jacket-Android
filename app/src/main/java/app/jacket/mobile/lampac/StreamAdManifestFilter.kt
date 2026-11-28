@@ -4,6 +4,7 @@ import org.w3c.dom.Element
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.net.URI
+import java.net.URLDecoder
 import java.nio.charset.StandardCharsets
 import java.util.Locale
 import javax.xml.parsers.DocumentBuilderFactory
@@ -20,19 +21,17 @@ internal data class StreamAdFilterResult(
     val markersFound: Boolean = false
 ) {
     val changed: Boolean
-        get() = markersFound || removedSegments > 0 || removedPeriods > 0 || removedInterstitialMarkers > 0
+        get() = removedSegments > 0 || removedPeriods > 0 || removedInterstitialMarkers > 0
 }
 
-/**
- * Removes ad media that is explicitly marked in HLS or DASH manifests.
- *
- * This is deliberately marker-driven. A stitched advertisement with no cue,
- * daterange, SCTE-35 or identifiable DASH Period metadata is indistinguishable
- * from ordinary video at the manifest level and is left untouched.
- */
 internal object StreamAdManifestFilter {
-    private val adPeriodId = Regex(
-        """(^|[^A-Za-z0-9])(advertisement|advert|commercial|preroll|midroll|postroll|ads|ad)(?=$|[^A-Za-z0-9])""",
+    /*
+     * Token-boundary matching avoids false positives such as "adventure.ts"
+     * or "download.mp4", while recognizing names such as /ads/ad-001.ts
+     * and /pre-roll/creative.m4s.
+     */
+    private val adMediaToken = Regex(
+        """(?:^|[/?#&=._:\-\s])(?:ad|ads|advert|advertisement|advertising|commercial|pre[-_.]?roll|mid[-_.]?roll|post[-_.]?roll|sponsor(?:ed)?|promo(?:tion)?)(?:[-_.]?\d+)?(?=$|[/?#&=._:\-\s])""",
         RegexOption.IGNORE_CASE
     )
 
@@ -50,8 +49,10 @@ internal object StreamAdManifestFilter {
         val newline = if (content.contains("\r\n")) "\r\n" else "\n"
         val lines = content.removePrefix("\uFEFF").split(Regex("\\r?\\n"))
         val isVod = lines.any { it.equals("#EXT-X-ENDLIST", true) } ||
-            lines.any { it.startsWith("#EXT-X-PLAYLIST-TYPE:", true) &&
-                it.substringAfter(':').trim().equals("VOD", true) }
+            lines.any {
+                it.startsWith("#EXT-X-PLAYLIST-TYPE:", true) &&
+                    it.substringAfter(':').trim().equals("VOD", true)
+            }
 
         if (!isVod && baseUrl.isNullOrBlank()) return StreamAdFilterResult(content)
 
@@ -66,6 +67,7 @@ internal object StreamAdManifestFilter {
         var removedInterstitialMarkers = 0
         var markersFound = false
         var adGapPending = false
+        var activeAdDateRangeId: String? = null
 
         fun beginAd(duration: Double? = null) {
             insideAd = true
@@ -81,22 +83,30 @@ internal object StreamAdManifestFilter {
         }
 
         fun flushSegment(uriLine: String) {
-            if (insideAd) {
+            val pathMarkedAsAd = isAdMediaUri(uriLine)
+            if (insideAd || pathMarkedAsAd) {
                 removedSegments++
+                markersFound = true
                 if (!keptAnySegment) removedBeforeFirstKept++
                 pendingSegmentTags.clear()
-                val remaining = remainingAdSeconds
-                if (remaining != null) {
-                    remainingAdSeconds = (remaining - currentSegmentDuration).coerceAtLeast(0.0)
-                    if (remainingAdSeconds == 0.0) {
-                        insideAd = false
-                        adGapPending = true
+
+                if (insideAd) {
+                    val remaining = remainingAdSeconds
+                    if (remaining != null) {
+                        remainingAdSeconds = (remaining - currentSegmentDuration).coerceAtLeast(0.0)
+                        if (remainingAdSeconds == 0.0) {
+                            insideAd = false
+                            adGapPending = true
+                        }
                     }
+                } else {
+                    adGapPending = true
                 }
             } else {
                 if (adGapPending && pendingSegmentTags.none {
                         it.equals("#EXT-X-DISCONTINUITY", true)
-                    }) {
+                    }
+                ) {
                     output += "#EXT-X-DISCONTINUITY"
                 }
                 adGapPending = false
@@ -120,6 +130,7 @@ internal object StreamAdManifestFilter {
                 isScte35InDateRange(line)
             ) {
                 endAd()
+                activeAdDateRangeId = null
                 continue
             }
 
@@ -128,7 +139,9 @@ internal object StreamAdManifestFilter {
                 val duration = attributeNumber(line, "Duration")
                 val elapsed = attributeNumber(line, "ElapsedTime") ?: 0.0
                 if (!insideAd) beginAd(duration?.minus(elapsed))
-                else if (duration != null) remainingAdSeconds = (duration - elapsed).coerceAtLeast(0.0)
+                else if (duration != null) {
+                    remainingAdSeconds = (duration - elapsed).coerceAtLeast(0.0)
+                }
                 continue
             }
 
@@ -147,6 +160,27 @@ internal object StreamAdManifestFilter {
                 continue
             }
 
+            if (line.startsWith("#EXT-X-DATERANGE:", true)) {
+                val rangeId = attributeValue(line, "ID")
+                val endDate = attributeValue(line, "END-DATE")
+                if (activeAdDateRangeId != null &&
+                    rangeId == activeAdDateRangeId &&
+                    !endDate.isNullOrBlank()
+                ) {
+                    endAd()
+                    activeAdDateRangeId = null
+                    continue
+                }
+                if (isAdDateRange(line)) {
+                    beginAd(
+                        attributeNumber(line, "PLANNED-DURATION")
+                            ?: attributeNumber(line, "DURATION")
+                    )
+                    activeAdDateRangeId = rangeId
+                    continue
+                }
+            }
+
             if (!line.startsWith("#")) {
                 flushSegment(rawLine.trim())
                 continue
@@ -160,8 +194,19 @@ internal object StreamAdManifestFilter {
                 continue
             }
 
+            if ((line.startsWith("#EXT-X-MEDIA:", true) ||
+                    line.startsWith("#EXT-X-I-FRAME-STREAM-INF:", true)) &&
+                hasAdUriAttribute(line)
+            ) {
+                removedSegments++
+                markersFound = true
+                continue
+            }
+
             if (isSegmentScopedTag(line)) {
-                if (pendingSegmentTags.isNotEmpty() || line.startsWith("#EXT-X-PROGRAM-DATE-TIME", true)) {
+                if (pendingSegmentTags.isNotEmpty() ||
+                    line.startsWith("#EXT-X-PROGRAM-DATE-TIME", true)
+                ) {
                     pendingSegmentTags += rawLine
                 } else if (!insideAd) {
                     output += rawLine
@@ -172,37 +217,47 @@ internal object StreamAdManifestFilter {
             if (line.startsWith("#EXT-X-PART:", true) ||
                 line.startsWith("#EXT-X-PRELOAD-HINT:", true)
             ) {
-                if (!insideAd) output += resolveHlsUriAttribute(rawLine, baseUrl)
+                if (insideAd || hasAdUriAttribute(line)) {
+                    if (hasAdUriAttribute(line)) {
+                        removedSegments++
+                        markersFound = true
+                    }
+                } else {
+                    output += resolveHlsUriAttribute(rawLine, baseUrl)
+                }
                 continue
             }
 
-            // Key/map and playlist-level control tags are retained. This keeps the
-            // decoder state intact when the next non-ad segment is reached.
             output += resolveHlsUriAttribute(rawLine, baseUrl)
         }
 
-        // Keep any trailing playlist-level tags, but never emit a dangling EXTINF.
         if (pendingSegmentTags.isNotEmpty() && !insideAd) {
-            output += pendingSegmentTags.filterNot { it.trim().startsWith("#EXTINF:", true) }
+            output += pendingSegmentTags.filterNot {
+                it.trim().startsWith("#EXTINF:", true)
+            }
         }
 
-        if (!markersFound && baseUrl.isNullOrBlank()) return StreamAdFilterResult(content)
         val rewritten = output.toMutableList()
         if (removedBeforeFirstKept > 0) {
-            val sequenceIndex = rewritten.indexOfFirst { it.startsWith("#EXT-X-MEDIA-SEQUENCE:", true) }
+            val sequenceIndex = rewritten.indexOfFirst {
+                it.startsWith("#EXT-X-MEDIA-SEQUENCE:", true)
+            }
             if (sequenceIndex >= 0) {
                 val original = rewritten[sequenceIndex].substringAfter(':').trim().toLongOrNull()
                 if (original != null) {
-                    rewritten[sequenceIndex] = "#EXT-X-MEDIA-SEQUENCE:${original + removedBeforeFirstKept}"
+                    rewritten[sequenceIndex] =
+                        "#EXT-X-MEDIA-SEQUENCE:${original + removedBeforeFirstKept}"
                 }
             }
         }
 
         return StreamAdFilterResult(
-            content = rewritten.joinToString(newline).let { if (content.endsWith("\n")) it + newline else it },
+            content = rewritten.joinToString(newline).let {
+                if (content.endsWith("\n")) it + newline else it
+            },
             removedSegments = removedSegments,
             removedInterstitialMarkers = removedInterstitialMarkers,
-            markersFound = true
+            markersFound = markersFound
         )
     }
 
@@ -214,12 +269,12 @@ internal object StreamAdManifestFilter {
                 setFeature("http://xml.org/sax/features/external-general-entities", false)
                 setFeature("http://xml.org/sax/features/external-parameter-entities", false)
             }
-            factory.newDocumentBuilder().parse(ByteArrayInputStream(content.toByteArray(StandardCharsets.UTF_8)))
+            factory.newDocumentBuilder().parse(
+                ByteArrayInputStream(content.toByteArray(StandardCharsets.UTF_8))
+            )
         }.getOrNull() ?: return StreamAdFilterResult(content)
 
         val root = document.documentElement ?: return StreamAdFilterResult(content)
-        // Query the namespace-aware DOM by local tag name instead of comparing
-        // provider-specific qualified names from direct child nodes.
         val periods = mutableListOf<Element>()
         val allPeriods = document.getElementsByTagNameNS("*", "Period")
         for (index in 0 until allPeriods.length) {
@@ -235,9 +290,7 @@ internal object StreamAdManifestFilter {
         }
 
         var removedPeriods = 0
-        var markersFound = false
         periods.forEach { period ->
-            val id = period.getAttribute("id")
             val adLabel = buildString {
                 append(period.getAttribute("contentType"))
                 append(' ')
@@ -245,34 +298,40 @@ internal object StreamAdManifestFilter {
                 append(' ')
                 append(period.getAttribute("role"))
                 append(' ')
-                append(id)
+                append(period.getAttribute("id"))
+
                 val descendants = period.getElementsByTagName("*")
                 for (index in 0 until descendants.length) {
                     val element = descendants.item(index) as? Element ?: continue
-                    if (localName(element) in setOf(
+                    val name = localName(element)
+                    if (name in setOf(
                             "role", "supplementalproperty", "essentialproperty",
-                            "assetidentifier", "contentprotection"
+                            "assetidentifier", "contentprotection", "baseurl",
+                            "segmenttemplate", "segmenturl", "initialization"
                         )
                     ) {
-                        listOf("value", "schemeIdUri", "id", "contentType").forEach { name ->
+                        append(' ')
+                        append(element.textContent.orEmpty().take(2_048))
+                        listOf(
+                            "value", "schemeIdUri", "id", "contentType", "media",
+                            "sourceURL", "initialization", "name", "label"
+                        ).forEach { attribute ->
                             append(' ')
-                            append(attributeIgnoreCase(element, name))
+                            append(attributeIgnoreCase(element, attribute))
                         }
                     }
                 }
             }
-            if (adPeriodId.containsMatchIn(adLabel) || hasScte35CueOut(period)) {
+
+            if (adMediaToken.containsMatchIn(adLabel) || hasScte35CueOut(period)) {
                 period.parentNode.removeChild(period)
                 removedPeriods++
-                markersFound = true
             }
         }
 
         if (removedPeriods == 0) return StreamAdFilterResult(content)
         val serialized = runCatching {
-            val transformerFactory = TransformerFactory.newInstance().apply {
-            }
-            val transformer = transformerFactory.newTransformer().apply {
+            val transformer = TransformerFactory.newInstance().newTransformer().apply {
                 setOutputProperty(OutputKeys.OMIT_XML_DECLARATION, "no")
                 setOutputProperty(OutputKeys.ENCODING, "UTF-8")
             }
@@ -284,7 +343,7 @@ internal object StreamAdManifestFilter {
         return StreamAdFilterResult(
             content = serialized,
             removedPeriods = removedPeriods,
-            markersFound = markersFound
+            markersFound = true
         )
     }
 
@@ -307,6 +366,34 @@ internal object StreamAdManifestFilter {
             line.contains("CLASS=\"com.apple.hls.interstitial\"", true) &&
             line.contains("X-ASSET-URI=", true)
 
+    private fun isAdDateRange(line: String): Boolean {
+        if (!line.startsWith("#EXT-X-DATERANGE:", true)) return false
+        val label = listOf("ID", "CLASS", "X-ASSET-URI", "ASSET-URI")
+            .mapNotNull { attributeValue(line, it) }
+            .joinToString(" ")
+        return adMediaToken.containsMatchIn(label)
+    }
+
+    private fun hasAdUriAttribute(line: String): Boolean {
+        val uri = attributeValue(line, "URI")
+            ?: attributeValue(line, "X-ASSET-URI")
+            ?: return false
+        return isAdMediaUri(uri)
+    }
+
+    private fun isAdMediaUri(value: String): Boolean {
+        val parsed = runCatching { URI(value.trim()) }.getOrNull()
+        val candidate = if (parsed != null) {
+            parsed.rawPath.orEmpty() + parsed.rawQuery?.let { "?$it" }.orEmpty()
+        } else {
+            value
+        }
+        val decoded = runCatching {
+            URLDecoder.decode(candidate, StandardCharsets.UTF_8.name())
+        }.getOrDefault(candidate)
+        return adMediaToken.containsMatchIn(decoded)
+    }
+
     private fun cueOutDuration(line: String): Double? {
         if (line.startsWith("#EXT-X-CUE-OUT:", true)) {
             return line.substringAfter(':').substringBefore(',').toDoubleOrNull()
@@ -315,12 +402,22 @@ internal object StreamAdManifestFilter {
             ?: attributeNumber(line, "DURATION")
     }
 
-    private fun attributeNumber(line: String, name: String): Double? {
-        val match = Regex("""(?:^|[:,;])\s*${Regex.escape(name)}\s*=\s*"?([0-9]+(?:\.[0-9]+)?)""",
+    private fun attributeValue(line: String, name: String): String? {
+        val key = Regex.escape(name)
+        val quoted = Regex(
+            """(?:^|[:,;])\s*$key\s*=\s*"([^"]*)"""",
             RegexOption.IGNORE_CASE
-        ).find(line) ?: return null
-        return match.groupValues[1].toDoubleOrNull()
+        ).find(line)
+        if (quoted != null) return quoted.groupValues[1]
+
+        return Regex(
+            """(?:^|[:,;])\s*$key\s*=\s*([^,;]+)""",
+            RegexOption.IGNORE_CASE
+        ).find(line)?.groupValues?.get(1)?.trim()
     }
+
+    private fun attributeNumber(line: String, name: String): Double? =
+        attributeValue(line, name)?.toDoubleOrNull()
 
     private fun resolveHlsUri(line: String, baseUrl: String?): String {
         if (baseUrl.isNullOrBlank()) return line
@@ -349,17 +446,12 @@ internal object StreamAdManifestFilter {
         }.getOrDefault(value)
     }
 
-    /**
-     * Reads cue metadata from a DASH Period. Only explicit SCTE-35 splice-out
-     * markers are treated as an advertisement boundary.
-     */
     private fun hasScte35CueOut(period: Element): Boolean {
         val descendants = period.getElementsByTagName("*")
         for (index in 0 until descendants.length) {
             val stream = descendants.item(index) as? Element ?: continue
             if (localName(stream) != "eventstream") continue
-            val scheme = attributeIgnoreCase(stream, "schemeIdUri")
-            if (!scheme.contains("scte35", ignoreCase = true)) continue
+            if (!attributeIgnoreCase(stream, "schemeIdUri").contains("scte35", true)) continue
 
             val events = stream.getElementsByTagName("*")
             for (eventIndex in 0 until events.length) {

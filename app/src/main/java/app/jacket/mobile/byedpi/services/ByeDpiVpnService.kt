@@ -12,6 +12,7 @@ import android.os.IBinder
 import androidx.core.app.NotificationCompat
 import app.jacket.mobile.MainActivity
 import app.jacket.mobile.R
+import app.jacket.mobile.byedpi.ByeDpiController
 import app.jacket.mobile.byedpi.ByeDpiServiceContract
 
 class ByeDpiVpnService : VpnService() {
@@ -23,15 +24,54 @@ class ByeDpiVpnService : VpnService() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (intent?.action != ByeDpiServiceContract.ACTION_START) {
-            stopSelf()
-            return START_NOT_STICKY
+        when (intent?.action) {
+            ByeDpiServiceContract.ACTION_QUERY -> {
+                val current = session
+                if (current != null) {
+                    current.publishCurrentState()
+                } else {
+                    ByeDpiController.publishState(
+                        this,
+                        ByeDpiController.STATE_STOPPED,
+                        "ByeDPI остановлен"
+                    )
+                    stopSelf(startId)
+                }
+                return START_NOT_STICKY
+            }
+
+            ByeDpiServiceContract.ACTION_STOP -> {
+                val current = session
+                if (current != null) {
+                    current.stop()
+                } else {
+                    ByeDpiController.publishState(
+                        this,
+                        ByeDpiController.STATE_STOPPED,
+                        "ByeDPI уже остановлен"
+                    )
+                    stopSelf(startId)
+                }
+                return START_NOT_STICKY
+            }
+
+            ByeDpiServiceContract.ACTION_START -> Unit
+
+            else -> {
+                stopSelf(startId)
+                return START_NOT_STICKY
+            }
         }
 
         startForegroundCompat(createNotification("Запускается VPN-туннель ByeDPI"))
-        val args = intent.getStringArrayExtra(ByeDpiServiceContract.EXTRA_ARGS)
+        val args = intent?.getStringArrayExtra(ByeDpiServiceContract.EXTRA_ARGS)
         if (args.isNullOrEmpty()) {
-            stopSelf()
+            ByeDpiController.publishState(
+                this,
+                ByeDpiController.STATE_ERROR,
+                "Не переданы параметры запуска ByeDPI"
+            )
+            stopSelf(startId)
             return START_NOT_STICKY
         }
 
@@ -42,11 +82,6 @@ class ByeDpiVpnService : VpnService() {
             intent.getBooleanExtra(ByeDpiServiceContract.EXTRA_IPV6, false)
         )
         return START_NOT_STICKY
-    }
-
-    override fun onRevoke() {
-        session?.stop()
-        super.onRevoke()
     }
 
     override fun onDestroy() {

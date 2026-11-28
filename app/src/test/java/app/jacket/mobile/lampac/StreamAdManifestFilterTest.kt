@@ -132,6 +132,76 @@ class StreamAdManifestFilterTest {
     }
 
     @Test
+    fun removesProviderDaterangePrerollUsingCommaDelimitedDuration() {
+        val playlist = """
+            #EXTM3U
+            #EXT-X-PLAYLIST-TYPE:VOD
+            #EXTINF:4.0,
+            movie-before.ts
+            #EXT-X-DATERANGE:ID="preroll-01",CLASS="provider.break",PLANNED-DURATION=8.0
+            #EXTINF:4.0,
+            commercial-one.ts
+            #EXTINF:4.0,
+            commercial-two.ts
+            #EXTINF:4.0,
+            movie-after.ts
+            #EXT-X-ENDLIST
+        """.trimIndent()
+
+        val result = StreamAdManifestFilter.filterHls(playlist)
+
+        assertEquals(2, result.removedSegments)
+        assertFalse(result.content.contains("commercial-one.ts"))
+        assertFalse(result.content.contains("commercial-two.ts"))
+        assertTrue(result.content.contains("movie-before.ts"))
+        assertTrue(result.content.contains("movie-after.ts"))
+    }
+
+    @Test
+    fun removesExplicitAdAssetUrisButKeepsOrdinaryWordsContainingAd() {
+        val playlist = """
+            #EXTM3U
+            #EXT-X-PLAYLIST-TYPE:VOD
+            #EXTINF:6.0,
+            ads/ad-001.ts
+            #EXTINF:6.0,
+            content/adventure.ts
+            #EXTINF:6.0,
+            movie.ts
+            #EXT-X-ENDLIST
+        """.trimIndent()
+
+        val result = StreamAdManifestFilter.filterHls(
+            playlist,
+            "https://cdn.example.test/stream/index.m3u8"
+        )
+
+        assertEquals(1, result.removedSegments)
+        assertFalse(result.content.contains("ads/ad-001.ts"))
+        assertTrue(result.content.contains("adventure.ts"))
+        assertTrue(result.content.contains("movie.ts"))
+    }
+
+    @Test
+    fun removesDashPeriodWhoseBaseUrlClearlyNamesAnAdBreak() {
+        val mpd = """
+            <?xml version="1.0" encoding="UTF-8"?>
+            <MPD xmlns="urn:mpeg:dash:schema:mpd:2011" type="static">
+              <Period id="movie-start"><BaseURL>https://cdn.example.test/movie/</BaseURL><AdaptationSet/></Period>
+              <Period id="period-2"><BaseURL>https://cdn.example.test/ads/break-01/</BaseURL><AdaptationSet/></Period>
+              <Period id="movie-end"><BaseURL>https://cdn.example.test/movie/end/</BaseURL><AdaptationSet/></Period>
+            </MPD>
+        """.trimIndent()
+
+        val result = StreamAdManifestFilter.filterDash(mpd)
+
+        assertEquals(1, result.removedPeriods)
+        assertFalse(result.content.contains("break-01"))
+        assertTrue(result.content.contains("movie-start"))
+        assertTrue(result.content.contains("movie-end"))
+    }
+
+    @Test
     fun leavesUnmarkedHlsUntouched() {
         val playlist = """
             #EXTM3U

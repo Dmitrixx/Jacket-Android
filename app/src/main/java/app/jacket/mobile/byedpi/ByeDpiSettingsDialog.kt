@@ -128,12 +128,14 @@ internal fun ByeDpiSettingsDialog(onDismiss: () -> Unit) {
             IntentFilter(ByeDpiController.ACTION_STATE),
             ContextCompat.RECEIVER_NOT_EXPORTED
         )
+        ByeDpiController.query(context)
         onDispose {
             runCatching { context.unregisterReceiver(receiver) }
         }
     }
 
-    val active = serviceState == ByeDpiController.STATE_STARTING ||
+    val active = serviceState == ByeDpiController.STATE_CHECKING ||
+        serviceState == ByeDpiController.STATE_STARTING ||
         serviceState == ByeDpiController.STATE_RUNNING ||
         serviceState == ByeDpiController.STATE_STOPPING
 
@@ -252,6 +254,7 @@ internal fun ByeDpiSettingsDialog(onDismiss: () -> Unit) {
                 Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
                     Text(
                         when (serviceState) {
+                            ByeDpiController.STATE_CHECKING -> "Проверка службы"
                             ByeDpiController.STATE_RUNNING -> "Работает"
                             ByeDpiController.STATE_STARTING -> "Запуск"
                             ByeDpiController.STATE_STOPPING -> "Остановка"
@@ -324,11 +327,11 @@ internal fun ByeDpiSettingsDialog(onDismiss: () -> Unit) {
                 }
 
                 TextButton(
-                    enabled = active || serviceState == ByeDpiController.STATE_ERROR,
+                    enabled = true,
                     onClick = {
-                        ByeDpiController.stop(context)
                         serviceState = ByeDpiController.STATE_STOPPING
                         serviceMessage = "Остановка ByeDPI…"
+                        ByeDpiController.stop(context)
                     }
                 ) {
                     Text("Остановить")
