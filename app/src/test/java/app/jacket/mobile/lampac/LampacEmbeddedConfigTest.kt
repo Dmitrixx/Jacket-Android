@@ -21,6 +21,7 @@ class LampacEmbeddedConfigTest {
         assertEquals("/usr/bin/chromium", config.getJSONObject("chromium").getString("executablePath"))
         assertEquals(listOf("--no-sandbox"), config.getJSONObject("chromium").getJSONArray("Args").toStrings())
         assertTrue(config.getJSONObject("openstat").getBoolean("enable"))
+        assertTrue(config.getJSONObject("gst").getBoolean("enable"))
     }
 
     @Test
@@ -32,6 +33,10 @@ class LampacEmbeddedConfigTest {
         listOf(
             "pirate_store",
             "jacred",
+            "dlna",
+            "tracks",
+            "catalog",
+            "watch_together",
             "tmdbProxy",
             "cubProxy",
             "online",
@@ -58,10 +63,56 @@ class LampacEmbeddedConfigTest {
         val plugins = config.getJSONObject("LampaWeb").getJSONObject("initPlugins")
         assertFalse(plugins.getBoolean("online"))
         assertTrue(plugins.getBoolean("jacred"))
+        assertTrue(plugins.getBoolean("dlna"))
+        assertTrue(plugins.getBoolean("tracks"))
+        assertTrue(plugins.getBoolean("catalog"))
+        assertTrue(plugins.getBoolean("watch_together"))
         assertTrue(plugins.getBoolean("tmdbProxy"))
         assertTrue(plugins.getBoolean("cubProxy"))
         assertTrue(plugins.getBoolean("pirate_store"))
         assertFalse(LampacEmbeddedConfig.ensureDefaultClientPlugins(config))
+    }
+
+    @Test
+    fun defaultCustomPluginsExposeMusicAndGStreamerWithoutReplacingUserEntries() {
+        val config = JSONObject(LampacEmbeddedConfig.buildJson())
+        val plugins = config.getJSONObject("LampaWeb").getJSONArray("customPlugins")
+        val urls = (0 until plugins.length()).map { plugins.getJSONObject(it).getString("url") }
+
+        assertTrue("{localhost}/music.js" in urls)
+        assertTrue("{localhost}/gst.js" in urls)
+        assertTrue(LampacEmbeddedConfig.ensureDefaultCustomPlugins(config).not())
+    }
+
+    @Test
+    fun customPluginDefaultsRespectExistingTokenRoutesAndPreserveOtherEntries() {
+        val customPlugins = JSONArray()
+            .put(JSONObject().put("url", "{localhost}/music/js/private-token").put("status", 1))
+            .put(JSONObject().put("url", "https://example.invalid/custom.js").put("status", 1))
+        val config = JSONObject().put(
+            "LampaWeb",
+            JSONObject().put("customPlugins", customPlugins)
+        )
+
+        assertTrue(LampacEmbeddedConfig.ensureDefaultCustomPlugins(config))
+        val actual = config.getJSONObject("LampaWeb").getJSONArray("customPlugins")
+        val urls = (0 until actual.length()).map { actual.getJSONObject(it).getString("url") }
+
+        assertEquals(3, actual.length())
+        assertTrue("{localhost}/music/js/private-token" in urls)
+        assertTrue("https://example.invalid/custom.js" in urls)
+        assertTrue("{localhost}/gst.js" in urls)
+    }
+
+    @Test
+    fun gstreamerDefaultIsAddedButExplicitDisabledChoiceIsPreserved() {
+        val config = JSONObject()
+        assertTrue(LampacEmbeddedConfig.ensureGStreamerDefaults(config))
+        assertTrue(config.getJSONObject("gst").getBoolean("enable"))
+
+        val disabled = JSONObject().put("gst", JSONObject().put("enable", false))
+        assertFalse(LampacEmbeddedConfig.ensureGStreamerDefaults(disabled))
+        assertFalse(disabled.getJSONObject("gst").getBoolean("enable"))
     }
 
     @Test
