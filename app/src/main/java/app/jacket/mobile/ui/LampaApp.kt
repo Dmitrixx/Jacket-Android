@@ -37,10 +37,12 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import app.jacket.mobile.adblock.AdBlockPolicy
 import app.jacket.mobile.byedpi.ByeDpiSettingsDialog
 import app.jacket.mobile.lampac.LampacRuntimeInstaller
+import app.jacket.mobile.lampac.LampacTrackerAuth
 import app.jacket.mobile.lampac.LampacModuleInfo
 import app.jacket.mobile.lampac.LampacRuntimePhase
 import app.jacket.mobile.lampac.LampacRuntimeService
@@ -80,6 +82,11 @@ fun LampaApp(onExit: () -> Unit) {
     var moduleSearch by remember { mutableStateOf("") }
     var moduleList by remember { mutableStateOf(emptyList<LampacModuleInfo>()) }
     var enabledModuleIds by remember { mutableStateOf(emptySet<String>()) }
+    var trackersVisible by remember { mutableStateOf(false) }
+    var trackerLoading by remember { mutableStateOf(false) }
+    var trackerSaving by remember { mutableStateOf(false) }
+    var trackerError by remember { mutableStateOf<String?>(null) }
+    var trackerSettings by remember { mutableStateOf(emptyList<LampacTrackerAuth>()) }
     var installed by remember { mutableStateOf(false) }
     var checkingInstallation by remember { mutableStateOf(true) }
     var updatesVisible by remember { mutableStateOf(false) }
@@ -153,6 +160,19 @@ fun LampaApp(onExit: () -> Unit) {
         }
     }
 
+    LaunchedEffect(trackersVisible) {
+        if (trackersVisible) {
+            trackerLoading = true
+            trackerError = null
+            val result = withContext(Dispatchers.IO) {
+                runCatching { LampacRuntimeInstaller(context).readTrackerSettings() }
+            }
+            result.onSuccess { trackerSettings = it }
+                .onFailure { error -> trackerError = error.message ?: "Не удалось прочитать настройки трекеров" }
+            trackerLoading = false
+        }
+    }
+
     LaunchedEffect(modulesVisible) {
         if (modulesVisible) {
             moduleLoading = true
@@ -221,6 +241,15 @@ fun LampaApp(onExit: () -> Unit) {
                             }
                         ) {
                             Text("Обновления Lampa и Lampac")
+                        }
+                        TextButton(
+                            enabled = !busy && !moduleSaving && !trackerSaving,
+                            onClick = {
+                                settingsVisible = false
+                                trackersVisible = true
+                            }
+                        ) {
+                            Text("Настройки торрент-трекеров")
                         }
                         TextButton(
                             enabled = !busy && !moduleSaving,
@@ -646,6 +675,161 @@ fun LampaApp(onExit: () -> Unit) {
                 }
             }
 
+        )
+    }
+
+    if (trackersVisible) {
+        AlertDialog(
+            onDismissRequest = {
+                if (!trackerSaving) {
+                    trackersVisible = false
+                    settingsVisible = true
+                }
+            },
+            title = { Text("Настройки торрент-трекеров", fontWeight = FontWeight.Bold) },
+            text = {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 560.dp)
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Text(
+                        "Укажи данные только для сайтов, где у тебя есть аккаунт. Пароли сохраняются в приватной папке приложения и остаются в init.conf Lampac.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    if (trackerLoading) {
+                        LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                        Text("Читаем сохранённые настройки…")
+                    }
+                    trackerSettings.forEachIndexed { index, tracker ->
+                        val (title, hint) = when (tracker.id) {
+                            "Rutracker" -> "RuTracker" to "Закрытый трекер. Нужны логин и пароль."
+                            "Toloka" -> "Толока" to "Закрытый трекер. Нужны логин и пароль."
+                            "Animelayer" -> "AnimeLayer" to "Нужна учётная запись AnimeLayer."
+                            "Selezen" -> "Selezen" to "Нужна учётная запись Selezen."
+                            "Lostfilm" -> "LostFilm" to "Доступ к поиску и загрузке раздач через аккаунт."
+                            "Kinozal" -> "Кинозал.ТВ" to "Можно пользоваться без аккаунта; авторизация расширяет доступ."
+                            "NNMClub" -> "NNMClub" to "Можно искать открытые раздачи; аккаунт нужен для закрытых."
+                            else -> tracker.id to "Настройки авторизации трекера."
+                        }
+                        Surface(
+                            modifier = Modifier.fillMaxWidth(),
+                            color = MaterialTheme.colorScheme.surfaceVariant,
+                            shape = RoundedCornerShape(10.dp)
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(10.dp),
+                                verticalArrangement = Arrangement.spacedBy(7.dp)
+                            ) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(title, fontWeight = FontWeight.Bold)
+                                        Text(
+                                            hint,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                    Switch(
+                                        checked = tracker.enabled,
+                                        enabled = !trackerLoading && !trackerSaving,
+                                        onCheckedChange = { enabled ->
+                                            trackerSettings = trackerSettings.toMutableList().also {
+                                                it[index] = tracker.copy(enabled = enabled)
+                                            }
+                                        }
+                                    )
+                                }
+                                OutlinedTextField(
+                                    value = tracker.username,
+                                    onValueChange = { value ->
+                                        trackerSettings = trackerSettings.toMutableList().also {
+                                            it[index] = tracker.copy(username = value)
+                                        }
+                                    },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    enabled = !trackerLoading && !trackerSaving,
+                                    singleLine = true,
+                                    label = { Text("Логин") }
+                                )
+                                OutlinedTextField(
+                                    value = tracker.password,
+                                    onValueChange = { value ->
+                                        trackerSettings = trackerSettings.toMutableList().also {
+                                            it[index] = tracker.copy(password = value)
+                                        }
+                                    },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    enabled = !trackerLoading && !trackerSaving,
+                                    singleLine = true,
+                                    visualTransformation = PasswordVisualTransformation(),
+                                    label = { Text("Пароль") }
+                                )
+                            }
+                        }
+                    }
+                    trackerError?.let { error ->
+                        Text(error, color = MaterialTheme.colorScheme.error)
+                    }
+                    if (trackerSaving) {
+                        LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                        Text("Сохраняем настройки трекеров…")
+                    }
+                    Text(
+                        "Rutor, Bitru и Torrent.by обычно работают без регистрации. Для Kinozal и NNMClub аккаунт необязателен. После сохранения работающий Lampac перезапустится, чтобы применить новые данные.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            },
+            confirmButton = {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(
+                        enabled = !trackerLoading && !trackerSaving && trackerSettings.isNotEmpty(),
+                        onClick = {
+                            val valuesToSave = trackerSettings
+                            val restartAfterSave = runtime.phase == LampacRuntimePhase.RUNNING
+                            coroutineScope.launch {
+                                trackerSaving = true
+                                trackerError = null
+                                val result = withContext(Dispatchers.IO) {
+                                    runCatching {
+                                        LampacRuntimeInstaller(context).saveTrackerSettings(valuesToSave)
+                                    }
+                                }
+                                trackerSaving = false
+                                result.onSuccess {
+                                    trackersVisible = false
+                                    settingsVisible = true
+                                    if (restartAfterSave) {
+                                        LampacRuntimeService.restart(context)
+                                    }
+                                }.onFailure { error ->
+                                    trackerError = error.message ?: "Не удалось сохранить настройки трекеров"
+                                }
+                            }
+                        }
+                    ) {
+                        Text(
+                            when {
+                                trackerSaving -> "Сохранение…"
+                                runtime.phase == LampacRuntimePhase.RUNNING -> "Сохранить и перезапустить"
+                                else -> "Сохранить"
+                            }
+                        )
+                    }
+                    TextButton(
+                        enabled = !trackerSaving,
+                        onClick = {
+                            trackersVisible = false
+                            settingsVisible = true
+                        }
+                    ) { Text("Отмена") }
+                }
+            }
         )
     }
 

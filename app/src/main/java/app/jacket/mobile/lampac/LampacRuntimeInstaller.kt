@@ -992,6 +992,18 @@ class LampacRuntimeInstaller(context: android.content.Context) {
     }
 
     /** Import the user\'s Lampac settings without changing the private listener. */
+    /** Read tracker authentication profiles for the native Lampa settings menu. */
+    fun readTrackerSettings(): List<LampacTrackerAuth> =
+        LampacTrackerConfig.read(readInitConfig())
+
+    /** Save tracker logins/passwords while preserving unrelated Lampac settings. */
+    fun saveTrackerSettings(settings: List<LampacTrackerAuth>): File {
+        check(isInstalled()) { "Сначала установите встроенный Lampac" }
+        val serverDirectory = File(host.debianRootfsDir, "opt/lampac")
+        val updated = LampacTrackerConfig.update(readInitConfig(), settings)
+        return LampacEmbeddedConfig.importInitConfig(serverDirectory, updated)
+    }
+
     /** Discover modules and read their effective enabled state from init.conf. */
     fun readModuleSettings(): LampacModuleSettings {
         check(isInstalled()) { "Сначала установите встроенный Lampac" }
