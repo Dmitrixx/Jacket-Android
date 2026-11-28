@@ -18,6 +18,17 @@ class ByeDpiArgumentParserTest {
     }
 
     @Test
+    fun buildsUniversalVideoAndTrackerStrategyWithoutDomainWhitelist() {
+        val strategy = "--disorder 1 --auto=torst --tlsrec 1+s"
+        val args = ByeDpiArgumentParser.build(strategy)
+
+        assertEquals(
+            listOf("--disorder", "1", "--auto=torst", "--tlsrec", "1+s"),
+            args.drop(5)
+        )
+    }
+
+    @Test
     fun acceptsSeparateOptionValuesAndQuotedSniValues() {
         val args = ByeDpiArgumentParser.build("--fake 1 -n 'www.example.org' --hosts :example.org")
 
