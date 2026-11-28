@@ -199,7 +199,8 @@ internal object StreamAdManifestFilter {
                     line.startsWith("#EXT-X-RENDITION-REPORT:", true) ||
                     line.startsWith("#EXT-X-SESSION-DATA:", true) ||
                     line.startsWith("#EXT-X-MAP:", true)) &&
-                hasAdUriAttribute(line)
+                (hasAdUriAttribute(line) ||
+                    (line.startsWith("#EXT-X-MAP:", true) && insideAd))
             ) {
                 removedSegments++
                 markersFound = true
@@ -208,7 +209,8 @@ internal object StreamAdManifestFilter {
 
             if (isSegmentScopedTag(line)) {
                 if (pendingSegmentTags.isNotEmpty() ||
-                    line.startsWith("#EXT-X-PROGRAM-DATE-TIME", true)
+                    line.startsWith("#EXT-X-PROGRAM-DATE-TIME", true) ||
+                    line.equals("#EXT-X-DISCONTINUITY", true)
                 ) {
                     pendingSegmentTags += rawLine
                 } else if (!insideAd) {
@@ -387,12 +389,10 @@ internal object StreamAdManifestFilter {
         return adMediaToken.containsMatchIn(label)
     }
 
-    private fun hasAdUriAttribute(line: String): Boolean {
-        val uri = listOf("URI", "X-ASSET-URI", "X-ASSET-LIST", "ASSET-URI")
-            .firstNotNullOfOrNull { attributeValue(line, it) }
-            ?: return false
-        return isAdMediaUri(uri)
-    }
+    private fun hasAdUriAttribute(line: String): Boolean =
+        listOf("URI", "X-ASSET-URI", "X-ASSET-LIST", "ASSET-URI")
+            .mapNotNull { attributeValue(line, it) }
+            .any(::isAdMediaUri)
 
     private fun isAdMediaUri(value: String): Boolean {
         val parsed = runCatching { URI(value.trim()) }.getOrNull()

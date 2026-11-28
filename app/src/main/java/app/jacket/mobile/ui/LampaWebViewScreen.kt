@@ -272,6 +272,9 @@ private fun interceptStreamAdManifest(
             normalizedContentType.contains("dash+xml")
 
         if (!responseIsManifest) {
+            // This is a live media body, not a finite manifest. Do not inherit
+            // the short manifest-read timeout while WebView is consuming it.
+            connection.readTimeout = 0
             val mediaStream = if (status >= 400) connection.errorStream else connection.inputStream
             val responseHeaders = linkedMapOf<String, String>()
             listOf(
@@ -309,7 +312,7 @@ private fun interceptStreamAdManifest(
             connectionTransferredToWebView = true
             return WebResourceResponse(
                 mimeType,
-                "UTF-8",
+                null,
                 status,
                 connection.responseMessage ?: "OK",
                 responseHeaders,

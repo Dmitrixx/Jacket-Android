@@ -34,6 +34,10 @@ class StreamAdManifestFilterTest {
         assertTrue(result.content.contains("intro.ts"))
         assertTrue(result.content.contains("movie.ts"))
         assertTrue(result.content.contains("#EXT-X-DISCONTINUITY"))
+        assertEquals(
+            1,
+            result.content.lineSequence().count { it == "#EXT-X-DISCONTINUITY" }
+        )
         assertTrue(result.changed)
     }
 
@@ -256,6 +260,27 @@ class StreamAdManifestFilterTest {
         assertEquals(1, result.removedSegments)
         assertFalse(result.content.contains("spot-01.ts"))
         assertTrue(result.content.contains("download.mp4"))
+    }
+
+    @Test
+    fun checksEveryHlsUriAttributeForAdAssets() {
+        val playlist = """
+            #EXTM3U
+            #EXT-X-PLAYLIST-TYPE:VOD
+            #EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="audio",NAME="main",URI="audio/main.m3u8",X-ASSET-URI="https://ads.example.test/pod/01.m3u8"
+            #EXTINF:10.0,
+            movie.ts
+            #EXT-X-ENDLIST
+        """.trimIndent()
+
+        val result = StreamAdManifestFilter.filterHls(
+            playlist,
+            "https://cdn.example.test/master.m3u8"
+        )
+
+        assertEquals(1, result.removedSegments)
+        assertFalse(result.content.contains("ads.example.test"))
+        assertTrue(result.content.contains("movie.ts"))
     }
 
     @Test
