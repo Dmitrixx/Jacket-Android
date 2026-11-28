@@ -111,7 +111,7 @@ object LampacCoreModuleManifestPolicy {
      *
      * @return ids whose manifest changed during this call.
      */
-    fun enableDefaultMediaModules(serverDirectory: File): Set<String> {
+    fun applyDefaultModuleManifestPolicy(serverDirectory: File): Set<String> {
         val moduleRoot = File(serverDirectory, "module")
         if (!moduleRoot.isDirectory) return emptySet()
 
