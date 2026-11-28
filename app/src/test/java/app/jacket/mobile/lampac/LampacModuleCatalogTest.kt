@@ -42,10 +42,10 @@ class LampacModuleCatalogTest {
     }
 
     @Test
-    fun enablesOnlyAllowlistedMediaModulesInOfficialModuleManifests() {
+    fun enablesAdminPanelAndCorePlaybackModulesButDisablesUnusedMusic() {
         val root = Files.createTempDirectory("lampac-core-manifest-policy").toFile()
         try {
-            writeManifest(File(root, "module/Music/manifest.json"), false)
+            writeManifest(File(root, "module/Music/manifest.json"), true)
             writeManifest(File(root, "module/Tracks/manifest.json"), false)
             writeManifest(File(root, "module/WatchTogether/manifest.json"), false)
             writeManifest(File(root, "module/AdminPanel/manifest.json"), false)
@@ -53,15 +53,15 @@ class LampacModuleCatalogTest {
             writeManifest(File(root, "mods/CustomModule/manifest.json"), false)
 
             assertEquals(
-                setOf("Music", "Tracks", "WatchTogether"),
+                setOf("AdminPanel", "Music", "Tracks", "WatchTogether"),
                 LampacCoreModuleManifestPolicy.applyDefaultModuleManifestPolicy(root)
             )
-            listOf("Music", "Tracks", "WatchTogether").forEach { id ->
+            listOf("AdminPanel", "Tracks", "WatchTogether").forEach { id ->
                 assertTrue(
                     JSONObject(File(root, "module/$id/manifest.json").readText()).getBoolean("enable")
                 )
             }
-            assertFalse(JSONObject(File(root, "module/AdminPanel/manifest.json").readText()).getBoolean("enable"))
+            assertFalse(JSONObject(File(root, "module/Music/manifest.json").readText()).getBoolean("enable"))
             assertFalse(JSONObject(File(root, "module/ExternalBind/manifest.json").readText()).getBoolean("enable"))
             assertFalse(JSONObject(File(root, "mods/CustomModule/manifest.json").readText()).getBoolean("enable"))
             assertTrue(LampacCoreModuleManifestPolicy.applyDefaultModuleManifestPolicy(root).isEmpty())
